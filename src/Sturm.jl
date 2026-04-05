@@ -8,6 +8,7 @@ include("orkan/state.jl")
 include("types/wire.jl")
 include("context/abstract.jl")
 include("context/eager.jl")
+include("context/density.jl")
 include("types/qbool.jl")
 include("types/qint.jl")
 
@@ -41,7 +42,7 @@ end
 # ── Exports ───────────────────────────────────────────────────────────────────
 
 # Context
-export AbstractContext, EagerContext, TracingContext, @context, current_context
+export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @context, current_context
 
 # Types
 export QBool, QInt, WireID, discard!
