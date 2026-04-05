@@ -55,6 +55,16 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
     - P5: No gates, no qubits in user-facing code. Registers and primitives.
     - P7: Nothing in the core may assume d=2 in a way that forecloses higher d.
 
+## Global Phase and Universality
+
+**The 4 primitives generate all single-qubit channels (CPTP maps), not all unitaries.** Ry and Rz have determinant 1 (SU(2)), so no product of them can produce a unitary with determinant ≠ 1 (e.g., the standard Hadamard has det = -1). Every derived gate is defined up to a global phase: H! = -i·H, Z! = -i·Z, etc.
+
+**This is physically correct.** In operational quantum mechanics, the fundamental objects are channels, not unitaries. A unitary U and e^{iα}U define the same channel ρ → UρU†. Global phases are not physical — this is not an approximation but a theorem. The DSL lives in SU(2), and SU(2) + CNOT generates all channels on n qubits.
+
+**Consequence: H!² = -I, not I.** This is correct. The states |ψ⟩ and -|ψ⟩ are physically identical. No experiment can distinguish them. Future agents: do NOT attempt to "fix" H!² = -I. It is a feature, not a bug.
+
+**Where phases DO matter: controlled gates.** When a gate is used inside `when()`, its global phase becomes a relative phase between the ctrl=|0⟩ and ctrl=|1⟩ branches, which IS observable. The controlled-Rz(π) gate (from `when(c) { t.φ += π }`) is NOT the same channel as controlled-Z. Use `_cz!()` from `src/library/patterns.jl` for the correct CZ gate. This distinction caused the "Session 8 bug" in the Python sturm project and was rediscovered during Grover implementation.
+
 ## Julia Conventions
 
 1. **Module name is `Sturm`.** `using Sturm` brings the public API into scope.
