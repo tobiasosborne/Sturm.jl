@@ -10,5 +10,6 @@ using Sturm
     include("test_gates.jl")
     include("test_rus.jl")
     include("test_qint.jl")
+    include("test_patterns.jl")
     include("test_memory_safety.jl")
 end
