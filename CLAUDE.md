@@ -65,6 +65,32 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 **Where phases DO matter: controlled gates.** When a gate is used inside `when()`, its global phase becomes a relative phase between the ctrl=|0⟩ and ctrl=|1⟩ branches, which IS observable. The controlled-Rz(π) gate (from `when(c) { t.φ += π }`) is NOT the same channel as controlled-Z. Use `_cz!()` from `src/library/patterns.jl` for the correct CZ gate. This distinction caused the "Session 8 bug" in the Python sturm project and was rediscovered during Grover implementation.
 
+## Channel IR vs Unitary Methods — HALLUCINATION RISK
+
+**CRITICAL FOR ALL AGENTS**: Sturm.jl's DAG IR represents **channels** (CPTP maps), NOT unitaries. The DAG contains non-unitary nodes:
+
+- `ObserveNode` — measurement (projective, irreversible)
+- `CasesNode` — classical branching (creates mixtures)
+- `DiscardNode` — partial trace (reduces dimension)
+
+**Most optimization methods from the literature assume unitary circuits.** They will produce WRONG RESULTS if applied to a DAG containing measurements, discards, or classical branching. Specifically:
+
+- **Phase polynomials** (TPAR, TODD) are undefined for non-unitary subcircuits
+- **ZX-calculus** completeness holds for pure QM only; mixed-state ZX is incomplete for Clifford+T
+- **SAT synthesis** (Clifford, exact) encodes stabilizer tableaux — unitaries only
+- **DD equivalence checking** (QMDD) represents unitary matrices, not channels
+- **MCGS compute graph** nodes are unitaries — measurement channels have no single unitary
+
+**MANDATORY PROTOCOL for all optimization passes:**
+
+1. **Partition the DAG at measurement barriers.** Every `ObserveNode` and `DiscardNode` creates a barrier. The DAG between barriers is a unitary subcircuit.
+2. **Apply unitary-only methods ONLY to unitary blocks.** Never apply phase polynomial extraction, ZX rewriting, or SAT synthesis across a measurement barrier.
+3. **Channel-level optimizations** (deferred measurement, classicalise) operate on the FULL DAG including non-unitary nodes. These are the only passes that may touch ObserveNode/CasesNode.
+4. **Equivalence checking** for channels requires the Choi matrix or diamond norm, NOT unitary comparison.
+5. **Resource estimation** for channels with measurement-controlled gates must account for the DISTRIBUTION of gate counts across measurement outcomes (worst-case or expected).
+
+**Future agents: do NOT apply a unitary optimization method to a channel DAG without first partitioning at measurement barriers. This is not optional.**
+
 ## Julia Conventions
 
 1. **Module name is `Sturm`.** `using Sturm` brings the public API into scope.
