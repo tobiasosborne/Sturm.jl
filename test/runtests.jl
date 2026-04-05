@@ -13,5 +13,6 @@ using Sturm
     include("test_patterns.jl")
     include("test_channel.jl")
     include("test_passes.jl")
+    include("test_density_matrix.jl")
     include("test_memory_safety.jl")
 end
