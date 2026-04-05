@@ -148,3 +148,71 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 4. **OpenQASM 3 is the right export target.** Sturm's `when()` maps to OQ3 `if (cbit)` with real-time branching — OQ3 was designed for exactly this use case. The existing `to_openqasm()` in `channel/` is correct to target OQ3.
 
 5. **Verified compilation is possible.** VOQC demonstrates that a small subset of optimization passes can be formally verified in Coq/SQIR. Sturm could adopt the same approach for its rotation-merging pass (gate_cancel.jl) — the proof would be straightforward since it only requires commutativity of Rz rotations on the same wire.
+
+## 2026-04-05 — Session 2 continued: Grover, literature survey, channel safety
+
+### Grover search & amplitude amplification
+- **3+1 agent protocol (Opus proposers).** Proposer A: QBool-predicate API with phase kickback. Proposer B: `find`/`phase_flip!` naming with direct phase marking.
+- **Proposer A's approach has a physics bug**: `discard!` = `measure!` = decoherence. The predicate's garbage qubits collapse the superposition when discarded. No general way to uncompute a predicate without reversible computation infrastructure.
+- **Synthesis**: B's `find` + `phase_flip!` (physically correct, no garbage) + A's iteration formula.
+- **Critical bug found and fixed: controlled-Rz(π) ≠ CZ.** `when(ctrl) { target.φ += π }` applies diag(1,1,-i,i), NOT diag(1,1,1,-1). The diffusion operator was applying wrong relative phases. Fix: `_cz!()` using CP(π) decomposition (2 CX + 3 Rz). Same bug as Python sturm "Session 8 bug."
+- **Gotcha: superpose!/interfere! (QFT) ≠ H^⊗W on arbitrary states.** Both give uniform superposition on |0⟩, but they differ on non-|0⟩ inputs. Grover's diffusion requires H^⊗W (each qubit independently), not QFT. Created `_hadamard_all!` helper.
+- **H!² = -I is physically correct.** H! = Rz(π)·Ry(π/2) = -i·H. The -i is a global phase (unobservable). The 4 primitives generate SU(2), not U(2). Channels are the physical maps, not unitaries — global phases don't exist at the channel level. Documented in CLAUDE.md to prevent future agents from "fixing" this.
+- `find(Val(3), target=5)` achieves 95% success rate (theory: 94.5%). 2-bit: 100%.
+- Infrastructure: `_multi_controlled_z!` via Toffoli cascade (Barenco et al. 1995), `_diffusion!`, `phase_flip!`.
+
+### Literature survey: quantum circuit optimization (100 papers, 9 categories)
+- **6 parallel Sonnet agents** (+ 1 follow-up for SAT/CSP) surveyed the complete field.
+- **100 unique papers downloaded** (140 MB) to `docs/literature/`, sorted into 9 taxonomy subfolders:
+  - `zx_calculus/` (18): Coecke-Duncan → van de Wetering. ZX rewriting, PyZX, phase gadgets, completeness theorems.
+  - `t_count_synthesis/` (14): Amy TPAR/TODD, gridsynth, Solovay-Kitaev, exact synthesis. Phase polynomial framework.
+  - `routing_cnot_peephole/` (6): SABRE, PMH CNOT synthesis, Iten pattern matching, Vandaele phase poly for NISQ.
+  - `ml_search_mcgs/` (15): **Rosenhahn-Osborne MCGS trilogy** (2023→2025→2025), RL (Fosel, IBM Kremer), AlphaZero, MCTS variants, generative models.
+  - `phase_poly_resource_ft/` (7): Litinski lattice surgery, Beverland resource estimation, Fowler surface codes, Wills constant-overhead distillation.
+  - `compiler_frameworks/` (12): Qiskit, tket, quilc, VOQC (verified), staq, BQSKit, MLIR quantum, OpenQASM 3.
+  - `sat_csp_smt_ilp/` (18): SAT/SMT layout synthesis (OLSQ → Q-Synth v2), SAT Clifford synthesis (Berent-Wille MQT line), MaxSAT routing, ILP (Nannicini), MILP unitary synthesis, AI planning (Venturelli, Booth), lattice surgery SAT (LaSynth).
+  - `decision_diagrams_formal/` (6): QCEC, LIMDD, FeynmanDD, Wille DD review.
+  - `category_theory/` (4): Abramsky-Coecke, Frobenius monoids, string diagram rewrite theory (DPO).
+- **6 Sonnet synthesis agents** produced per-category summaries with pros/cons/limitations/implementability/metrics/recommended order/open problems.
+
+### Key finding: Rosenhahn-Osborne MCGS trilogy is the unique competitive advantage
+- **MCGS-QUANTUM** (arXiv:2307.07353, Phys. Rev. A 108, 062615): Monte Carlo Graph Search on compute graphs for circuit optimization.
+- **ODQCR** (arXiv:2502.14715): Optimization-Driven QC Reduction — stochastic/database/ML-guided term replacement.
+- **NEURAL-GUIDED** (arXiv:2510.12430): Neural Guided Sampling — 2D CNN attention map accelerates ODQCR 10-100x.
+- All three operate natively on DAG IRs. No other quantum DSL has this. The implementation path: MCGS core → ODQCR database → neural prior.
+
+### Scalability limitations documented
+- SAT Clifford synthesis: **≤6 qubits** (Berent 2023, corrected Dec 2025)
+- TODD tensor T-count: **≤8 qubits** (Reed-Muller decoder limit)
+- Exact unitary MILP: **≤8 qubits** (Nagarajan 2025)
+- AlphaZero synthesis: **3+1 qubits** (Valcarce 2025)
+- ODQCR compute graph: **3 qubits depth 5** = 137K nodes (Rosenhahn 2025)
+- BQSKit QFactor: partitions into **3-qubit blocks** for resynthesis
+- Created P1 research issue for subcircuit partitioning strategy.
+
+### Optimization passes roadmap: 28 issues registered with dependency chains
+- **Tier 1 (P0-P1)**: Barrier partitioner, PassManager, run(ch), phase polynomial, gate cancellation, SABRE routing
+- **Tier 2 (P2)**: MCGS, ODQCR, ZX simplification, TPAR, SAT layout, gridsynth, PMH CNOT
+- **Tier 3 (P3)**: TODD, neural-guided, SAT Clifford, MaxSAT, resource estimation, DD equiv checking
+- **Research (P1-P2)**: Subcircuit partitioning, ZX vs phase poly selection, NISQ vs FTQC paths, compute graph precomputation, verified pass correctness
+
+### CRITICAL: Channel-vs-unitary hallucination risk
+- **The DAG IR is for channels, not unitaries.** 12 of 25 optimization issues have HIGH hallucination risk.
+- `ObserveNode`, `CasesNode`, `DiscardNode` are non-unitary. Most literature methods assume unitarity.
+- **Phase polynomials**: undefined for non-unitary subcircuits. **ZX completeness**: pure QM only; mixed-state ZX incomplete for Clifford+T. **SAT synthesis**: stabilizer tableaux encode unitaries only. **DD equivalence**: QMDDs represent unitaries, not channels. **MCGS compute graph**: nodes are unitaries; channels with measurement have no single unitary node.
+- **Guardrails installed:**
+  1. **P0 barrier partitioner** (`Sturm.jl-vmd`): splits DAG at measurement/discard barriers. Now blocks ALL unitary-only passes in dependency graph.
+  2. **P1 pass trait system** (`Sturm.jl-d94`): each pass declares `UnitaryOnly` or `ChannelSafe`. PassManager refuses mismatched application.
+  3. **P1 channel equivalence research** (`Sturm.jl-hny`): Choi matrix / diamond norm instead of unitary comparison.
+  4. **9 issues annotated** with explicit HALLUCINATION RISK notes.
+  5. **CLAUDE.md updated** with mandatory protocol for all future agents.
+- **The fundamental principle**: functions are channels (P1). The optimization infrastructure must respect this. Unitary methods are subroutines applied to unitary BLOCKS within a channel, never to the channel itself.
+
+### Issue tracker status
+- **71 total issues** (14 closed, 57 open)
+- **P0**: 1 (barrier partitioner)
+- **P1**: 7 (PassManager, run(ch), phase poly, gate cancel, SABRE, pass traits, channel equiv)
+- **P2**: 18 (MCGS, ODQCR, ZX, TPAR, SAT layout, gridsynth, ring arithmetic, + bugs + research)
+- **P3**: 20 (TODD, neural, SAT Clifford, MaxSAT, resource est, DD equiv, + existing gaps)
+- **P4**: 9 (existing cleanup/deferred items)
+- 8452 tests pass. All code committed and pushed to `tobiasosborne/Sturm.jl`.
