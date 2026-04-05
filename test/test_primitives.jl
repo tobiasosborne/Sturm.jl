@@ -67,6 +67,21 @@ using Sturm
         end
     end
 
+    @testset "Phi + Theta deterministic combo" begin
+        # QBool(0.5) → Ry(π/2)|0> = |+> = [1/√2, 1/√2]
+        # φ += π → Rz(π)|+> = [-i/√2, i/√2] = -i|->
+        # θ += π/2 → Ry(π/2)|-> = |0> (deterministic)
+        # So outcome is always false.
+        @context EagerContext() begin
+            for _ in 1:100
+                q = QBool(0.5)
+                q.φ += π
+                q.θ += π/2
+                @test Bool(q) == false
+            end
+        end
+    end
+
     @testset "XOR entanglement (⊻=)" begin
         @context EagerContext() begin
             # |0> ⊻= |1> → CNOT with |1> as control → flips target → |1>
@@ -91,6 +106,19 @@ using Sturm
             q2 = QBool(0)
             discard!(q2)
             @test_throws ErrorException discard!(q2)
+
+            # XOR with consumed qubit should error
+            q3 = QBool(0)
+            q4 = QBool(0)
+            _ = Bool(q3)  # consume q3
+            @test_throws ErrorException (q4 ⊻= q3)  # consumed control
+            discard!(q4)
+
+            q5 = QBool(0)
+            q6 = QBool(0)
+            _ = Bool(q5)  # consume q5
+            @test_throws ErrorException (q5 ⊻= q6)  # consumed target
+            discard!(q6)
         end
     end
 

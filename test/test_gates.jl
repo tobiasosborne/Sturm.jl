@@ -66,6 +66,38 @@ using Sturm
         end
     end
 
+    @testset "T! applies π/4 phase" begin
+        # H · T · H on |0>: if T adds π/4 phase to |1>, then
+        # H|0> = |+>, T|+> = (|0> + e^{iπ/4}|1>)/√2, then H on that
+        # gives P(|1>) = sin²(π/8) ≈ 0.1464
+        @context EagerContext() begin
+            count_true = 0
+            N = 10000
+            for _ in 1:N
+                q = QBool(0)
+                H!(q)
+                T!(q)
+                H!(q)
+                count_true += Bool(q)
+            end
+            expected = sin(π/8)^2
+            @test abs(count_true / N - expected) < 0.03
+        end
+    end
+
+    @testset "T! and Tdg! cancel" begin
+        @context EagerContext() begin
+            for _ in 1:100
+                q = QBool(0)
+                H!(q)
+                T!(q)
+                Tdg!(q)
+                H!(q)
+                @test Bool(q) == false
+            end
+        end
+    end
+
     @testset "swap!" begin
         @context EagerContext() begin
             a = QBool(0)

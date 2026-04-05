@@ -8,5 +8,6 @@ using Sturm
     include("test_teleportation.jl")
     include("test_when.jl")
     include("test_gates.jl")
+    include("test_rus.jl")
     include("test_memory_safety.jl")
 end
