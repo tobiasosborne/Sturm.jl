@@ -62,3 +62,13 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 - Deutsch-Jozsa: constant oracle → 0 (100%), balanced oracle → nonzero (100%).
 - QPE: Z! on |1⟩ → result=2 (φ=0.25), S! on |1⟩ → result=1 (φ=0.125). Correct for Rz eigenvalues.
 - 5738 total tests pass.
+
+### Phase 8: TracingContext, DAG, Channel, OpenQASM (Steps 8.1–8.6)
+- **DAG nodes**: PrepNode, RyNode, RzNode, CXNode, ObserveNode, CasesNode, DiscardNode. Each carries a `controls::Vector{WireID}` for when() context.
+- **TracingContext** implements all AbstractContext methods symbolically: allocate!/deallocate! manage WireIDs, apply_ry!/rz!/cx! append nodes, measure! appends ObserveNode and returns a placeholder Bool (false = default branch in tracing).
+- **ClassicalRef** for symbolic measurement results (stub — full classical branching deferred).
+- **trace(f, n_in)** creates TracingContext, runs f with n_in symbolic QBool inputs, returns Channel{In,Out} with captured DAG.
+- **Channel composition**: `>>` (sequential, wire renaming), `⊗` (parallel, concatenation).
+- **to_openqasm(ch)** exports to OpenQASM 3.0: Ry→ry, Rz→rz, CX→cx, controlled→cry/crz/ccx, ObserveNode→measure.
+- **Decision: measure! returns false as default path in tracing.** Full classical branching (CasesNode with both paths) requires running f twice — deferred to a future enhancement.
+- 5781 total tests pass.

@@ -11,6 +11,15 @@ include("context/eager.jl")
 include("types/qbool.jl")
 include("types/qint.jl")
 
+# Channel / tracing layer
+include("channel/dag.jl")
+include("context/tracing.jl")
+include("types/classical_ref.jl")
+include("channel/channel.jl")
+include("channel/trace.jl")
+include("channel/compose.jl")
+include("channel/openqasm.jl")
+
 # Quantum control
 include("control/when.jl")
 
@@ -28,7 +37,7 @@ end
 # ── Exports ───────────────────────────────────────────────────────────────────
 
 # Context
-export AbstractContext, EagerContext, @context, current_context
+export AbstractContext, EagerContext, TracingContext, @context, current_context
 
 # Types
 export QBool, QInt, WireID, discard!
@@ -41,5 +50,9 @@ export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
 
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate
+
+# Channel / tracing
+export Channel, trace, to_openqasm, ⊗, n_inputs, n_outputs
+export ClassicalRef
 
 end # module Sturm
