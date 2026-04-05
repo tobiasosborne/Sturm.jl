@@ -16,6 +16,11 @@ include("control/when.jl")
 # Convenience gates (built from primitives)
 include("gates.jl")
 
+# ── Module init (runs at load time, not precompile time) ─────────────────────
+function __init__()
+    _set_omp_threads!()
+end
+
 # ── Exports ───────────────────────────────────────────────────────────────────
 
 # Context

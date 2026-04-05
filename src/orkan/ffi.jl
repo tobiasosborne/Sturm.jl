@@ -3,6 +3,18 @@
 
 using Libdl
 
+# ── OpenMP thread cap ────────────────────────────────────────────────────────
+# Orkan links libgomp. Without OMP_NUM_THREADS it spawns one thread per HW thread,
+# which combined with Julia's threads causes oversubscription and memory pressure.
+# Cap to quarter of HW threads (leaving room for Julia), minimum 1.
+# Must run in __init__ (not top-level) so it executes at load time, not precompile time.
+function _set_omp_threads!()
+    if !haskey(ENV, "OMP_NUM_THREADS")
+        _omp_threads = max(1, Sys.CPU_THREADS ÷ 4)
+        ENV["OMP_NUM_THREADS"] = string(_omp_threads)
+    end
+end
+
 # ── Library path ──────────────────────────────────────────────────────────────
 
 const _LIBORKAN_PATH = let
