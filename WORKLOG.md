@@ -208,11 +208,26 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
   5. **CLAUDE.md updated** with mandatory protocol for all future agents.
 - **The fundamental principle**: functions are channels (P1). The optimization infrastructure must respect this. Unitary methods are subroutines applied to unitary BLOCKS within a channel, never to the channel itself.
 
-### Issue tracker status
-- **71 total issues** (14 closed, 57 open)
-- **P0**: 1 (barrier partitioner)
-- **P1**: 7 (PassManager, run(ch), phase poly, gate cancel, SABRE, pass traits, channel equiv)
+### Choi phase polynomials — potential architecture change
+- **Key insight (Tobias Osborne)**: Phase polynomials — which he co-invented with Michael Nielsen — should extend to channels via the Choi-Jamiołkowski isomorphism. Channel C with Kraus ops {K_i} maps to Choi state J(C) = Σ K_i ⊗ K̄_i in doubled Hilbert space. If K_i are CNOT+Rz+projectors, then J(C) has phase polynomial structure in the doubled space.
+- **Consequence**: If this works, the measurement barrier partitioner becomes UNNECESSARY. Phase polynomial methods (TPAR, TODD, T-count optimization) would operate on channels directly — no partitioning, no special-casing of ObserveNode/DiscardNode. The optimization layer would be natively channel-aware, consistent with P1.
+- **P0 research issue** `Sturm.jl-d99` created. Barrier partitioner `Sturm.jl-vmd` now depends on this research — build the partitioner only if Choi approach doesn't work.
+- **This is the architectural fork**: resolve Choi phase polys first, then decide the entire passes infrastructure. If it works, Sturm.jl's optimization story becomes: "we optimize channels, not circuits."
+
+### Session 2 final status
+- **72 total issues** (14 closed, 58 open)
+- **P0**: 2 (Choi phase poly research, barrier partitioner — latter blocked on former)
+- **P1**: 7 (PassManager, run(ch), phase poly extraction, gate cancel, SABRE, pass traits, channel equiv)
 - **P2**: 18 (MCGS, ODQCR, ZX, TPAR, SAT layout, gridsynth, ring arithmetic, + bugs + research)
 - **P3**: 20 (TODD, neural, SAT Clifford, MaxSAT, resource est, DD equiv, + existing gaps)
 - **P4**: 9 (existing cleanup/deferred items)
-- 8452 tests pass. All code committed and pushed to `tobiasosborne/Sturm.jl`.
+- **Research**: 6 (Choi phase polys, subcircuit partitioning, ZX vs phase poly, NISQ vs FTQC, compute graph, verified passes)
+- 8452 tests pass across 12 phases + Grover/AA
+- 100 papers surveyed, sorted into 9 taxonomy folders (140 MB)
+- All code committed and pushed to `tobiasosborne/Sturm.jl`
+
+### What the next session should do
+1. **Resolve Sturm.jl-d99** (Choi phase polynomials) — this determines the entire passes architecture
+2. **Implement P1 infrastructure**: PassManager, run(ch), phase polynomial extraction
+3. **Implement MCGS** (Sturm.jl-qfx) — the unique competitive advantage
+4. **Fix P1 bugs**: Steane encoding (ewv), density matrix measure! (fq5)
