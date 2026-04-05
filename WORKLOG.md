@@ -90,3 +90,61 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 - **Gotcha: H! = Rz(π)·Ry(π/2) is NOT self-inverse.** H!² = -I (not I). For Grover diffusion, H^⊗W works because -I is a global phase. But superpose!/interfere! (QFT) ≠ H^⊗W on arbitrary states — must use `_hadamard_all!` for Grover.
 - `find(Val(3), target=5)` achieves 95% success rate (theory: 94.5%). 2-bit: 100%.
 - 8452 total tests pass.
+
+## 2026-04-05 — Literature Survey: Routing, CNOT Opt, Peephole
+
+Completed systematic survey of qubit routing/mapping, CNOT optimization, peephole optimization, and pattern matching. 13 PDFs downloaded to `docs/literature/`.
+
+Key findings for Sturm.jl DAG passes:
+- SABRE (arXiv:1809.02573) is the canonical NISQ routing algorithm — bidirectional heuristic with decay effect for SWAP/depth tradeoff. Central insight: the "look-ahead" cost function over the front layer of the dependency DAG.
+- Pattern matching (arXiv:1909.05270) works on DAG with commutativity — the Sturm DAG IR is exactly the right representation to apply this.
+- Phase gadgets (arXiv:1906.01734) are directly implementable from Sturm's 4 primitives: a phase gadget on n qubits = (n-1) CNOTs + 1 Rz. CNOT tree synthesis is just the 4th primitive.
+- ZX T-count (arXiv:1903.10477): ZX rewriting = generalized peephole on the ZX-diagram (which is a superset of the circuit DAG). High relevance to `passes/` optimization.
+- DAG vs phase polynomial comparison (arXiv:2304.08814): phase polynomials outperform DAG for deep circuits on CNOT count. Relevant to future `passes/clifford_simp.jl`.
+- OLSQ (arXiv:2007.15671): optimal routing via SMT — useful as a ground truth for correctness testing of SABRE-style heuristic in Sturm.
+
+**Physics note:** Patel-Markov-Hayes (quant-ph/0302002) O(n²/log n) CNOT synthesis uses row reduction on the parity matrix — directly applicable to linear reversible subcircuits in the Clifford+T passes.
+
+## 2026-04-05 — Literature Survey: Quantum Compiler Frameworks & Toolchains
+
+Systematic survey of major quantum compiler frameworks, toolchain architectures, and survey/review papers. 12 new PDFs downloaded to `docs/literature/` (some duplicating existing files under canonical names).
+
+### Papers surveyed (new to this session)
+
+**QCOPT-SURVEY-2024** (arXiv:2408.08941): Karuppasamy et al. 2024 comprehensive review of circuit optimization — hardware-independent vs hardware-dependent, ML methods. Best broad entry point to the field.
+
+**SYNTHESIS-SURVEY-2024** (arXiv:2407.00736): Yan et al. 2024 survey of synthesis+compilation — covers AI-driven qubit mapping, routing, QAS. Useful for understanding how DAG IR fits into the full synthesis-to-hardware pipeline.
+
+**TKET-2020** (arXiv:2003.10611, already at `tket_Sivarajah2020.pdf`): Sivarajah et al. — t|ket⟩ retargetable NISQ compiler. Key architecture: language-agnostic, DAG IR, passes for routing + gate synthesis. The Sturm TracingContext+DAG design mirrors this architecture.
+
+**QUILC-2020** (arXiv:2003.13961, already at `Quilc_Smith2020.pdf`): Smith et al. — quilc, Rigetti's open-source optimizing compiler for Quil/QASM. Uses a DAG with resource conflicts as the IR. Relevant: quilc's "nativization" pass (gate-set lowering) is exactly what Sturm needs for future hardware targeting.
+
+**VOQC-2019** (arXiv:1912.02250): Hietala et al. — first fully verified quantum circuit optimizer in Coq. Uses SQIR (Simple Quantum IR). Key insight: a deep embedding of circuits in a proof assistant allows correctness guarantees on optimization passes. Directly relevant to Sturm's pass infrastructure if we ever want verified passes.
+
+**STAQ-2019** (arXiv:1912.06070): Amy & Gheorghiu — staq C++ full-stack toolkit. Unix pipeline philosophy: each tool does one thing. AST-based (preserves source structure, not a DAG). Notable contrast with Sturm/Qiskit/tket's DAG approach.
+
+**QISKIT-2024** (arXiv:2405.08810): Javadi-Abhari et al. — the definitive Qiskit SDK paper. Key for Sturm: confirms DAGCircuit as the canonical IR throughout the pass pipeline. PassManager pattern (sequence of passes on DAG) is the model Sturm's `passes/` should follow. Covers dynamic circuits (classical feed-forward) — relevant to Sturm's `when()` and `boundary`.
+
+**MLIR-QUANTUM-2021** (arXiv:2101.11365): McCaskey & Nguyen — MLIR quantum dialect that compiles to LLVM IR adhering to QIR spec. Relevant: shows how to lower from a high-level DAG IR all the way to binary. Future direction if Sturm wants native compilation rather than OpenQASM export.
+
+**OPENQASM3-2021** (arXiv:2104.14722): Cross et al. — OpenQASM 3 spec. Adds real-time classical control, timing, pulse control. Sturm's `to_openqasm()` targets OpenQASM 3 syntax. Key: the `when()` construct maps cleanly to OpenQASM 3 `if` statements with real-time measurement results.
+
+**PYZX-ZX-2019** (arXiv:1902.03178, already at `KISSINGER_ZX.pdf`): Duncan, Kissinger et al. — ZX-calculus graph simplification. Asymptotically optimal Clifford circuits, T-count reduction. Already in library; re-tagged for compiler survey context.
+
+**DAG-VS-PHASEPOLYNOMIAL-2023** (arXiv:2304.08814, already at `Meijer_DAG_vs_PhasePoly_2023.pdf`): Meijer-van de Griend — DAG (Qiskit/tket) vs phase polynomial IR comparison. Finding: phase polynomials outperform DAG for CNOT count in long circuits; DAG wins on speed and short circuits. Informs choice of IR for Sturm's `clifford_simp` pass.
+
+**QUIL-ISA-2016** (arXiv:1608.03355): Smith, Curtis, Zeng — Quil instruction set architecture. The original hybrid classical-quantum memory model. Relevant as the conceptual predecessor to OpenQASM 3's classical control features.
+
+**BQSKIT-QFACTOR-2023** (arXiv:2306.08152): Kukliansky et al. — QFactor domain-specific optimizer in BQSKit. Uses tensor networks + local iteration for circuit instantiation. Relevant: shows how numerical synthesis (not just rewrite rules) can be integrated into a compiler pipeline at 100+ qubit scale.
+
+### Key architectural insights for Sturm.jl
+
+1. **DAG is the right IR.** All major frameworks (Qiskit, tket, quilc, staq) converge on DAG as the canonical compilation IR. Sturm's TracingContext already produces a DAG. The `passes/` pipeline should operate on this DAG, not on a flat gate list.
+
+2. **PassManager pattern.** Every framework uses some variant of: `circuit → DAGCircuit → [pass1, pass2, ...] → optimised DAGCircuit → circuit`. Sturm's `passes/` directory should expose this pattern explicitly, with a `run_passes(dag, [pass1, pass2])` entry point.
+
+3. **Gate-set lowering ("nativization") is a separate pass from routing.** quilc makes this explicit. Sturm should follow suit: one pass lowers from 4-primitive DSL to target gate set, a separate pass handles qubit routing.
+
+4. **OpenQASM 3 is the right export target.** Sturm's `when()` maps to OQ3 `if (cbit)` with real-time branching — OQ3 was designed for exactly this use case. The existing `to_openqasm()` in `channel/` is correct to target OQ3.
+
+5. **Verified compilation is possible.** VOQC demonstrates that a small subset of optimization passes can be formally verified in Coq/SQIR. Sturm could adopt the same approach for its rotation-merging pass (gate_cancel.jl) — the proof would be straightforward since it only requires commutativity of Rz rotations on the same wire.
