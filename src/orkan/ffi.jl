@@ -147,12 +147,30 @@ function orkan_state_set!(state::OrkanStateRaw, row::Integer, col::Integer, val:
     nothing
 end
 
+# ── Gate validation ───────────────────────────────────────────────────────────
+# Orkan's GATE_VALIDATE calls exit() on bad input, killing the Julia process.
+# We must validate BEFORE the ccall to get a Julia exception instead.
+
+function _check_qubit(state::OrkanStateRaw, q::Integer, name::Symbol)
+    state.data == C_NULL && error("Orkan.$name: state data is NULL")
+    (0 <= q < state.qubits) || error("Orkan.$name: qubit $q out of range [0, $(state.qubits - 1))")
+end
+
+function _check_distinct(a::Integer, b::Integer, name::Symbol)
+    a != b || error("Orkan.$name: qubits must be distinct (got $a, $b)")
+end
+
+function _check_distinct3(a::Integer, b::Integer, c::Integer, name::Symbol)
+    (a != b && a != c && b != c) || error("Orkan.$name: qubits must be distinct (got $a, $b, $c)")
+end
+
 # ── Gate functions ────────────────────────────────────────────────────────────
 
 # 1-qubit gates (no parameter)
 for gate in (:x, :y, :z, :h, :s, :sdg, :t, :tdg, :hy)
     fname = Symbol(:orkan_, gate, :!)
     @eval function $(fname)(state::OrkanStateRaw, target::Integer)
+        _check_qubit(state, target, $(QuoteNode(gate)))
         @ccall LIBORKAN.$(gate)(
             Ref(state)::Ptr{OrkanStateRaw},
             UInt8(target)::UInt8
@@ -165,6 +183,7 @@ end
 for gate in (:rx, :ry, :rz, :p)
     fname = Symbol(:orkan_, gate, :!)
     @eval function $(fname)(state::OrkanStateRaw, target::Integer, theta::Real)
+        _check_qubit(state, target, $(QuoteNode(gate)))
         @ccall LIBORKAN.$(gate)(
             Ref(state)::Ptr{OrkanStateRaw},
             UInt8(target)::UInt8,
@@ -178,6 +197,9 @@ end
 for gate in (:cx, :cy, :cz)
     fname = Symbol(:orkan_, gate, :!)
     @eval function $(fname)(state::OrkanStateRaw, control::Integer, target::Integer)
+        _check_qubit(state, control, $(QuoteNode(gate)))
+        _check_qubit(state, target, $(QuoteNode(gate)))
+        _check_distinct(control, target, $(QuoteNode(gate)))
         @ccall LIBORKAN.$(gate)(
             Ref(state)::Ptr{OrkanStateRaw},
             UInt8(control)::UInt8,
@@ -188,6 +210,9 @@ for gate in (:cx, :cy, :cz)
 end
 
 function orkan_swap!(state::OrkanStateRaw, q1::Integer, q2::Integer)
+    _check_qubit(state, q1, :swap)
+    _check_qubit(state, q2, :swap)
+    _check_distinct(q1, q2, :swap)
     @ccall LIBORKAN.swap_gate(
         Ref(state)::Ptr{OrkanStateRaw},
         UInt8(q1)::UInt8,
@@ -198,6 +223,10 @@ end
 
 # 3-qubit gate
 function orkan_ccx!(state::OrkanStateRaw, c1::Integer, c2::Integer, target::Integer)
+    _check_qubit(state, c1, :ccx)
+    _check_qubit(state, c2, :ccx)
+    _check_qubit(state, target, :ccx)
+    _check_distinct3(c1, c2, target, :ccx)
     @ccall LIBORKAN.ccx(
         Ref(state)::Ptr{OrkanStateRaw},
         UInt8(c1)::UInt8,

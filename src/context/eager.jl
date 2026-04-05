@@ -164,6 +164,9 @@ function apply_cx!(ctx::EagerContext, control_wire::WireID, target_wire::WireID)
 end
 
 # ── Controlled rotation decompositions ────────────────────────────────────────
+# Ref: Nielsen & Chuang, "Quantum Computation and Quantum Information",
+# 10th Anniversary Edition, §4.3 "Controlled operations", Eq. (4.6)–(4.7).
+# See docs/physics/nielsen_chuang_4.3.md for derivation.
 # C-Ry(θ) = Ry(θ/2) · CX · Ry(-θ/2) · CX
 
 function _controlled_ry!(ctx::EagerContext, ctrl_wire::WireID, target_wire::WireID, angle::Real)
