@@ -9,6 +9,7 @@ include("types/wire.jl")
 include("context/abstract.jl")
 include("context/eager.jl")
 include("types/qbool.jl")
+include("types/qint.jl")
 
 # Quantum control
 include("control/when.jl")
@@ -27,7 +28,7 @@ end
 export AbstractContext, EagerContext, @context, current_context
 
 # Types
-export QBool, WireID, discard!
+export QBool, QInt, WireID, discard!
 
 # Quantum control
 export when
