@@ -12,6 +12,8 @@ Full PRD: `Sturm-PRD.md`.
 
 These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
+0. **MAINTAIN THE WORKLOG.** Every step, every session: update `WORKLOG.md` with gotchas, learnings, surprising decisions, ABI mismatches, test failures and their root causes, anything a future agent would wish it knew. This is the project's institutional memory. If you hit something non-obvious, write it down before moving on.
+
 1. **FAIL FAST, FAIL LOUD.** Assertions, not silent returns. Crashes, not corrupted state. `error()` with a clear message, not a quiet `nothing`. Get errors in front of eyeballs immediately.
 
 2. **CORE CHANGES REQUIRE 3+1 AGENTS.** Any change to core types (`types/`), context interface (`context/abstract.jl`), primitives (`primitives/`), or the Orkan FFI layer requires: 2 proposer subagents (independent designs), 1 implementer. The orchestrating agent is the reviewer (+1). Proposers must not see each other's output. The implementer picks the better design (or synthesises). The orchestrator reviews for PRD conformance, idiomatic DSL usage, and test coverage before accepting.

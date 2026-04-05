@@ -1,4 +1,11 @@
 
+# Julia
+Manifest.toml
+
+# Claude Code plugin artifacts
+.claude/docs/
+.claude/tools/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
