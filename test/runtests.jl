@@ -16,5 +16,6 @@ using Sturm
     include("test_density_matrix.jl")
     include("test_noise.jl")
     include("test_qecc.jl")
+    include("test_grover.jl")
     include("test_memory_safety.jl")
 end

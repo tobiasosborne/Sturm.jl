@@ -63,6 +63,7 @@ export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
 
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate
+export find, amplify, phase_flip!
 
 # Channel / tracing
 export Channel, trace, to_openqasm, ⊗, n_inputs, n_outputs

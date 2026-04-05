@@ -80,3 +80,13 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 - **Phase 11**: depolarise!, dephase!, amplitude_damp! via Kraus→superop pipeline. classicalise() for stochastic maps. **Gotcha: plan's depolarising Kraus operators {√(1-p)I, √(p/3)X, √(p/3)Y, √(p/3)Z} are non-standard.** Fixed to {√(1-3p/4)I, √(p/4)X, √(p/4)Y, √(p/4)Z} so p=1→I/2 (maximally mixed).
 - **Phase 12**: AbstractCode, Steane [[7,1,3]]. Encode/decode roundtrip verified for |0⟩, |1⟩, |+⟩. **Steane encoding circuit needs physics verification** — logical X_L test failed, indicating the CNOT network may not produce canonical codewords. Deferred to future work with full stabilizer verification.
 - 8171 total tests pass across all 12 phases.
+
+### Grover search & amplitude amplification
+- **3+1 agent protocol used.** Two Opus proposers, orchestrator synthesised.
+- **Proposer A** designed QBool-predicate API (oracle returns QBool, library handles phase kickback). **Physics bug:** discard! = measure = decoherence, so the predicate's garbage qubits collapse the superposition. Deferred to future API.
+- **Proposer B** designed `find` naming (matches Julia `findfirst`) with `phase_flip!(x, target)` helper (no garbage qubits, physically correct).
+- **Synthesis:** B's `find` + `phase_flip!` + `amplify`, B's Toffoli cascade, A's iteration formula.
+- **Critical bug found: controlled-Rz(π) ≠ CZ.** `when(ctrl) { target.φ += π }` gives diag(1,1,-i,i), NOT diag(1,1,1,-1). The diffusion operator was applying wrong phases to non-target states. **Fix: `_cz!` function using CP(π) decomposition (2 CX + 3 Rz).** This is the same issue the Python sturm project documented as "Session 8 bug" — Rz vs P gate semantics.
+- **Gotcha: H! = Rz(π)·Ry(π/2) is NOT self-inverse.** H!² = -I (not I). For Grover diffusion, H^⊗W works because -I is a global phase. But superpose!/interfere! (QFT) ≠ H^⊗W on arbitrary states — must use `_hadamard_all!` for Grover.
+- `find(Val(3), target=5)` achieves 95% success rate (theory: 94.5%). 2-bit: 100%.
+- 8452 total tests pass.
