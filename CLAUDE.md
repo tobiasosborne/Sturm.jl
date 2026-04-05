@@ -91,6 +91,8 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 **Future agents: do NOT apply a unitary optimization method to a channel DAG without first partitioning at measurement barriers. This is not optional.**
 
+**HOWEVER**: There is an active research direction (Sturm.jl-d99) to extend phase polynomials to channels via the Choi-Jamiołkowski representation. If the Choi phase polynomial structure survives for channels with measurements, the barrier partitioning becomes unnecessary for phase polynomial methods — they would work natively on the full channel DAG. This would be a major simplification. Check the status of Sturm.jl-d99 before implementing barrier partitioning.
+
 ## Julia Conventions
 
 1. **Module name is `Sturm`.** `using Sturm` brings the public API into scope.
