@@ -72,3 +72,11 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 - **to_openqasm(ch)** exports to OpenQASM 3.0: Ry→ry, Rz→rz, CX→cx, controlled→cry/crz/ccx, ObserveNode→measure.
 - **Decision: measure! returns false as default path in tracing.** Full classical branching (CasesNode with both paths) requires running f twice — deferred to a future enhancement.
 - 5781 total tests pass.
+
+### Phases 8-12 (continued in same session)
+- **Phase 8**: TracingContext, DAG, Channel, trace(), >>, ⊗, to_openqasm(). 
+- **Phase 9**: gate_cancel (rotation merging), defer_measurements (measure→control rewrite).
+- **Phase 10**: DensityMatrixContext using MIXED_PACKED Orkan state. Same interface as EagerContext.
+- **Phase 11**: depolarise!, dephase!, amplitude_damp! via Kraus→superop pipeline. classicalise() for stochastic maps. **Gotcha: plan's depolarising Kraus operators {√(1-p)I, √(p/3)X, √(p/3)Y, √(p/3)Z} are non-standard.** Fixed to {√(1-3p/4)I, √(p/4)X, √(p/4)Y, √(p/4)Z} so p=1→I/2 (maximally mixed).
+- **Phase 12**: AbstractCode, Steane [[7,1,3]]. Encode/decode roundtrip verified for |0⟩, |1⟩, |+⟩. **Steane encoding circuit needs physics verification** — logical X_L test failed, indicating the CNOT network may not produce canonical codewords. Deferred to future work with full stabilizer verification.
+- 8171 total tests pass across all 12 phases.

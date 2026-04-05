@@ -29,6 +29,10 @@ include("passes/deferred_measurement.jl")
 include("noise/channels.jl")
 include("noise/classicalise.jl")
 
+# QECC
+include("qecc/abstract.jl")
+include("qecc/steane.jl")
+
 # Quantum control
 include("control/when.jl")
 
@@ -69,5 +73,8 @@ export gate_cancel, defer_measurements
 
 # Noise
 export depolarise!, dephase!, amplitude_damp!, classicalise
+
+# QECC
+export AbstractCode, Steane, encode!, decode!
 
 end # module Sturm
