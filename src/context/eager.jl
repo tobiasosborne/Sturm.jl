@@ -18,6 +18,10 @@ mutable struct EagerContext <: AbstractContext
     free_slots::Vector{Int}            # recycled qubit indices available for reuse
 
     function EagerContext(; capacity::Int=8)
+        capacity > MAX_QUBITS && error(
+            "EagerContext: initial capacity $capacity exceeds MAX_QUBITS ($MAX_QUBITS). " *
+            "A $capacity-qubit statevector needs $(Base.format_bytes(_estimated_bytes(capacity)))."
+        )
         orkan = OrkanState(ORKAN_PURE, capacity)
         orkan[0] = 1.0 + 0.0im
         new(orkan, 0, Dict{WireID, Int}(), Set{WireID}(), WireID[], capacity, Int[])
@@ -45,12 +49,45 @@ function allocate!(ctx::EagerContext)::WireID
     return wire
 end
 
-"""Double the Orkan state capacity by tensoring with |0...0>."""
+"""Maximum qubit capacity for EagerContext. 2^30 amplitudes × 16 bytes = 16 GB."""
+const MAX_QUBITS = 30
+
+"""Additive growth step: add 4 qubits per resize (×16 amplitudes, not ×2^old_cap)."""
+const GROW_STEP = 4
+
+"""
+    _estimated_bytes(n_qubits) -> Int
+
+Memory in bytes for a PURE statevector with `n_qubits` qubits.
+"""
+_estimated_bytes(n::Int) = (1 << n) * 16
+
+"""
+    _grow_state!(ctx::EagerContext)
+
+Grow Orkan state capacity by GROW_STEP qubits (additive, not doubling).
+Guards against exceeding MAX_QUBITS and checks available memory before allocating.
+"""
 function _grow_state!(ctx::EagerContext)
     old_cap = ctx.capacity
-    new_cap = old_cap * 2
-    old_dim = 1 << old_cap
+    new_cap = old_cap + GROW_STEP
+    new_cap > MAX_QUBITS && error(
+        "EagerContext: capacity would grow to $new_cap qubits " *
+        "($(Base.format_bytes(_estimated_bytes(new_cap)))). " *
+        "Hard limit is $MAX_QUBITS qubits ($(Base.format_bytes(_estimated_bytes(MAX_QUBITS)))). " *
+        "Use qubit recycling (measure/discard) to free slots."
+    )
 
+    needed = _estimated_bytes(new_cap)
+    avail = Sys.free_memory()
+    if needed > avail ÷ 2  # refuse if we'd consume >50% of free RAM
+        error(
+            "EagerContext: growing to $new_cap qubits needs $(Base.format_bytes(needed)) " *
+            "but only $(Base.format_bytes(avail)) free. Aborting to prevent OOM."
+        )
+    end
+
+    old_dim = 1 << old_cap
     new_orkan = OrkanState(ORKAN_PURE, new_cap)
     for i in 0:old_dim-1
         new_orkan[i] = ctx.orkan[i]
