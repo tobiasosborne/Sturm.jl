@@ -18,6 +18,15 @@ mutable struct OrkanState
         end
         obj
     end
+
+    # Private constructor for wrapping a pre-initialized OrkanStateRaw (used by Base.copy)
+    function OrkanState(raw::OrkanStateRaw)
+        obj = new(raw)
+        finalizer(obj) do s
+            orkan_state_free!(s.raw)
+        end
+        obj
+    end
 end
 
 n_qubits(s::OrkanState) = Int(s.raw.qubits)
@@ -38,11 +47,7 @@ end
 function Base.copy(s::OrkanState)
     raw_copy = @ccall LIBORKAN.state_cp(Ref(s.raw)::Ptr{OrkanStateRaw})::OrkanStateRaw
     raw_copy.data == C_NULL && error("Orkan: state_cp failed (out of memory)")
-    obj = new(raw_copy)
-    finalizer(obj) do s2
-        orkan_state_free!(s2.raw)
-    end
-    obj
+    OrkanState(raw_copy)
 end
 
 """

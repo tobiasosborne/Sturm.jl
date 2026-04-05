@@ -175,6 +175,19 @@ using Sturm: OrkanStateRaw, OrkanKrausRaw, OrkanSuperopRaw,
         @test probs[4] ≈ 0.5 atol=1e-12
     end
 
+    @testset "OrkanState copy" begin
+        s = OrkanState(ORKAN_PURE, 2)
+        s[0] = 1/√2  # Bell-like state
+        s[3] = 1/√2
+        s2 = copy(s)
+        # Copy has same amplitudes
+        @test s2[0] ≈ 1/√2 atol=1e-12
+        @test s2[3] ≈ 1/√2 atol=1e-12
+        # Mutating copy doesn't affect original
+        orkan_x!(s2.raw, 0)
+        @test s[0] ≈ 1/√2 atol=1e-12  # original unchanged
+    end
+
     @testset "OrkanState sampling" begin
         s = OrkanState(ORKAN_PURE, 1)
         s[0] = 1/√2
