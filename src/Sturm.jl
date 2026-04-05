@@ -25,6 +25,10 @@ include("channel/openqasm.jl")
 include("passes/gate_cancel.jl")
 include("passes/deferred_measurement.jl")
 
+# Noise channels
+include("noise/channels.jl")
+include("noise/classicalise.jl")
+
 # Quantum control
 include("control/when.jl")
 
@@ -62,5 +66,8 @@ export ClassicalRef
 
 # Optimisation passes
 export gate_cancel, defer_measurements
+
+# Noise
+export depolarise!, dephase!, amplitude_damp!, classicalise
 
 end # module Sturm
