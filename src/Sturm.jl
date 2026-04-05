@@ -20,6 +20,10 @@ include("channel/trace.jl")
 include("channel/compose.jl")
 include("channel/openqasm.jl")
 
+# Optimisation passes
+include("passes/gate_cancel.jl")
+include("passes/deferred_measurement.jl")
+
 # Quantum control
 include("control/when.jl")
 
@@ -54,5 +58,8 @@ export superpose!, interfere!, fourier_sample, phase_estimate
 # Channel / tracing
 export Channel, trace, to_openqasm, ⊗, n_inputs, n_outputs
 export ClassicalRef
+
+# Optimisation passes
+export gate_cancel, defer_measurements
 
 end # module Sturm

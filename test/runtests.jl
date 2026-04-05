@@ -12,5 +12,6 @@ using Sturm
     include("test_qint.jl")
     include("test_patterns.jl")
     include("test_channel.jl")
+    include("test_passes.jl")
     include("test_memory_safety.jl")
 end
