@@ -226,8 +226,6 @@ Convenience: apply exp(-iθhP) to a QInt register.
 """
 function pauli_exp!(reg::QInt{W}, term::PauliTerm{W}, theta::Real) where {W}
     check_live!(reg)
-    ctx = reg.ctx
-    qubits = [QBool(reg.wires[i], ctx, false) for i in 1:W]
-    pauli_exp!(qubits, term, theta)
+    pauli_exp!(collect(_qbool_views(reg)), term, theta)
     return nothing
 end

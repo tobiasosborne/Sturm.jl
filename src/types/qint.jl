@@ -28,6 +28,22 @@ function consume!(q::QInt{W}) where {W}
     q.consumed = true
 end
 
+# ── Wire views ───────────────────────────────────────────────────────────────
+
+"""
+    _qbool_views(reg::QInt{W}) -> NTuple{W, QBool}
+
+Create non-owning QBool views of each wire in a QInt register.
+Stack-allocated (NTuple), zero heap allocation for W ≤ 30.
+
+These views alias the register's wires. They must NOT be consumed or
+discarded — they are borrowed references for applying per-wire operations.
+"""
+@inline function _qbool_views(reg::QInt{W}) where {W}
+    ctx = reg.ctx
+    ntuple(i -> QBool(reg.wires[i], ctx, false), Val(W))
+end
+
 # ── Constructors ─────────────────────────────────────────────────────────────
 
 """

@@ -37,8 +37,6 @@ end
 function evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real,
                  alg::AbstractProductFormula) where {W}
     check_live!(reg)
-    ctx = reg.ctx
-    qubits = [QBool(reg.wires[i], ctx, false) for i in 1:W]
-    evolve!(qubits, H, t, alg)
+    evolve!(collect(_qbool_views(reg)), H, t, alg)
     return reg
 end
