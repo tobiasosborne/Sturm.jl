@@ -322,3 +322,133 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 - **Issues created**: Sturm.jl-6mq, 7i4, y2k, uod (remaining perf opportunities)
 - **8484 tests pass**
 - **All code committed and pushed**
+
+## 2026-04-06 — Session 4: Literature Survey + Simulation Module
+
+### Literature survey: quantum simulation algorithms (~170 papers, 8 categories)
+
+Comprehensive survey of the entire quantum simulation field. **8 parallel Sonnet research agents** produced standardized reports, each with per-paper entries (citation, arXiv, contribution, complexity, limitations, dependencies).
+
+**Categories and paper counts:**
+1. `product_formulas/` (28 papers): Trotter 1959 → Kulkarni 2026 (Trotter scars, entanglement-dependent bounds)
+2. `randomized_methods/` (21 papers): qDRIFT (Campbell 2019) → stochastic QSP (Martyn-Rall 2025), random-LCHS
+3. `lcu_taylor_series/` (18 papers): Berry-Childs lineage 2007→QSVT, interaction picture, time-dependent, LCHS
+4. `qsp_qsvt/` (28 papers): Low-Chuang → GQSP (Motlagh 2024, degree 10^7 in <1min), grand unification
+5. `quantum_walks/` (18 papers): Szegedy → qubitization (walk operators ARE block encodings for QSVT)
+6. `variational_hybrid/` (24 papers): VQE, ADAPT-VQE, VQS, barren plateaus, error mitigation, QAOA
+7. `applications_chemistry/` (23 papers): 10^6× T-gate reduction from Reiher 2017 to Lee 2021 (THC)
+8. `surveys_complexity/` (28 papers): Feynman 1982 → Dalzell 2023 (337-page comprehensive survey)
+
+**Paper downloads:**
+- **95 unique arXiv PDFs** (141 MB total) + 46 cross-category symlinks
+- **6 paywalled papers** fetched via Playwright + TIB VPN (Trotter, Feynman, Suzuki ×3, Lloyd)
+- **Portable download script**: `bash docs/literature/quantum_simulation/download_all.sh`
+  - Phase 1: all arXiv papers via curl (no VPN)
+  - Phase 2: paywalled papers via `node docs/literature/quantum_simulation/fetch_paywalled.mjs` (needs TIB VPN + Playwright from `../qvls-sturm/viz/node_modules/playwright`)
+
+**Key findings for Sturm.jl:**
+- QSP signal processing rotations ARE the θ/φ primitives. Block encoding uses controlled ops (when/⊻=). No new primitives needed.
+- GQSP (Motlagh 2024) is the recommended classical preprocessor for QSP phase angles.
+- Szegedy walk operators decompose exactly into 4 primitives (reflections = state prep + CNOT + phase kick + uncompute).
+- `pauli_exp!` is the universal building block: every simulation algorithm (Trotter, qDRIFT, LCU) compiles to Pauli exponentials.
+- Variational circuits (VQE/ADAPT) are directly expressible as θ/φ rotation + CNOT entangling layers.
+
+### Simulation module: `src/simulation/` (3+1 agent protocol, Opus proposers)
+
+**3+1 protocol executed with two Opus proposers:**
+- **Proposer A**: Symbol-based Pauli encoding (`:I,:X,:Y,:Z`), `Ry(-π/2)` for X→Z basis change, single `Trotterize` struct with order field, `simulate!` naming.
+- **Proposer B**: PauliOp struct with bit encoding, `H!` for X→Z basis change, separate `Trotter1/Trotter2/Suzuki` structs, `evolve!` naming, `solve` channel factory.
+
+**CRITICAL PHYSICS FINDING during orchestrator review:**
+- **Proposer B's X basis change using H! has a sign error.** H! = Rz(π)·Ry(π/2) in Sturm is NOT proportional to the standard Hadamard H. H!² = -I ≠ I. Conjugation H!†·Z·H! = -X (not X). This means exp(-iθ·(-X)) = exp(+iθX) — wrong sign for X terms.
+- **Proposer A's `Ry(-π/2)` is correct**: Ry(-π/2)·X·Ry(π/2) = Z ✓. Verified by explicit matrix computation.
+- The sign error is undetectable in single-qubit measurement tests (|⟨k|exp(±iθP)|ψ⟩|² are identical) but would cause Trotter simulation to evolve under the WRONG Hamiltonian (X coefficients negated).
+- **This is why the ground truth literature check matters.** The bug would have shipped if we'd only tested with measurement statistics.
+
+**Synthesis: A's physics + B's API structure.**
+
+**Files created:**
+```
+src/simulation/
+    hamiltonian.jl      # PauliOp (@enum), PauliTerm{N}, PauliHamiltonian{N}
+    pauli_exp.jl        # exp(-iθP) → 4 primitives (Ry(-π/2) for X, Rx(π/2) for Y)
+    trotter.jl          # Trotter1, Trotter2, Suzuki structs + recursion
+    models.jl           # ising(Val(N)), heisenberg(Val(N))
+    evolve.jl           # evolve!(reg, H, t, alg) API
+test/
+    test_simulation.jl  # 78 tests: Orkan amplitudes + matrix ground truth + DAG emit
+```
+
+**Physics derivations (in pauli_exp.jl comments):**
+- X→Z: V = Ry(-π/2), proof: Ry(-π/2)·X·Ry(π/2) = Z. In primitives: `q.θ -= π/2`.
+- Y→Z: V = Rx(π/2) = Rz(-π/2)·Ry(π/2)·Rz(π/2), proof: Rx(-π/2)·Z·Rx(π/2) = Y. In primitives: `q.φ += π/2; q.θ += π/2; q.φ -= π/2`.
+- CNOT staircase: Z^⊗m eigenvalue = (-1)^parity, compute parity via CNOT chain, Rz(2θ) on pivot.
+- Suzuki recursion: S₂ₖ(t) = [S₂ₖ₋₂(pₖt)]² · S₂ₖ₋₂((1-4pₖ)t) · [S₂ₖ₋₂(pₖt)]², pₖ = 1/(4-4^{1/(2k-1)}). Cited: Suzuki 1991 Eqs. (3.14)-(3.16).
+
+**Three-pipeline test verification:**
+1. **Orkan amplitudes**: exact state vectors match analytical exp(-iθP)|ψ⟩ for Z, X, Y, ZZ, XX, YY, XZ, XYZ (all to 1e-11).
+2. **Linear algebra ground truth**: matrix exp(-iHt) via eigendecomposition matches Trotter evolution. Convergence: error(T1) > error(T2) > error(S4).
+3. **DAG emit**: TracingContext captures simulation circuits as Channel, exports to OpenQASM.
+
+**Gotcha: Orkan LSB qubit ordering.** PauliTerm position i maps to Orkan qubit (i-1), which is bit (i-1) in the state vector index. `|10⟩` in term notation (qubit 1 flipped) = Orkan index 1 (not 2). Matrix ground truth tests must use `kron(qubit1_op, qubit0_op)` to match Orkan ordering. Cost one debugging cycle.
+
+### Benchmark results: Trotter-Suzuki convergence (verified against Suzuki 1991)
+
+**Convergence rates (N=8 Ising, t=1.0, doubling steps):**
+
+| Algorithm | Expected rate | Measured rate |
+|-----------|--------------|---------------|
+| Trotter1 (order 1) | 2× | **2.0×** |
+| Trotter2 (order 2) | 4× | **4.0×** |
+| Suzuki-4 (order 4) | 16× | **16.0×** |
+| Suzuki-6 (order 6) | 64× | **64-66×** |
+
+Textbook perfect. Suzuki-6 hits machine precision (~10⁻¹²) at 32 steps.
+
+**Error vs system size (t=0.5, 5 steps, exact diag reference up to N=14):**
+
+| N | λ(H) | Trotter1 | Trotter2 | Suzuki-4 | Suzuki-6 |
+|---|------|----------|----------|----------|----------|
+| 4 | 5.0 | 6.7e-2 | 3.0e-3 | 3.4e-6 | 5.9e-10 |
+| 8 | 11.0 | 1.1e-1 | 5.6e-3 | 6.3e-6 | 1.1e-9 |
+| 14 | 20.0 | 1.7e-1 | 9.0e-3 | 9.5e-6 | 1.7e-9 |
+| 20* | 29.0 | 2.2e-1 | 1.2e-2 | 1.2e-5 | 2.1e-9 |
+
+Errors scale weakly (~linearly) with N. Suzuki-6 achieves 10⁻⁹ accuracy across all sizes with just 5 steps.
+
+**Analytical bounds vs measured (N=8, t=1.0, 10 steps):**
+Simple bound (λ·dt)^{2k+1} is conservative by 10×–10⁹× (commutator prefactors not computed). Childs et al. 2021 commutator-scaling bounds would be tighter but require nested commutator norms.
+
+### Performance at N=24 (256 MB state vector)
+
+- **~2.6 s per Trotter2 step** regardless of OMP thread count (16, 32, 48, or 64)
+- **Bottleneck: memory bandwidth**, not parallelism. Each gate traverses 2^24 × 16 bytes = 256 MB (exceeds L3 cache). Single Ry takes ~10 ms, CX ~13 ms.
+- 16 threads IS helping (vs 1 thread would be ~4× slower for Ry/Rz) — but scaling flattens beyond 16 because the bandwidth is saturated.
+- 282 gates per Trotter2 step for N=24 Ising (47 terms × 2 sweeps × ~3 primitives/term).
+- Circuit DAG is tiny: 282 nodes, 13 KB. The cost is ALL in statevector simulation.
+
+### Session 4 final status
+- **8530+ tests pass** (78 new simulation tests)
+- **Literature**: 95 PDFs + 6 paywalled + 8 survey reports + portable download script
+- **Simulation module**: PauliHamiltonian, pauli_exp!, Trotter1/2, Suzuki-4/6, evolve!, ising(), heisenberg()
+- **Verified**: convergence rates match Suzuki 1991 exactly, 3-pipeline tests (Orkan + linalg + DAG)
+
+### What the next session should do
+1. **Implement qDRIFT** — second algorithm, shares `pauli_exp!`, extends `AbstractSimAlgorithm`
+2. **Implement commutator-scaling error bounds** — Childs et al. 2021 Theorem 1, tighter than (λ·dt)^{2k+1}
+3. **Multiproduct formulas** — Faehrmann et al. 2022, randomized MPF for higher-order without ancilla
+4. **Gate cancellation on simulation circuits** — adjacent Ry(-π/2)·Ry(π/2) from basis change/unchange should cancel
+5. **MCGS integration** — the unique competitive advantage (Rosenhahn-Osborne trilogy)
+6. **Resolve Sturm.jl-d99** — Choi phase polynomials (determines passes architecture)
+
+### Paper download instructions for new machines
+```bash
+# From repo root:
+# Phase 1: arXiv papers (no VPN, ~5 min)
+bash docs/literature/quantum_simulation/download_all.sh
+
+# Phase 2: Paywalled papers (needs TIB VPN + Node.js + Playwright)
+# Edit fetch_paywalled.mjs line 10: update Playwright import path to local install
+# Then:
+node docs/literature/quantum_simulation/fetch_paywalled.mjs
+```
