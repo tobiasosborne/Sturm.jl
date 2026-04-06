@@ -111,22 +111,24 @@ function _trotter2_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N}, dt::Real
     end
 end
 
-"""Recursive Suzuki step of order 2k. Base case: order 2 → _trotter2_step!."""
+"""Recursive Suzuki step. Base case Val(2) → _trotter2_step!.
+Uses Val{K} dispatch so the compiler inlines the full recursion tree."""
 function _suzuki_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
-                       dt::Real, order::Int) where {N}
-    if order == 2
-        _trotter2_step!(qubits, H, dt)
-        return
-    end
-    k = order ÷ 2
-    p = _suzuki_p(k)
-    inner = order - 2
+                       dt::Real, ::Val{2}) where {N}
+    _trotter2_step!(qubits, H, dt)
+end
+
+function _suzuki_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
+                       dt::Real, ::Val{K}) where {N, K}
+    # k = K ÷ 2 aligns with Suzuki 1991 indexing: order 2k uses p_k
+    p = _suzuki_p(K ÷ 2)
+    inner_order = Val(K - 2)
     # S₂ₖ(dt) = S₂ₖ₋₂(p·dt)² · S₂ₖ₋₂((1-4p)·dt) · S₂ₖ₋₂(p·dt)²
-    _suzuki_step!(qubits, H, p * dt, inner)
-    _suzuki_step!(qubits, H, p * dt, inner)
-    _suzuki_step!(qubits, H, (1 - 4p) * dt, inner)
-    _suzuki_step!(qubits, H, p * dt, inner)
-    _suzuki_step!(qubits, H, p * dt, inner)
+    _suzuki_step!(qubits, H, p * dt, inner_order)
+    _suzuki_step!(qubits, H, p * dt, inner_order)
+    _suzuki_step!(qubits, H, (1 - 4p) * dt, inner_order)
+    _suzuki_step!(qubits, H, p * dt, inner_order)
+    _suzuki_step!(qubits, H, p * dt, inner_order)
 end
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -151,6 +153,6 @@ function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
                          t::Real, alg::Suzuki) where {N}
     dt = t / alg.steps
     for _ in 1:alg.steps
-        _suzuki_step!(qubits, H, dt, alg.order)
+        _suzuki_step!(qubits, H, dt, Val(alg.order))
     end
 end
