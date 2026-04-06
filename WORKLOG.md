@@ -286,7 +286,8 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 - **Gotcha: TLS lookup overhead.** Replacing `proxy.ctx` with `current_context()` (task_local_storage) added ~60ms for 2M calls. Net loss vs allocation saving. Reverted.
 - **Results at 2000 qubits:**
   - Trace: 693ms → 514ms (1.35x faster)
-  - DAG live: 149 MB → 80 MB (1.86x less) — **now less than cq_impr (95 MB)**
+  - DAG live (summarysize): 149 MB → 80 MB (1.86x less)
+  - Peak RSS: ~554 MB (Julia runtime ~200 MB + DAG + GC churn). NOT comparable to cq_impr's 95 MB RSS (C process, no runtime overhead). The per-node data is comparable: Sturm 42 bytes/node vs cq_impr 40 bytes/gate.
   - Bytes/node: 78 → 42 (1.86x smaller)
   - Allocations: 353 MB → 261 MB (1.35x less)
 - **Max 2 when()-controls limitation** — covers all current use cases (deepest nesting = 1). Error on >2 with message pointing to Phase 3.
