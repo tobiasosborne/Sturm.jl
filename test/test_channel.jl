@@ -48,8 +48,8 @@ using Sturm
         @test length(ctx.dag) == 1
         node = ctx.dag[1]
         @test node isa Sturm.RyNode
-        @test length(node.controls) == 1
-        @test node.controls[1] == w1
+        @test node.ncontrols == 1
+        @test node.ctrl1 == w1
     end
 
     @testset "TracingContext records measurement" begin

@@ -54,10 +54,10 @@ end
 
 function _node_to_qasm(node::RyNode, idx, _)
     q = "q[$(idx[node.wire])]"
-    if isempty(node.controls)
+    if node.ncontrols == 0
         "ry($(node.angle)) $q;"
-    elseif length(node.controls) == 1
-        c = "q[$(idx[node.controls[1]])]"
+    elseif node.ncontrols == 1
+        c = "q[$(idx[node.ctrl1])]"
         "cry($(node.angle)) $c, $q;"
     else
         error("OpenQASM: multi-controlled Ry not supported")
@@ -66,10 +66,10 @@ end
 
 function _node_to_qasm(node::RzNode, idx, _)
     q = "q[$(idx[node.wire])]"
-    if isempty(node.controls)
+    if node.ncontrols == 0
         "rz($(node.angle)) $q;"
-    elseif length(node.controls) == 1
-        c = "q[$(idx[node.controls[1]])]"
+    elseif node.ncontrols == 1
+        c = "q[$(idx[node.ctrl1])]"
         "crz($(node.angle)) $c, $q;"
     else
         error("OpenQASM: multi-controlled Rz not supported")
@@ -79,10 +79,10 @@ end
 function _node_to_qasm(node::CXNode, idx, _)
     ctrl = "q[$(idx[node.control])]"
     tgt = "q[$(idx[node.target])]"
-    if isempty(node.controls)
+    if node.ncontrols == 0
         "cx $ctrl, $tgt;"
-    elseif length(node.controls) == 1
-        extra = "q[$(idx[node.controls[1]])]"
+    elseif node.ncontrols == 1
+        extra = "q[$(idx[node.ctrl1])]"
         "ccx $extra, $ctrl, $tgt;"
     else
         error("OpenQASM: multi-controlled CX not supported")
@@ -121,19 +121,19 @@ function _collect_wires!(set::Set{WireID}, dag::Vector{DAGNode})
 end
 
 function _collect_wires!(s::Set{WireID}, n::RyNode)
-    push!(s, n.wire); for w in n.controls; push!(s, w); end
+    push!(s, n.wire); for w in get_controls(n); push!(s, w); end
 end
 function _collect_wires!(s::Set{WireID}, n::RzNode)
-    push!(s, n.wire); for w in n.controls; push!(s, w); end
+    push!(s, n.wire); for w in get_controls(n); push!(s, w); end
 end
 function _collect_wires!(s::Set{WireID}, n::CXNode)
-    push!(s, n.control); push!(s, n.target); for w in n.controls; push!(s, w); end
+    push!(s, n.control); push!(s, n.target); for w in get_controls(n); push!(s, w); end
 end
 function _collect_wires!(s::Set{WireID}, n::ObserveNode)
     push!(s, n.wire)
 end
 function _collect_wires!(s::Set{WireID}, n::PrepNode)
-    push!(s, n.wire); for w in n.controls; push!(s, w); end
+    push!(s, n.wire); for w in get_controls(n); push!(s, w); end
 end
 function _collect_wires!(s::Set{WireID}, n::DiscardNode)
     push!(s, n.wire)

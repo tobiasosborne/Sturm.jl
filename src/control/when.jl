@@ -9,7 +9,7 @@ Usage:
         target.φ += π/4    # controlled-T
     end
 """
-function when(f::Function, ctrl::QBool)
+@inline function when(f::Function, ctrl::QBool)
     check_live!(ctrl)
     push_control!(ctrl.ctx, ctrl.wire)
     try

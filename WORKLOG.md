@@ -275,7 +275,25 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 - **Limitation**: per-wire single-candidate tracking can miss merges when multiple controlled rotations on the same wire have different controls. Multi-pass iteration compensates — typically converges in 1-2 passes.
 - Research agents surveyed: Julia union-splitting (4 types), LightSumTypes.jl (0-alloc tagged union), StaticArrays.jl, Bumper.jl, StructArrays.jl. Qiskit/tket/quilc all use per-wire forward tables — same design we adopted.
 
-### Remaining performance opportunities (not yet implemented)
-1. **Trace construction (693ms)** — the bottleneck is now `copy(ctx.control_stack)` on every gate (2 allocations per gate). Fix: shared sentinel `const EMPTY_CONTROLS = WireID[]` for uncontrolled gates.
-2. **78 bytes/node → 16 bytes** — Replace `Vector{WireID}` controls with NTuple{N,WireID} or use LightSumTypes.jl for zero-alloc tagged union.
-3. **cq_impr target (65ms)** — requires both #1 and #2, plus potentially SoA (struct-of-arrays) layout via StructArrays.jl.
+### Phase 2: Inline controls — 42 bytes/node, 80 MB live (Session 3 continued)
+- **Replaced `controls::Vector{WireID}` with inline fields** `ncontrols::UInt8, ctrl1::WireID, ctrl2::WireID` in all node types (RyNode, RzNode, CXNode, PrepNode).
+- **Eliminated `copy(ctx.control_stack)` entirely** — tracing reads stack directly into inline fields. Zero allocation per gate.
+- **Added `get_controls(node)` accessor** returning a tuple (zero-alloc iteration).
+- **Added `_same_controls(a, b)`** for efficient controls comparison.
+- **All node types now `isbitstype = true`** (24 bytes each). Still boxed in `Vector{DAGNode}` (abstract type), but the controls Vector allocation is gone.
+- **Updated 52 lines across 7 files** — dag.jl, tracing.jl, gate_cancel.jl, deferred_measurement.jl, openqasm.jl, compose.jl, tests.
+- **Gotcha: `Symbol` is NOT `isbitstype` in Julia.** Original BlochProxy redesign used Bool → no improvement because the proxy was already being stack-allocated via escape analysis. Reverted BlochProxy to original (with @inline).
+- **Gotcha: TLS lookup overhead.** Replacing `proxy.ctx` with `current_context()` (task_local_storage) added ~60ms for 2M calls. Net loss vs allocation saving. Reverted.
+- **Results at 2000 qubits:**
+  - Trace: 693ms → 514ms (1.35x faster)
+  - DAG live: 149 MB → 80 MB (1.86x less) — **now less than cq_impr (95 MB)**
+  - Bytes/node: 78 → 42 (1.86x smaller)
+  - Allocations: 353 MB → 261 MB (1.35x less)
+- **Max 2 when()-controls limitation** — covers all current use cases (deepest nesting = 1). Error on >2 with message pointing to Phase 3.
+- 8484 tests pass.
+
+### Remaining performance opportunities
+1. **Trace construction (514ms → target 65ms)** — remaining gap is node struct boxing (~2M allocs into abstract `Vector{DAGNode}`). Fix: LightSumTypes.jl @sumtype or flat packed array.
+2. **42 bytes/node → 16 bytes** — eliminate abstract-type boxing overhead (16-byte GC header per boxed node).
+3. **BlochProxy** — already stack-allocated by escape analysis. No further improvement without DSL syntax change.
+4. **when() closure** — @inline added but closure may still allocate. Macro alternative possible for internal hot paths.

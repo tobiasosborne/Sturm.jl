@@ -42,7 +42,7 @@ struct BlochProxy
     parent::QBool  # to check liveness
 end
 
-function Base.getproperty(q::QBool, s::Symbol)
+@inline function Base.getproperty(q::QBool, s::Symbol)
     if s === :θ
         check_live!(q)
         return BlochProxy(getfield(q, :wire), :θ, getfield(q, :ctx), q)
@@ -62,7 +62,7 @@ end
 struct _RotationApplied end
 const ROTATION_APPLIED = _RotationApplied()
 
-function Base.:+(proxy::BlochProxy, δ::Real)
+@inline function Base.:+(proxy::BlochProxy, δ::Real)
     check_live!(proxy.parent)
     if proxy.axis === :θ
         apply_ry!(proxy.ctx, proxy.wire, δ)

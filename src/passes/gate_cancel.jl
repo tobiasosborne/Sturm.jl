@@ -34,19 +34,19 @@ end
 
 """Check if two nodes can be merged (same type, same wire, same controls)."""
 _can_merge(::DAGNode, ::DAGNode) = false
-_can_merge(a::RyNode, b::RyNode) = a.wire == b.wire && a.controls == b.controls
-_can_merge(a::RzNode, b::RzNode) = a.wire == b.wire && a.controls == b.controls
-_can_merge(a::CXNode, b::CXNode) = a.control == b.control && a.target == b.target && a.controls == b.controls
+_can_merge(a::RyNode, b::RyNode) = a.wire == b.wire && _same_controls(a, b)
+_can_merge(a::RzNode, b::RzNode) = a.wire == b.wire && _same_controls(a, b)
+_can_merge(a::CXNode, b::CXNode) = a.control == b.control && a.target == b.target && _same_controls(a, b)
 
 """Merge two rotation nodes. Returns `nothing` if the result is identity."""
 function _merge_rotations(a::RyNode, b::RyNode)
     total = mod(a.angle + b.angle + π, 2π) - π
-    abs(total) < 1e-10 ? nothing : RyNode(a.wire, total, copy(a.controls))
+    abs(total) < 1e-10 ? nothing : RyNode(a.wire, total, a.ncontrols, a.ctrl1, a.ctrl2)
 end
 
 function _merge_rotations(a::RzNode, b::RzNode)
     total = mod(a.angle + b.angle + π, 2π) - π
-    abs(total) < 1e-10 ? nothing : RzNode(a.wire, total, copy(a.controls))
+    abs(total) < 1e-10 ? nothing : RzNode(a.wire, total, a.ncontrols, a.ctrl1, a.ctrl2)
 end
 
 # CX · CX = I
@@ -153,7 +153,7 @@ function _register_and_block!(node::RyNode, idx, ry_cand, rz_cand, cx_cand)
     # Ry blocks CX involving this wire
     _remove_cx_with_wire!(cx_cand, w)
     # Acting on a control wire invalidates candidates controlled by it
-    for c in node.controls
+    for c in get_controls(node)
         delete!(ry_cand, c)
         delete!(rz_cand, c)
         _remove_cx_with_wire!(cx_cand, c)
@@ -168,7 +168,7 @@ function _register_and_block!(node::RzNode, idx, ry_cand, rz_cand, cx_cand)
     # Rz blocks CX where w is TARGET (Rz on CX target doesn't commute)
     # Rz does NOT block CX where w is CONTROL (commutation rule!)
     _remove_cx_with_target!(cx_cand, w)
-    for c in node.controls
+    for c in get_controls(node)
         delete!(ry_cand, c)
         delete!(rz_cand, c)
         _remove_cx_with_wire!(cx_cand, c)
@@ -186,7 +186,7 @@ function _register_and_block!(node::CXNode, idx, ry_cand, rz_cand, cx_cand)
     _remove_cx_with_wire!(cx_cand, ctrl)
     _remove_cx_with_wire!(cx_cand, tgt)
     cx_cand[(ctrl, tgt)] = idx
-    for c in node.controls
+    for c in get_controls(node)
         delete!(ry_cand, c)
         delete!(rz_cand, c)
         _remove_cx_with_wire!(cx_cand, c)
@@ -260,15 +260,15 @@ end
 
 # ── Legacy API (kept for _wires_of users in other passes) ────────────
 
-_wires_of(n::RyNode)      = _wire_set(n.wire, n.controls)
-_wires_of(n::RzNode)      = _wire_set(n.wire, n.controls)
-_wires_of(n::PrepNode)    = _wire_set(n.wire, n.controls)
+_wires_of(n::RyNode)      = _wire_set(n.wire, get_controls(n))
+_wires_of(n::RzNode)      = _wire_set(n.wire, get_controls(n))
+_wires_of(n::PrepNode)    = _wire_set(n.wire, get_controls(n))
 _wires_of(n::ObserveNode) = Set{WireID}((n.wire,))
 _wires_of(n::DiscardNode) = Set{WireID}((n.wire,))
 
 function _wires_of(n::CXNode)
     s = Set{WireID}((n.control, n.target))
-    for c in n.controls; push!(s, c); end
+    for c in get_controls(n); push!(s, c); end
     s
 end
 
@@ -279,7 +279,7 @@ function _wires_of(n::CasesNode)
     s
 end
 
-function _wire_set(wire::WireID, controls::Vector{WireID})
+function _wire_set(wire::WireID, controls)
     s = Set{WireID}((wire,))
     for c in controls; push!(s, c); end
     s

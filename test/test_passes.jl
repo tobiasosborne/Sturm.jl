@@ -218,7 +218,7 @@ using Sturm
         opt = gate_cancel(dag)
         @test length(opt) == 1
         @test opt[1].angle ≈ π/2
-        @test opt[1].controls == [c]
+        @test c in Sturm.get_controls(opt[1])
     end
 
     @testset "Controlled rotations: different controls don't merge" begin
@@ -314,7 +314,7 @@ using Sturm
         @test !any(n -> n isa Sturm.CasesNode, opt)
         @test length(opt) == 1
         @test opt[1] isa Sturm.RyNode
-        @test w1 in opt[1].controls
+        @test w1 in Sturm.get_controls(opt[1])
     end
 
     @testset "Deferred measurement: both branches" begin
