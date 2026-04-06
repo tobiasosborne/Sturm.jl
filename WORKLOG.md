@@ -427,16 +427,62 @@ Simple bound (λ·dt)^{2k+1} is conservative by 10×–10⁹× (commutator prefa
 - 282 gates per Trotter2 step for N=24 Ising (47 terms × 2 sweeps × ~3 primitives/term).
 - Circuit DAG is tiny: 282 nodes, 13 KB. The cost is ALL in statevector simulation.
 
+### Code review (3 Sonnet reviewers: Architecture, Code Quality, Test Coverage)
+
+**Reviewer A (Architecture):**
+- C1: `nqubits/nterms/lambda` exports pollute namespace → **FIXED**: removed from exports
+- C2: `evolve!` QInt overload accepted `AbstractSimAlgorithm` but only product formulas work → **FIXED**: narrowed to `AbstractProductFormula`
+- C3: `fourier_sample` docstring wrong signature (Int vs Val) → **FIXED**
+- C4: 2-control cap in TracingContext breaks n>2 Grover tracing → **DEFERRED** (needs DAG extension)
+- W1: `when.jl` include order fragile → **FIXED**: moved before gates.jl
+- W4: No `trace(f, ::Val{W})` for QInt circuits → **FIXED**: added
+
+**Reviewer B (Code Quality):**
+- C1: `_support` allocates Vector in hot loop → **FIXED**: replaced with inline iteration over ops tuple (zero allocation)
+- C2: Global `_wire_counter` not thread-safe → **DEFERRED** (architectural)
+- C3: QBool vector pattern allocates per call → **PARTIALLY FIXED**: added `_qbool_views` helper returning NTuple
+- C4: Support not cached across Trotter steps → **FIXED**: eliminated _support entirely, iterate ops directly
+- W1: `QBool.ctx` is AbstractContext → **DEFERRED** (requires 3+1 for core type change)
+- W3: NaN/Inf not rejected by evolve! → **FIXED**: added `isfinite(t)` guard
+- W4: Suzuki recursion dispatches on Int → **FIXED**: Val{K} dispatch for compile-time inlining
+- W7: `_SYM_TO_PAULI` Dict → **FIXED**: replaced with `@inline _sym_to_pauli` function
+- W8: `_diffusion!` rebuilds QBool vector unnecessarily → **FIXED**: reuse qs
+
+**Reviewer C (Test Coverage):**
+- C2: No negative coefficient test → **FIXED**: added exp(-iθ(-Z)) and exp(-iθ(-X)) tests
+- C3: No test for negative time guard → **FIXED**: added
+- C4: Suzuki order 6/8 never exercised → **FIXED**: added order-6 convergence test
+- W1: YY testset title missing `im` → **FIXED**
+- W3: evolve! on QInt no state check → **FIXED**: added amplitude verification
+- W4: No DensityMatrixContext + evolve! test → **FIXED**: added statistical test
+- W5: No Trotter1==Trotter2 on 1-term test → **FIXED**: added
+- W7: Matrix ground truth tolerance too loose → **FIXED**: 1e-4 → 1e-6 for Trotter2
+
+**Gotcha: Unverified citations.** I initially cited "Sachdev (2011), Eq. (1.1)" without having the PDF or verifying the equation — violating Rule 4 (PHYSICS = LOCAL PDF + EQUATION). Caught and corrected: replaced with Childs et al. 2021 (arXiv:1912.08854) Eq. (99) for Ising and Eq. (288) for Heisenberg, both verified against the local PDF on pages 32 and 68 respectively. Sachdev QPT Ch.1 downloaded to docs/physics/ but doesn't contain the explicit Pauli-form Hamiltonian (it's in a later chapter).
+
+**Additional fixes applied:**
+- Added `AbstractStochasticAlgorithm`, `AbstractQueryAlgorithm` stub types for future qDRIFT/LCU
+- Added `ising(N::Int)` and `heisenberg(N::Int)` convenience wrappers
+- Added ABI exception comment to noise/channels.jl (Kraus operators bypass DSL primitives)
+- Removed `_commutes` and `_weight` dead code from hamiltonian.jl
+- Added `sizehint!(dag, 256)` to TracingContext constructor
+- Fixed heisenberg tuple type stability (Float64 cast)
+- Used `mapreduce` for `lambda()` (more idiomatic)
+
+**Total: 21 review issues closed, 90 simulation tests pass.**
+
 ### Session 4 final status
-- **8530+ tests pass** (78 new simulation tests)
+- **8530+ tests pass** (90 simulation tests, up from 78)
 - **Literature**: 95 PDFs + 6 paywalled + 8 survey reports + portable download script
-- **Simulation module**: PauliHamiltonian, pauli_exp!, Trotter1/2, Suzuki-4/6, evolve!, ising(), heisenberg()
+- **Simulation module**: PauliHamiltonian, pauli_exp! (zero-alloc), Trotter1/2, Suzuki-4/6, evolve!, ising(), heisenberg()
 - **Verified**: convergence rates match Suzuki 1991 exactly, 3-pipeline tests (Orkan + linalg + DAG)
+- **Code review**: 3 reviewers, 21 issues fixed, 7 deferred (core type changes, architectural)
+- **104 total beads issues** (37 closed, 67 open)
 
 ### What the next session should do
-1. **Implement qDRIFT** — second algorithm, shares `pauli_exp!`, extends `AbstractSimAlgorithm`
-2. **Implement commutator-scaling error bounds** — Childs et al. 2021 Theorem 1, tighter than (λ·dt)^{2k+1}
-3. **Multiproduct formulas** — Faehrmann et al. 2022, randomized MPF for higher-order without ancilla
+1. **Implement qDRIFT** — second algorithm, shares `pauli_exp!`, extends `AbstractStochasticAlgorithm`
+2. **Parametrise QBool{C} on context type** — highest-impact perf fix, requires 3+1 (Sturm.jl-26s)
+3. **Implement commutator-scaling error bounds** — Childs et al. 2021 Theorem 1
 4. **Gate cancellation on simulation circuits** — adjacent Ry(-π/2)·Ry(π/2) from basis change/unchange should cancel
 5. **MCGS integration** — the unique competitive advantage (Rosenhahn-Osborne trilogy)
 6. **Resolve Sturm.jl-d99** — Choi phase polynomials (determines passes architecture)
@@ -448,7 +494,8 @@ Simple bound (λ·dt)^{2k+1} is conservative by 10×–10⁹× (commutator prefa
 bash docs/literature/quantum_simulation/download_all.sh
 
 # Phase 2: Paywalled papers (needs TIB VPN + Node.js + Playwright)
-# Edit fetch_paywalled.mjs line 10: update Playwright import path to local install
-# Then:
+# Playwright import in fetch_paywalled.mjs uses:
+#   /home/tobiasosborne/Projects/qvls-sturm/viz/node_modules/playwright/index.mjs
+# Edit line 10 to match your local Playwright install path, then:
 node docs/literature/quantum_simulation/fetch_paywalled.mjs
 ```
