@@ -56,20 +56,34 @@ current_controls(ctx::TracingContext) = copy(ctx.control_stack)
 
 # ── Gate recording ───────────────────────────────────────────────────────────
 
+# Inline controls from the control stack — zero allocation.
+# Reads directly from the stack without copy().
+@inline function _inline_from_stack(stack::Vector{WireID})
+    n = length(stack)
+    n > 2 && error("Maximum 2 when()-controls supported, got $n")
+    nc = UInt8(n)
+    c1 = n >= 1 ? stack[1] : _ZERO_WIRE
+    c2 = n >= 2 ? stack[2] : _ZERO_WIRE
+    (nc, c1, c2)
+end
+
 function apply_ry!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
-    push!(ctx.dag, RyNode(wire, Float64(angle), copy(ctx.control_stack)))
+    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
+    push!(ctx.dag, RyNode(wire, Float64(angle), nc, c1, c2))
 end
 
 function apply_rz!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
-    push!(ctx.dag, RzNode(wire, Float64(angle), copy(ctx.control_stack)))
+    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
+    push!(ctx.dag, RzNode(wire, Float64(angle), nc, c1, c2))
 end
 
 function apply_cx!(ctx::TracingContext, control_wire::WireID, target_wire::WireID)
     _resolve_tracing(ctx, control_wire)
     _resolve_tracing(ctx, target_wire)
-    push!(ctx.dag, CXNode(control_wire, target_wire, copy(ctx.control_stack)))
+    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
+    push!(ctx.dag, CXNode(control_wire, target_wire, nc, c1, c2))
 end
 
 # ── Measurement (symbolic) ───────────────────────────────────────────────────

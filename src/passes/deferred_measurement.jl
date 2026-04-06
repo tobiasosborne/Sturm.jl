@@ -36,11 +36,11 @@ function defer_measurements(dag::Vector{DAGNode})::Vector{DAGNode}
                 end
                 # False branch: X + control + X (anti-control)
                 if !isempty(cases.false_branch)
-                    push!(result, RyNode(wire, π, WireID[]))  # X gate
+                    push!(result, RyNode(wire, π))  # X gate
                     for op in cases.false_branch
                         push!(result, _add_control(op, wire))
                     end
-                    push!(result, RyNode(wire, π, WireID[]))  # X gate (undo)
+                    push!(result, RyNode(wire, π))  # X gate (undo)
                 end
                 i += 2  # skip both ObserveNode and CasesNode
                 continue
@@ -67,15 +67,24 @@ function _is_pure_quantum(cases::CasesNode)::Bool
     return true
 end
 
-"""Add a control wire to a DAG node."""
+"""Add a control wire to a DAG node (inline controls)."""
 function _add_control(node::RyNode, ctrl::WireID)
-    RyNode(node.wire, node.angle, [node.controls..., ctrl])
+    n = node.ncontrols
+    n >= 2 && error("Cannot add control: already at maximum 2")
+    n == 0 ? RyNode(node.wire, node.angle, UInt8(1), ctrl, _ZERO_WIRE) :
+             RyNode(node.wire, node.angle, UInt8(2), node.ctrl1, ctrl)
 end
 function _add_control(node::RzNode, ctrl::WireID)
-    RzNode(node.wire, node.angle, [node.controls..., ctrl])
+    n = node.ncontrols
+    n >= 2 && error("Cannot add control: already at maximum 2")
+    n == 0 ? RzNode(node.wire, node.angle, UInt8(1), ctrl, _ZERO_WIRE) :
+             RzNode(node.wire, node.angle, UInt8(2), node.ctrl1, ctrl)
 end
 function _add_control(node::CXNode, ctrl::WireID)
-    CXNode(node.control, node.target, [node.controls..., ctrl])
+    n = node.ncontrols
+    n >= 2 && error("Cannot add control: already at maximum 2")
+    n == 0 ? CXNode(node.control, node.target, UInt8(1), ctrl, _ZERO_WIRE) :
+             CXNode(node.control, node.target, UInt8(2), node.ctrl1, ctrl)
 end
 function _add_control(node::DAGNode, ctrl::WireID)
     error("Cannot add control to $(typeof(node))")
