@@ -58,7 +58,7 @@ nterms(H::PauliHamiltonian) = length(H.terms)
 
 1-norm of the coefficients: λ = Σⱼ |hⱼ|.
 """
-lambda(H::PauliHamiltonian) = sum(abs(t.coeff) for t in H.terms; init=0.0)
+lambda(H::PauliHamiltonian) = mapreduce(t -> abs(t.coeff), +, H.terms; init=0.0)
 
 """
     _support_count(t::PauliTerm{N}) -> Int

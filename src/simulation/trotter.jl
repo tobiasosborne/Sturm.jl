@@ -20,6 +20,12 @@ abstract type AbstractSimAlgorithm end
 """Product formula (Trotter-Suzuki) algorithms."""
 abstract type AbstractProductFormula <: AbstractSimAlgorithm end
 
+"""Stochastic/randomised algorithms (qDRIFT, randomised MPF)."""
+abstract type AbstractStochasticAlgorithm <: AbstractSimAlgorithm end
+
+"""Query-based algorithms requiring block encodings (LCU, QSVT)."""
+abstract type AbstractQueryAlgorithm <: AbstractSimAlgorithm end
+
 # ── Concrete algorithm types ─────────────────────────────────────────────────
 
 """

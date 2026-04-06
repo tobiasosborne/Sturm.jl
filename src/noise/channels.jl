@@ -1,6 +1,13 @@
 # Noise channel implementations using Kraus operators via Orkan.
 # All noise channels require DensityMatrixContext.
 #
+# DELIBERATE ABI EXCEPTION: The Kraus operators below are constructed as
+# explicit 2×2 matrices (I, X, Y, Z) and passed to Orkan's kraus_to_superop
+# C function. This bypasses the 4-primitive DSL (q.θ, q.φ, ⊻=, QBool).
+# This is unavoidable: density matrix channel application requires the matrix
+# form for the Orkan superoperator ABI. The DSL primitives apply gates to
+# state vectors; Kraus operators act on density matrices via ρ → Σ K_i ρ K_i†.
+#
 # Ref: Nielsen & Chuang, §8.3 "Quantum noise and quantum operations"
 # Depolarising: Eq. (8.102), Dephasing: Eq. (8.96), Amplitude damping: Eq. (8.91)
 

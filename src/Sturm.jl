@@ -21,6 +21,12 @@ include("channel/trace.jl")
 include("channel/compose.jl")
 include("channel/openqasm.jl")
 
+# Quantum control (must come before gates, passes, and library)
+include("control/when.jl")
+
+# Convenience gates (built from primitives)
+include("gates.jl")
+
 # Optimisation passes
 include("passes/gate_cancel.jl")
 include("passes/deferred_measurement.jl")
@@ -33,12 +39,6 @@ include("noise/classicalise.jl")
 # QECC
 include("qecc/abstract.jl")
 include("qecc/steane.jl")
-
-# Quantum control
-include("control/when.jl")
-
-# Convenience gates (built from primitives)
-include("gates.jl")
 
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
@@ -91,7 +91,7 @@ export PauliOp, pauli_I, pauli_X, pauli_Y, pauli_Z
 export PauliTerm, PauliHamiltonian, pauli_term, hamiltonian
 export nqubits, nterms, lambda
 export pauli_exp!
-export AbstractSimAlgorithm, AbstractProductFormula
+export AbstractSimAlgorithm, AbstractProductFormula, AbstractStochasticAlgorithm, AbstractQueryAlgorithm
 export Trotter1, Trotter2, Suzuki
 export evolve!
 export ising, heisenberg
