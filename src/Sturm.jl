@@ -24,6 +24,7 @@ include("channel/openqasm.jl")
 # Optimisation passes
 include("passes/gate_cancel.jl")
 include("passes/deferred_measurement.jl")
+include("passes/optimise.jl")
 
 # Noise channels
 include("noise/channels.jl")
@@ -70,7 +71,7 @@ export Channel, trace, to_openqasm, ⊗, n_inputs, n_outputs
 export ClassicalRef
 
 # Optimisation passes
-export gate_cancel, defer_measurements
+export gate_cancel, defer_measurements, optimise
 
 # Noise
 export depolarise!, dephase!, amplitude_damp!, classicalise

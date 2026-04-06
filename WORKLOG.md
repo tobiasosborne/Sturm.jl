@@ -231,3 +231,51 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 2. **Implement P1 infrastructure**: PassManager, run(ch), phase polynomial extraction
 3. **Implement MCGS** (Sturm.jl-qfx) — the unique competitive advantage
 4. **Fix P1 bugs**: Steane encoding (ewv), density matrix measure! (fq5)
+
+## 2026-04-06 — Session 3: Standard optimisation passes
+
+### Extended gate cancellation with commutation (Sturm.jl-8x3, closed)
+- **Rewrote `gate_cancel.jl`** from 60 LOC adjacent-only merging to ~100 LOC commutation-aware pass.
+- **Commutation rules implemented:**
+  1. Gates on disjoint wire sets always commute.
+  2. Rz on the control wire of a CX commutes with that CX — physics: (Rz(θ)⊗I)·CNOT = CNOT·(Rz(θ)⊗I).
+  3. Non-unitary nodes (ObserveNode, DiscardNode, CasesNode) never commute — conservative correctness.
+- **CX-CX cancellation added.** CX(c,t)·CX(c,t) = I, including through commuting intermediate gates.
+- **Algorithm:** backward scan through result list, skipping commuting nodes until a merge partner or blocker is found. Iterates until convergence to handle cascading cancellations.
+- **Gotcha: `Channel` name collision with `Base.Channel`.** Tests must use `Sturm.Channel` explicitly. Julia 1.12 added `Base.Channel` for async tasks — same name, different concept.
+- **Dependency fix:** Removed incorrect dependency of 8x3 on dt7 (PassManager). Gate cancellation is a standalone pass — it doesn't need a PassManager to function.
+- 22 new tests, 39 total pass tests.
+
+### `optimise(ch, :pass)` convenience API (Sturm.jl-yj1, closed)
+- **Implemented `src/passes/optimise.jl`** — user-facing `optimise(ch::Channel, pass::Symbol) -> Channel` wrapper.
+- Supports `:cancel` (gate_cancel), `:deferred` (defer_measurements), `:all` (both in sequence).
+- Matches PRD §5.3 API: `optimise(ch, :cancel_adjacent)`, `optimise(ch, :deferred)`.
+- 4 new tests, 8484 total tests pass.
+
+### QFT benchmark (benchmarks/bench_qft.jl)
+- **Benchmarked against Wilkening's speed-oriented-quantum-circuit-backend** — 15 frameworks, QFT up to 2000 qubits.
+- **DAG construction: 693ms at 2000 qubits** — faster than all Python frameworks, comparable to C backends.
+- **Memory: 149 MB live, 353 MB allocated** — 31x less than Qiskit (4.7 GB), comparable to Ket (180 MB).
+- **78 bytes/node** vs 16-byte theoretical minimum (4.9× overhead) — `controls::Vector{WireID}` and abstract-typed boxing.
+- **Node counts match theory exactly**: 2n + n(n-1)/2 + 3⌊n/2⌋.
+- Benchmark script avoids `trace()` NTuple specialisation overhead for large n by using TracingContext directly.
+
+### gate_cancel O(n) rewrite: 149× speedup
+- **Replaced backward linear scan with per-wire candidate tracking.**
+- Three candidate tables: `ry_cand[wire]`, `rz_cand[wire]`, `cx_cand[(ctrl,tgt)]` — O(1) lookup per wire.
+- **Blocking rules encode commutation physics:**
+  - Ry on wire w blocks: rz_cand[w], all CX involving w
+  - Rz on wire w blocks: ry_cand[w], CX where w is target (NOT control — Rz commutes through CX control!)
+  - CX(c,t) blocks: ry_cand[c], ry_cand[t], rz_cand[t] (NOT rz_cand[c]!)
+  - Non-unitary nodes: barrier on all touched wires
+  - Nodes on when()-control wires invalidate candidates controlled by that wire
+- **Function barrier pattern** for type-stable dispatch: separate `_try_merge_node!` methods per node type.
+- **Gotcha: `_collect_wires!` was already defined in openqasm.jl** — duplicating it in gate_cancel.jl caused method overwrite warnings. Removed duplicates, reuse the existing methods.
+- **Performance: 43.7s → 293ms at 2000 qubits (149×).** Total trace+cancel: 44.5s → 986ms (45×).
+- **Limitation**: per-wire single-candidate tracking can miss merges when multiple controlled rotations on the same wire have different controls. Multi-pass iteration compensates — typically converges in 1-2 passes.
+- Research agents surveyed: Julia union-splitting (4 types), LightSumTypes.jl (0-alloc tagged union), StaticArrays.jl, Bumper.jl, StructArrays.jl. Qiskit/tket/quilc all use per-wire forward tables — same design we adopted.
+
+### Remaining performance opportunities (not yet implemented)
+1. **Trace construction (693ms)** — the bottleneck is now `copy(ctx.control_stack)` on every gate (2 allocations per gate). Fix: shared sentinel `const EMPTY_CONTROLS = WireID[]` for uncontrolled gates.
+2. **78 bytes/node → 16 bytes** — Replace `Vector{WireID}` controls with NTuple{N,WireID} or use LightSumTypes.jl for zero-alloc tagged union.
+3. **cq_impr target (65ms)** — requires both #1 and #2, plus potentially SoA (struct-of-arrays) layout via StructArrays.jl.
