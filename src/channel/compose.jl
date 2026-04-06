@@ -46,24 +46,24 @@ function _rename_controls(node, rename)
     nc = node.ncontrols
     c1 = nc >= 1 ? _rename_wire(node.ctrl1, rename) : _ZERO_WIRE
     c2 = nc >= 2 ? _rename_wire(node.ctrl2, rename) : _ZERO_WIRE
-    (nc, c1, c2)
+    (c1, c2, nc)
 end
 
 function _rename_node(node::PrepNode, rename)
-    nc, c1, c2 = _rename_controls(node, rename)
-    PrepNode(_rename_wire(node.wire, rename), node.p, nc, c1, c2)
+    c1, c2, nc = _rename_controls(node, rename)
+    PrepNode(node.p, _rename_wire(node.wire, rename), c1, c2, nc)
 end
 function _rename_node(node::RyNode, rename)
-    nc, c1, c2 = _rename_controls(node, rename)
-    RyNode(_rename_wire(node.wire, rename), node.angle, nc, c1, c2)
+    c1, c2, nc = _rename_controls(node, rename)
+    RyNode(node.angle, _rename_wire(node.wire, rename), c1, c2, nc)
 end
 function _rename_node(node::RzNode, rename)
-    nc, c1, c2 = _rename_controls(node, rename)
-    RzNode(_rename_wire(node.wire, rename), node.angle, nc, c1, c2)
+    c1, c2, nc = _rename_controls(node, rename)
+    RzNode(node.angle, _rename_wire(node.wire, rename), c1, c2, nc)
 end
 function _rename_node(node::CXNode, rename)
-    nc, c1, c2 = _rename_controls(node, rename)
-    CXNode(_rename_wire(node.control, rename), _rename_wire(node.target, rename), nc, c1, c2)
+    c1, c2, nc = _rename_controls(node, rename)
+    CXNode(_rename_wire(node.control, rename), _rename_wire(node.target, rename), c1, c2, nc)
 end
 function _rename_node(node::ObserveNode, rename)
     ObserveNode(_rename_wire(node.wire, rename), node.result_id)

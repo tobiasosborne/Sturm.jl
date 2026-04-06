@@ -25,13 +25,14 @@ function optimise(ch::Channel{In, Out}, pass::Symbol) where {In, Out}
     Channel{In, Out}(new_dag, ch.input_wires, ch.output_wires)
 end
 
-function _apply_pass(dag::Vector{DAGNode}, pass::Symbol)
+function _apply_pass(dag::Vector{HotNode}, pass::Symbol)
     if pass === :cancel || pass === :cancel_adjacent
         gate_cancel(dag)
     elseif pass === :deferred || pass === :defer_measurements
-        defer_measurements(dag)
+        # defer_measurements takes Vector{DAGNode} (may contain CasesNode)
+        gate_cancel(defer_measurements(DAGNode[n for n in dag]))
     elseif pass === :all
-        gate_cancel(defer_measurements(dag))
+        gate_cancel(defer_measurements(DAGNode[n for n in dag]))
     else
         error("Unknown optimisation pass: :$pass. Available: :cancel, :deferred, :all")
     end
