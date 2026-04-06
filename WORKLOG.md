@@ -293,8 +293,32 @@ Systematic survey of major quantum compiler frameworks, toolchain architectures,
 - **Max 2 when()-controls limitation** — covers all current use cases (deepest nesting = 1). Error on >2 with message pointing to Phase 3.
 - 8484 tests pass.
 
-### Remaining performance opportunities
-1. **Trace construction (514ms → target 65ms)** — remaining gap is node struct boxing (~2M allocs into abstract `Vector{DAGNode}`). Fix: LightSumTypes.jl @sumtype or flat packed array.
-2. **42 bytes/node → 16 bytes** — eliminate abstract-type boxing overhead (16-byte GC header per boxed node).
-3. **BlochProxy** — already stack-allocated by escape analysis. No further improvement without DSL syntax change.
-4. **when() closure** — @inline added but closure may still allocate. Macro alternative possible for internal hot paths.
+### Phase 3: Isbits-union inline DAG — 31 bytes/node, 332ms trace
+- **3+1 agent protocol used.** Two Sonnet proposers (independent designs), orchestrator synthesised.
+- **Proposer A**: `const HotNode = Union{6 types}`, keep abstract type, no field reordering. 33 bytes/element. CasesNode in separate sparse position-indexed list.
+- **Proposer B**: Remove abstract type, replace with `const DAGNode = Union{7 types}` alias. Field reordering (Float64 first) for 24-byte sizeof → 25 bytes/element. CasesRef isbits + side table for CasesNode.
+- **Synthesis**: Keep abstract type (A, for P7 extensibility and `<: DAGNode` safety). Take field reordering (B, 32→24 bytes). Take HotNode naming (A, clear separation from DAGNode). Simplify CasesNode — neither CasesRef nor position list needed because TracingContext never produces CasesNode (only test fixtures do).
+- **`const HotNode = Union{RyNode, RzNode, CXNode, PrepNode, ObserveNode, DiscardNode}`** — 6 isbits types. Julia stores inline at `max(sizeof) + 1 tag = 25` bytes/element. Verified: `summarysize` confirms 33→25 bytes/element.
+- **Field reordering**: Float64 first eliminates padding. RyNode/RzNode/PrepNode: sizeof 32 → 24. CXNode stays at 20.
+- **TracingContext.dag and Channel.dag changed to `Vector{HotNode}`**. Backward-compat overloads for `gate_cancel(::Vector{DAGNode})` and `Channel{In,Out}(::Vector{DAGNode}, ...)` for test fixtures that use CasesNode.
+- **Gotcha: benchmark script had `Vector{DAGNode}` hardcoded** — needed updating to `Vector{HotNode}`.
+- **Gotcha: `_cancel_pass` signature still said `Vector{DAGNode}`** — missed in first pass, caught by MethodError.
+- **Results at 2000 qubits (full session arc):**
+  - Trace: 693ms → 332ms (2.1x)
+  - gate_cancel: 43.7s → 336ms (130x)
+  - DAG live: 149 MB → 59 MB (2.5x)
+  - Bytes/node: 78 → 31 (2.5x)
+  - Now faster than cq (434ms), 5.1x gap to cq_impr (65ms)
+- 8484 tests pass.
+
+### Remaining performance opportunities (registered as beads issues)
+1. **Sturm.jl-6mq (P1)**: `sizehint!` for TracingContext.dag — avoid reallocation during trace. Quick win, ~5 lines.
+2. **Sturm.jl-7i4 (P2)**: Eliminate when() closure allocation — @when macro or callable-struct for internal hot paths. Potential ~100ms saving.
+3. **Sturm.jl-y2k (P2)**: Reduce trace allocation churn (270 MB allocated, 59 MB retained) — BlochProxy not elided (Symbol not isbitstype, TLS lookup adds overhead), when() closures, Vector resizing.
+4. **Sturm.jl-uod (P3)**: LightSumTypes.jl @sumtype or StructArrays.jl SoA for sub-25 bytes/node. Architectural change affecting all DAG consumers. Target: close remaining 5.1x gap to cq_impr.
+
+### Session 3 final status
+- **Issues closed**: Sturm.jl-8x3 (extended gate cancellation), Sturm.jl-yj1 (optimise API)
+- **Issues created**: Sturm.jl-6mq, 7i4, y2k, uod (remaining perf opportunities)
+- **8484 tests pass**
+- **All code committed and pushed**
