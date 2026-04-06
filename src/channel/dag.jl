@@ -2,8 +2,12 @@
 # Each node represents a quantum operation in a circuit DAG.
 #
 # Controls are stored inline (max 2) to avoid per-node heap allocation.
-# This makes nodes isbitstype, enabling stack allocation and eliminating
-# the ~2M Vector{WireID} copies in a 2000-qubit QFT trace.
+# Fields ordered Float64-first to minimize padding (24 bytes, not 32).
+#
+# The hot path uses Vector{HotNode} (isbits union, inline storage at
+# 25 bytes/element) instead of Vector{DAGNode} (abstract, boxed at
+# ~56 bytes/element). CasesNode is NOT in HotNode — it's only used
+# in test fixtures and deferred_measurement input.
 
 """Abstract base type for all DAG nodes."""
 abstract type DAGNode end
@@ -23,7 +27,7 @@ end
 """Build inline controls from a Vector (backward compat, used at boundaries)."""
 @inline function _inline_controls(ctrls::Vector{WireID})
     n = length(ctrls)
-    n > 2 && error("Maximum 2 when()-controls supported, got $n. Deeper nesting requires Phase 3 flat DAG.")
+    n > 2 && error("Maximum 2 when()-controls supported, got $n")
     (UInt8(n),
      n >= 1 ? ctrls[1] : _ZERO_WIRE,
      n >= 2 ? ctrls[2] : _ZERO_WIRE)
@@ -34,54 +38,69 @@ end
     a.ncontrols == b.ncontrols && a.ctrl1 == b.ctrl1 && a.ctrl2 == b.ctrl2
 end
 
-# ── Node types ──────────────────────────────────────────────────────────────
+# ── Node types (Float64 fields first to minimize padding) ───────────────────
+#
+# Field order: Float64 (8-byte aligned) first, then WireID (4-byte), then UInt8.
+# This gives sizeof=24 instead of 32 for nodes with a Float64 field.
 
 """Prepare a qubit: Ry(2·asin(√p))|0⟩ → state with P(|1⟩) = p."""
 struct PrepNode <: DAGNode
-    wire::WireID
     p::Float64
-    ncontrols::UInt8
+    wire::WireID
     ctrl1::WireID
     ctrl2::WireID
+    ncontrols::UInt8
 end
-PrepNode(wire::WireID, p::Real) = PrepNode(wire, Float64(p), UInt8(0), _ZERO_WIRE, _ZERO_WIRE)
-PrepNode(wire::WireID, p::Real, ctrls::Vector{WireID}) = PrepNode(wire, Float64(p), _inline_controls(ctrls)...)
+PrepNode(wire::WireID, p::Real) = PrepNode(Float64(p), wire, _ZERO_WIRE, _ZERO_WIRE, UInt8(0))
+function PrepNode(wire::WireID, p::Real, ctrls::Vector{WireID})
+    nc, c1, c2 = _inline_controls(ctrls)
+    PrepNode(Float64(p), wire, c1, c2, nc)
+end
 get_controls(n::PrepNode) = get_controls(n.ncontrols, n.ctrl1, n.ctrl2)
 
 """Amplitude rotation: Ry(angle) on target wire."""
 struct RyNode <: DAGNode
-    wire::WireID
     angle::Float64
-    ncontrols::UInt8
+    wire::WireID
     ctrl1::WireID
     ctrl2::WireID
+    ncontrols::UInt8
 end
-RyNode(wire::WireID, angle::Real) = RyNode(wire, Float64(angle), UInt8(0), _ZERO_WIRE, _ZERO_WIRE)
-RyNode(wire::WireID, angle::Real, ctrls::Vector{WireID}) = RyNode(wire, Float64(angle), _inline_controls(ctrls)...)
+RyNode(wire::WireID, angle::Real) = RyNode(Float64(angle), wire, _ZERO_WIRE, _ZERO_WIRE, UInt8(0))
+function RyNode(wire::WireID, angle::Real, ctrls::Vector{WireID})
+    nc, c1, c2 = _inline_controls(ctrls)
+    RyNode(Float64(angle), wire, c1, c2, nc)
+end
 get_controls(n::RyNode) = get_controls(n.ncontrols, n.ctrl1, n.ctrl2)
 
 """Phase rotation: Rz(angle) on target wire."""
 struct RzNode <: DAGNode
-    wire::WireID
     angle::Float64
-    ncontrols::UInt8
+    wire::WireID
     ctrl1::WireID
     ctrl2::WireID
+    ncontrols::UInt8
 end
-RzNode(wire::WireID, angle::Real) = RzNode(wire, Float64(angle), UInt8(0), _ZERO_WIRE, _ZERO_WIRE)
-RzNode(wire::WireID, angle::Real, ctrls::Vector{WireID}) = RzNode(wire, Float64(angle), _inline_controls(ctrls)...)
+RzNode(wire::WireID, angle::Real) = RzNode(Float64(angle), wire, _ZERO_WIRE, _ZERO_WIRE, UInt8(0))
+function RzNode(wire::WireID, angle::Real, ctrls::Vector{WireID})
+    nc, c1, c2 = _inline_controls(ctrls)
+    RzNode(Float64(angle), wire, c1, c2, nc)
+end
 get_controls(n::RzNode) = get_controls(n.ncontrols, n.ctrl1, n.ctrl2)
 
 """CNOT: control → target."""
 struct CXNode <: DAGNode
     control::WireID
     target::WireID
-    ncontrols::UInt8
     ctrl1::WireID
     ctrl2::WireID
+    ncontrols::UInt8
 end
-CXNode(control::WireID, target::WireID) = CXNode(control, target, UInt8(0), _ZERO_WIRE, _ZERO_WIRE)
-CXNode(control::WireID, target::WireID, ctrls::Vector{WireID}) = CXNode(control, target, _inline_controls(ctrls)...)
+CXNode(control::WireID, target::WireID) = CXNode(control, target, _ZERO_WIRE, _ZERO_WIRE, UInt8(0))
+function CXNode(control::WireID, target::WireID, ctrls::Vector{WireID})
+    nc, c1, c2 = _inline_controls(ctrls)
+    CXNode(control, target, c1, c2, nc)
+end
 get_controls(n::CXNode) = get_controls(n.ncontrols, n.ctrl1, n.ctrl2)
 
 """Measurement (type boundary): observe wire, produce classical result."""
@@ -90,7 +109,8 @@ struct ObserveNode <: DAGNode
     result_id::UInt32
 end
 
-"""Classical branching: switch on a measurement outcome."""
+"""Classical branching: switch on a measurement outcome.
+NOT in HotNode union — only used in test fixtures and deferred_measurement input."""
 struct CasesNode <: DAGNode
     condition_id::UInt32
     true_branch::Vector{DAGNode}
@@ -101,3 +121,11 @@ end
 struct DiscardNode <: DAGNode
     wire::WireID
 end
+
+# ── HotNode: isbits union for inline array storage ─────────────────────────
+#
+# Vector{HotNode} stores elements inline at max(sizeof) + 1 tag byte
+# = 25 bytes/element. No GC boxing, no per-node heap allocation.
+# CasesNode is excluded (not isbits — contains sub-DAG Vectors).
+# When adding new isbits node types, add them to this union.
+const HotNode = Union{RyNode, RzNode, CXNode, PrepNode, ObserveNode, DiscardNode}

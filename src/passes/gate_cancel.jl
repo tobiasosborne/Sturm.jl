@@ -21,13 +21,18 @@ Iterates until no further simplifications are found.
 
 Complexity: O(n) per pass, typically 1–3 passes to converge.
 """
-function gate_cancel(dag::Vector{DAGNode})::Vector{DAGNode}
+function gate_cancel(dag::Vector{HotNode})::Vector{HotNode}
     result = dag
     changed = true
     while changed
         result, changed = _cancel_pass(result)
     end
     return result
+end
+
+# Backward compat: accept abstract Vector{DAGNode} (from tests/defer_measurements)
+function gate_cancel(dag::Vector{DAGNode})::Vector{HotNode}
+    gate_cancel(HotNode[n for n in dag if n isa HotNode])
 end
 
 # ── Merging ────────────────────────────────────────────────────────────
@@ -41,12 +46,12 @@ _can_merge(a::CXNode, b::CXNode) = a.control == b.control && a.target == b.targe
 """Merge two rotation nodes. Returns `nothing` if the result is identity."""
 function _merge_rotations(a::RyNode, b::RyNode)
     total = mod(a.angle + b.angle + π, 2π) - π
-    abs(total) < 1e-10 ? nothing : RyNode(a.wire, total, a.ncontrols, a.ctrl1, a.ctrl2)
+    abs(total) < 1e-10 ? nothing : RyNode(total, a.wire, a.ctrl1, a.ctrl2, a.ncontrols)
 end
 
 function _merge_rotations(a::RzNode, b::RzNode)
     total = mod(a.angle + b.angle + π, 2π) - π
-    abs(total) < 1e-10 ? nothing : RzNode(a.wire, total, a.ncontrols, a.ctrl1, a.ctrl2)
+    abs(total) < 1e-10 ? nothing : RzNode(total, a.wire, a.ctrl1, a.ctrl2, a.ncontrols)
 end
 
 # CX · CX = I
@@ -67,9 +72,9 @@ _merge_rotations(::CXNode, ::CXNode) = nothing
 #   - Any node on wire w blocks candidates that have w as a when()-control
 #   - Non-unitary nodes block everything on their wires
 
-function _cancel_pass(dag::Vector{DAGNode})
+function _cancel_pass(dag::Vector{HotNode})
     n = length(dag)
-    result = Vector{DAGNode}()
+    result = Vector{HotNode}()
     sizehint!(result, n)
     deleted = BitSet()    # indices in result that were cancelled
     changed = false
@@ -93,7 +98,7 @@ function _cancel_pass(dag::Vector{DAGNode})
 
     # Compact: remove cancelled entries
     if !isempty(deleted)
-        result = DAGNode[result[i] for i in eachindex(result) if !(i in deleted)]
+        result = HotNode[result[i] for i in eachindex(result) if !(i in deleted)]
     end
 
     return result, changed

@@ -11,13 +11,13 @@ Implements all AbstractContext methods symbolically:
 - measure! appends ObserveNode and returns a Bool placeholder
 """
 mutable struct TracingContext <: AbstractContext
-    dag::Vector{DAGNode}
+    dag::Vector{HotNode}
     control_stack::Vector{WireID}
     consumed::Set{WireID}
     _result_counter::UInt32
 
     function TracingContext()
-        new(DAGNode[], WireID[], Set{WireID}(), UInt32(0))
+        new(HotNode[], WireID[], Set{WireID}(), UInt32(0))
     end
 end
 
@@ -70,20 +70,20 @@ end
 function apply_ry!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
     nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, RyNode(wire, Float64(angle), nc, c1, c2))
+    push!(ctx.dag, RyNode(Float64(angle), wire, c1, c2, nc))
 end
 
 function apply_rz!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
     nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, RzNode(wire, Float64(angle), nc, c1, c2))
+    push!(ctx.dag, RzNode(Float64(angle), wire, c1, c2, nc))
 end
 
 function apply_cx!(ctx::TracingContext, control_wire::WireID, target_wire::WireID)
     _resolve_tracing(ctx, control_wire)
     _resolve_tracing(ctx, target_wire)
     nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, CXNode(control_wire, target_wire, nc, c1, c2))
+    push!(ctx.dag, CXNode(control_wire, target_wire, c1, c2, nc))
 end
 
 # ── Measurement (symbolic) ───────────────────────────────────────────────────

@@ -71,20 +71,20 @@ end
 function _add_control(node::RyNode, ctrl::WireID)
     n = node.ncontrols
     n >= 2 && error("Cannot add control: already at maximum 2")
-    n == 0 ? RyNode(node.wire, node.angle, UInt8(1), ctrl, _ZERO_WIRE) :
-             RyNode(node.wire, node.angle, UInt8(2), node.ctrl1, ctrl)
+    n == 0 ? RyNode(node.angle, node.wire, ctrl, _ZERO_WIRE, UInt8(1)) :
+             RyNode(node.angle, node.wire, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::RzNode, ctrl::WireID)
     n = node.ncontrols
     n >= 2 && error("Cannot add control: already at maximum 2")
-    n == 0 ? RzNode(node.wire, node.angle, UInt8(1), ctrl, _ZERO_WIRE) :
-             RzNode(node.wire, node.angle, UInt8(2), node.ctrl1, ctrl)
+    n == 0 ? RzNode(node.angle, node.wire, ctrl, _ZERO_WIRE, UInt8(1)) :
+             RzNode(node.angle, node.wire, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::CXNode, ctrl::WireID)
     n = node.ncontrols
     n >= 2 && error("Cannot add control: already at maximum 2")
-    n == 0 ? CXNode(node.control, node.target, UInt8(1), ctrl, _ZERO_WIRE) :
-             CXNode(node.control, node.target, UInt8(2), node.ctrl1, ctrl)
+    n == 0 ? CXNode(node.control, node.target, ctrl, _ZERO_WIRE, UInt8(1)) :
+             CXNode(node.control, node.target, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::DAGNode, ctrl::WireID)
     error("Cannot add control to $(typeof(node))")

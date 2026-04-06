@@ -114,7 +114,7 @@ end
 
 # ── Wire collection ──────────────────────────────────────────────────────────
 
-function _collect_wires!(set::Set{WireID}, dag::Vector{DAGNode})
+function _collect_wires!(set::Set{WireID}, dag::AbstractVector{<:DAGNode})
     for node in dag
         _collect_wires!(set, node)
     end

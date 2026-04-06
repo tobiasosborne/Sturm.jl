@@ -277,9 +277,9 @@ using Sturm
                 [Sturm.RyNode(w2, π)],
                 Sturm.DAGNode[]),
         ]
-        ch = Sturm.Channel{0, 0}(dag, (), ())
-        ch2 = optimise(ch, :deferred)
-        @test !any(n -> n isa Sturm.ObserveNode, ch2.dag)
+        # Test defer_measurements directly (CasesNode requires Vector{DAGNode})
+        opt = defer_measurements(dag)
+        @test !any(n -> n isa Sturm.ObserveNode, opt)
     end
 
     @testset "optimise(ch, :all) chains passes" begin

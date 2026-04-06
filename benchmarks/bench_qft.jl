@@ -40,7 +40,7 @@ end
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
-function node_type_counts(dag::Vector{Sturm.DAGNode})
+function node_type_counts(dag::Vector{Sturm.HotNode})
     ry = rz = cx = other = 0
     for n in dag
         if n isa Sturm.RyNode;      ry += 1
