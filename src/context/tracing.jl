@@ -16,8 +16,10 @@ mutable struct TracingContext <: AbstractContext
     consumed::Set{WireID}
     _result_counter::UInt32
 
-    function TracingContext()
-        new(HotNode[], WireID[], Set{WireID}(), UInt32(0))
+    function TracingContext(; sizehint::Int=256)
+        dag = HotNode[]
+        sizehint > 0 && sizehint!(dag, sizehint)
+        new(dag, WireID[], Set{WireID}(), UInt32(0))
     end
 end
 

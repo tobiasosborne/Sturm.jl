@@ -89,7 +89,9 @@ export AbstractCode, Steane, encode!, decode!
 # Simulation
 export PauliOp, pauli_I, pauli_X, pauli_Y, pauli_Z
 export PauliTerm, PauliHamiltonian, pauli_term, hamiltonian
-export nqubits, nterms, lambda
+# nqubits, nterms, lambda intentionally NOT exported — too generic.
+# Access via Sturm.nqubits(H), Sturm.lambda(H), or nterms(H) after `using Sturm`
+# if users import them explicitly.
 export pauli_exp!
 export AbstractSimAlgorithm, AbstractProductFormula, AbstractStochasticAlgorithm, AbstractQueryAlgorithm
 export Trotter1, Trotter2, Suzuki

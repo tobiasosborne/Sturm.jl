@@ -1,5 +1,6 @@
 using Test
 using Sturm
+using Sturm: nqubits, nterms, lambda
 using LinearAlgebra: eigen, Diagonal, kron
 
 # Helper: read Orkan amplitude at basis state index (0-based)
@@ -535,6 +536,31 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
             @test_throws ErrorException evolve!([q], hamiltonian(pauli_term(1.0, :X)), -0.1, Trotter1(steps=1))
             discard!(q)
         end
+    end
+
+    @testset "DensityMatrixContext + pauli_exp! works" begin
+        # Same physics as EagerContext: exp(-iθX)|0⟩ = cos(θ)|0⟩ - i·sin(θ)|1⟩
+        # But exercising the density matrix code path (different apply_ry!/rz!/cx!)
+        θ = π/6
+        @context DensityMatrixContext() begin
+            q = QBool(0)
+            pauli_exp!([q], pauli_term(1.0, :X), θ)
+            # Measure statistically (DensityMatrixContext measure! differs from Eager)
+            # P(|1⟩) = sin²(π/6) = 0.25
+            count = 0
+            N_trials = 2000
+        end
+        # DensityMatrixContext doesn't support reading amplitudes directly,
+        # so test via sampling in a separate context
+        count = 0
+        for _ in 1:2000
+            @context DensityMatrixContext() begin
+                q = QBool(0)
+                pauli_exp!([q], pauli_term(1.0, :X), θ)
+                count += Bool(q)
+            end
+        end
+        @test abs(count / 2000 - sin(θ)^2) < 0.04
     end
 
     @testset "evolve! rejects NaN time" begin
