@@ -149,7 +149,7 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
         discard!(q1); discard!(q2)
     end
 
-    @testset "exp(-iθ YY)|00⟩ = cos(θ)|00⟩ + sin(θ)|11⟩ (exact)" begin
+    @testset "exp(-iθ YY)|00⟩ = cos(θ)|00⟩ + i·sin(θ)|11⟩ (exact)" begin
         # YY|00⟩ = Y|0⟩⊗Y|0⟩ = (i|1⟩)(i|1⟩) = -|11⟩
         # In {|00⟩,|11⟩} subspace: YY acts as [[0,-1],[-1,0]] = -σ_x(sub)
         # exp(-iθ(-σ_x)) = cos(θ)I + i·sin(θ)·σ_x(sub)
@@ -254,7 +254,7 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
 
         # Compare amplitudes (should be close to exact)
         for i in 0:3
-            @test abs(_amp(ctx, i) - ψ_exact[i+1]) < 1e-4
+            @test abs(_amp(ctx, i) - ψ_exact[i+1]) < 1e-6
         end
         discard!(q1); discard!(q2)
 
@@ -263,6 +263,7 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
         q1b = QBool(ctx2, 0)
         q2b = QBool(ctx2, 0)
         evolve!([q1b, q2b], H_sturm, t, Trotter1(steps=100))
+        # Trotter1 error is O(λ²t²/r) ≈ O(1.3²·0.09/100) ≈ 1.5e-3
         for i in 0:3
             @test abs(_amp(ctx2, i) - ψ_exact[i+1]) < 1e-3
         end
@@ -435,6 +436,111 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
         @context EagerContext() begin
             q = QBool(0)
             @test_throws ErrorException pauli_exp!([q], pauli_term(1.0, :X, :Z), 0.1)
+            discard!(q)
+        end
+    end
+
+    # ═════════════════════════════════════════════════════════════════════
+    # G. Review-driven tests (from code review C findings)
+    # ═════════════════════════════════════════════════════════════════════
+
+    @testset "Negative coefficient: exp(-iθ(-Z))|0⟩ = e^{+iθ}|0⟩" begin
+        # h = -1.0, so angle = 2θ·(-1) = -2θ. Rz(-2θ)|0⟩ = e^{+iθ}|0⟩
+        θ = 0.3
+        ctx = EagerContext()
+        q = QBool(ctx, 0)
+        pauli_exp!([q], pauli_term(-1.0, :Z), θ)
+        @test abs(_amp(ctx, 0) - exp(+im * θ)) < 1e-12
+        @test abs(_amp(ctx, 1)) < 1e-12
+        discard!(q)
+    end
+
+    @testset "Negative coefficient: exp(-iθ(-X))|0⟩ = cos(θ)|0⟩ + i·sin(θ)|1⟩" begin
+        # exp(-iθ(-X)) = exp(+iθX) = cos(θ)I + i·sin(θ)X
+        # Applied to |0⟩: cos(θ)|0⟩ + i·sin(θ)|1⟩
+        θ = π/7
+        ctx = EagerContext()
+        q = QBool(ctx, 0)
+        pauli_exp!([q], pauli_term(-1.0, :X), θ)
+        @test abs(_amp(ctx, 0) - cos(θ)) < 1e-12
+        @test abs(_amp(ctx, 1) - (im * sin(θ))) < 1e-12
+        discard!(q)
+    end
+
+    @testset "Suzuki order-6 convergence beats order-4" begin
+        I2 = ComplexF64[1 0; 0 1]
+        σx = ComplexF64[0 1; 1 0]
+        σz = ComplexF64[1 0; 0 -1]
+        H_mat = kron(σz, σz) + 0.5 * kron(I2, σx) + 0.5 * kron(σx, I2)
+        t = 0.5
+        evals, evecs = eigen(H_mat)
+        U_exact = evecs * Diagonal(exp.(-im * t .* evals)) * evecs'
+        ψ_exact = U_exact * ComplexF64[1, 0, 0, 0]
+        H_sturm = hamiltonian(pauli_term(1.0, :Z, :Z), pauli_term(0.5, :X, :I), pauli_term(0.5, :I, :X))
+        steps = 3
+
+        ctx4 = EagerContext()
+        q1a = QBool(ctx4, 0); q2a = QBool(ctx4, 0)
+        evolve!([q1a, q2a], H_sturm, t, Suzuki(order=4, steps=steps))
+        err_s4 = sum(abs2(_amp(ctx4, i) - ψ_exact[i+1]) for i in 0:3)
+        discard!(q1a); discard!(q2a)
+
+        ctx6 = EagerContext()
+        q1b = QBool(ctx6, 0); q2b = QBool(ctx6, 0)
+        evolve!([q1b, q2b], H_sturm, t, Suzuki(order=6, steps=steps))
+        err_s6 = sum(abs2(_amp(ctx6, i) - ψ_exact[i+1]) for i in 0:3)
+        discard!(q1b); discard!(q2b)
+
+        @test err_s6 < err_s4  # order 6 beats order 4
+    end
+
+    @testset "Trotter1 == Trotter2 on single-term Hamiltonian" begin
+        # Single term: no splitting error for either order
+        θ = 0.7
+        H = hamiltonian(pauli_term(1.0, :X))
+
+        ctx1 = EagerContext()
+        q1 = QBool(ctx1, 0)
+        evolve!([q1], H, θ, Trotter1(steps=1))
+        amp1 = [_amp(ctx1, i) for i in 0:1]
+        discard!(q1)
+
+        ctx2 = EagerContext()
+        q2 = QBool(ctx2, 0)
+        evolve!([q2], H, θ, Trotter2(steps=1))
+        amp2 = [_amp(ctx2, i) for i in 0:1]
+        discard!(q2)
+
+        @test abs(amp1[1] - amp2[1]) < 1e-12
+        @test abs(amp1[2] - amp2[2]) < 1e-12
+    end
+
+    @testset "evolve! on QInt verifies state correctness" begin
+        # exp(-i 0.3 X)|0⟩ = cos(0.3)|0⟩ - i·sin(0.3)|1⟩
+        θ = 0.3
+        ctx = EagerContext()
+        Sturm.task_local_storage(:sturm_context, ctx) do
+            H = hamiltonian(pauli_term(1.0, :X))
+            q = QInt{1}(0)
+            evolve!(q, H, θ, Trotter1(steps=1))
+            @test abs(_amp(ctx, 0) - cos(θ)) < 1e-12
+            @test abs(_amp(ctx, 1) - (-im * sin(θ))) < 1e-12
+            discard!(q)
+        end
+    end
+
+    @testset "evolve! rejects negative time" begin
+        @context EagerContext() begin
+            q = QBool(0)
+            @test_throws ErrorException evolve!([q], hamiltonian(pauli_term(1.0, :X)), -0.1, Trotter1(steps=1))
+            discard!(q)
+        end
+    end
+
+    @testset "evolve! rejects NaN time" begin
+        @context EagerContext() begin
+            q = QBool(0)
+            @test_throws ErrorException evolve!([q], hamiltonian(pauli_term(1.0, :X)), NaN, Trotter1(steps=1))
             discard!(q)
         end
     end
