@@ -24,6 +24,9 @@ function ising(::Val{N}; J::Real=1.0, h::Real=0.0) where {N}
     PauliHamiltonian{N}(terms)
 end
 
+"""Convenience: `ising(4, J=1.0)` delegates to `ising(Val(4), J=1.0)`."""
+ising(N::Int; kwargs...) = ising(Val(N); kwargs...)
+
 """
     heisenberg(::Val{N}; Jx=1.0, Jy=1.0, Jz=1.0) -> PauliHamiltonian{N}
 
@@ -34,11 +37,14 @@ function heisenberg(::Val{N}; Jx::Real=1.0, Jy::Real=1.0, Jz::Real=1.0) where {N
     N >= 2 || error("heisenberg: need at least 2 qubits, got $N")
     terms = PauliTerm{N}[]
     for i in 1:(N-1)
-        for (J, P) in ((Jx, pauli_X), (Jy, pauli_Y), (Jz, pauli_Z))
+        for (J, P) in ((Float64(Jx), pauli_X), (Float64(Jy), pauli_Y), (Float64(Jz), pauli_Z))
             J == 0 && continue
             ops = ntuple(k -> (k == i || k == i+1) ? P : pauli_I, N)
-            push!(terms, PauliTerm{N}(Float64(J), ops))
+            push!(terms, PauliTerm{N}(J, ops))
         end
     end
     PauliHamiltonian{N}(terms)
 end
+
+"""Convenience: `heisenberg(4, Jx=1.0)` delegates to `heisenberg(Val(4), Jx=1.0)`."""
+heisenberg(N::Int; kwargs...) = heisenberg(Val(N); kwargs...)

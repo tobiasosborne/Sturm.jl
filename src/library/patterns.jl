@@ -97,7 +97,7 @@ end
 # ── Fourier sampling ─────────────────────────────────────────────────────────
 
 """
-    fourier_sample(oracle!::Function, n::Int) -> Int
+    fourier_sample(oracle!::Function, ::Val{N}) -> Int
 
 Deutsch-Jozsa / Bernstein-Vazirani pattern:
   1. Prepare |0⟩^n
@@ -273,7 +273,7 @@ function _diffusion!(x::QInt{W}) where {W}
     qs = [QBool(x.wires[i], ctx, false) for i in 1:W]
     for q in qs; X!(q); end
     _multi_controlled_z!(qs)
-    qs = [QBool(x.wires[i], ctx, false) for i in 1:W]
+    # Reuse qs — _multi_controlled_z! does not consume or discard any qubits
     for q in qs; X!(q); end
 end
 
