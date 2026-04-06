@@ -60,24 +60,17 @@ nterms(H::PauliHamiltonian) = length(H.terms)
 """
 lambda(H::PauliHamiltonian) = sum(abs(t.coeff) for t in H.terms; init=0.0)
 
-"""Indices (1-based) of non-identity Paulis in a term."""
-function _support(t::PauliTerm{N}) where {N}
-    [i for i in 1:N if t.ops[i] != pauli_I]
-end
+"""
+    _support_count(t::PauliTerm{N}) -> Int
 
-"""Number of non-identity factors (Pauli weight)."""
-_weight(t::PauliTerm{N}) where {N} = count(op -> op != pauli_I, t.ops)
-
-"""Check if two PauliTerms commute (even number of anticommuting site pairs)."""
-function _commutes(a::PauliTerm{N}, b::PauliTerm{N}) where {N}
-    n_anti = 0
-    for i in 1:N
-        ai, bi = a.ops[i], b.ops[i]
-        if ai != pauli_I && bi != pauli_I && ai != bi
-            n_anti += 1
-        end
+Number of non-identity Paulis (weight). Zero allocation.
+"""
+@inline function _support_count(t::PauliTerm{N}) where {N}
+    c = 0
+    @inbounds for i in 1:N
+        t.ops[i] != pauli_I && (c += 1)
     end
-    iseven(n_anti)
+    c
 end
 
 function Base.show(io::IO, H::PauliHamiltonian{N}) where {N}
@@ -96,7 +89,13 @@ Base.:*(H::PauliHamiltonian, c::Real) = c * H
 
 # ── Convenience constructors ─────────────────────────────────────────────────
 
-const _SYM_TO_PAULI = Dict(:I => pauli_I, :X => pauli_X, :Y => pauli_Y, :Z => pauli_Z)
+@inline function _sym_to_pauli(s::Symbol)
+    s === :I && return pauli_I
+    s === :X && return pauli_X
+    s === :Y && return pauli_Y
+    s === :Z && return pauli_Z
+    error("pauli_term: unknown Pauli '$s'. Expected :I, :X, :Y, :Z.")
+end
 
 """
     pauli_term(coeff, ops::Symbol...) -> PauliTerm{N}
@@ -106,10 +105,7 @@ Convenience: `pauli_term(0.5, :X, :Z)` creates 0.5 × X⊗Z.
 function pauli_term(coeff::Real, ops::Symbol...)
     N = length(ops)
     N >= 1 || error("pauli_term: need at least 1 operator")
-    pops = ntuple(i -> begin
-        haskey(_SYM_TO_PAULI, ops[i]) || error("pauli_term: unknown Pauli '$(ops[i])'. Expected :I, :X, :Y, :Z.")
-        _SYM_TO_PAULI[ops[i]]
-    end, N)
+    pops = ntuple(i -> _sym_to_pauli(ops[i]), N)
     PauliTerm{N}(Float64(coeff), pops)
 end
 

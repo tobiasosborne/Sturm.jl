@@ -174,32 +174,46 @@ function pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real) wher
         "pauli_exp!: expected $N qubits for PauliTerm{$N}, got $(length(qubits))")
     for q in qubits; check_live!(q); end
 
-    sup = _support(term)
-    isempty(sup) && return nothing   # global phase
+    _support_count(term) == 0 && return nothing   # all-identity = global phase
 
     angle = 2.0 * theta * term.coeff
 
-    # Step 1: basis change (rotate non-Z sites to Z basis)
-    for k in sup
-        _basis_change!(qubits[k], term.ops[k])
+    # Step 1: basis change (rotate non-Z,non-I sites to Z basis)
+    @inbounds for k in 1:N
+        term.ops[k] != pauli_I && _basis_change!(qubits[k], term.ops[k])
     end
 
     # Step 2: CNOT staircase (compute parity onto last active qubit)
-    for j in 1:(length(sup) - 1)
-        qubits[sup[j + 1]] ⊻= qubits[sup[j]]
+    # Walk active sites left-to-right; each XORs into the next active site.
+    prev_active = 0
+    last_active = 0
+    @inbounds for k in 1:N
+        if term.ops[k] != pauli_I
+            if prev_active > 0
+                qubits[k] ⊻= qubits[prev_active]
+            end
+            prev_active = k
+            last_active = k
+        end
     end
 
-    # Step 3: Rz(2·θ·h) on the pivot
-    qubits[sup[end]].φ += angle
+    # Step 3: Rz(2·θ·h) on the pivot (last active qubit)
+    @inbounds qubits[last_active].φ += angle
 
     # Step 4: reverse CNOT staircase
-    for j in (length(sup) - 1):-1:1
-        qubits[sup[j + 1]] ⊻= qubits[sup[j]]
+    prev_active = 0
+    @inbounds for k in N:-1:1
+        if term.ops[k] != pauli_I
+            if prev_active > 0
+                qubits[prev_active] ⊻= qubits[k]
+            end
+            prev_active = k
+        end
     end
 
     # Step 5: reverse basis change
-    for k in reverse(sup)
-        _basis_unchange!(qubits[k], term.ops[k])
+    @inbounds for k in N:-1:1
+        term.ops[k] != pauli_I && _basis_unchange!(qubits[k], term.ops[k])
     end
 
     return nothing

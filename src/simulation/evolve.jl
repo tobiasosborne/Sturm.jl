@@ -12,6 +12,7 @@ function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian{N}, t::Real,
     length(qubits) == N || error(
         "evolve!: expected $N qubits for PauliHamiltonian{$N}, got $(length(qubits))")
     for q in qubits; check_live!(q); end
+    isfinite(t) || error("evolve!: time must be finite, got $t")
     t >= 0 || error("evolve!: time must be non-negative, got $t")
     t == 0 && return nothing
     _apply_formula!(qubits, H, t, alg)
@@ -19,7 +20,7 @@ function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian{N}, t::Real,
 end
 
 """
-    evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real, alg::AbstractSimAlgorithm)
+    evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real, alg::AbstractProductFormula)
 
 Apply exp(-iHt) to a QInt register. Returns the register for chaining.
 
@@ -34,7 +35,7 @@ end
 ```
 """
 function evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real,
-                 alg::AbstractSimAlgorithm) where {W}
+                 alg::AbstractProductFormula) where {W}
     check_live!(reg)
     ctx = reg.ctx
     qubits = [QBool(reg.wires[i], ctx, false) for i in 1:W]
