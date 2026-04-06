@@ -18,4 +18,5 @@ using Sturm
     include("test_qecc.jl")
     include("test_grover.jl")
     include("test_memory_safety.jl")
+    include("test_simulation.jl")
 end

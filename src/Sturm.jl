@@ -43,6 +43,13 @@ include("gates.jl")
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
 
+# Hamiltonian simulation
+include("simulation/hamiltonian.jl")
+include("simulation/pauli_exp.jl")
+include("simulation/trotter.jl")
+include("simulation/models.jl")
+include("simulation/evolve.jl")
+
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()
     _set_omp_threads!()
@@ -78,5 +85,15 @@ export depolarise!, dephase!, amplitude_damp!, classicalise
 
 # QECC
 export AbstractCode, Steane, encode!, decode!
+
+# Simulation
+export PauliOp, pauli_I, pauli_X, pauli_Y, pauli_Z
+export PauliTerm, PauliHamiltonian, pauli_term, hamiltonian
+export nqubits, nterms, lambda
+export pauli_exp!
+export AbstractSimAlgorithm, AbstractProductFormula
+export Trotter1, Trotter2, Suzuki
+export evolve!
+export ising, heisenberg
 
 end # module Sturm
