@@ -59,24 +59,28 @@ struct Trotter2 <: AbstractProductFormula
 end
 
 """
+    Suzuki{K}(; steps=1)
     Suzuki(; order=4, steps=1)
 
 Higher-order Suzuki product formula [Suzuki 1991, Eqs. (3.14)-(3.16)]:
     S₂ₖ(t) = [S₂ₖ₋₂(pₖt)]² · S₂ₖ₋₂((1-4pₖ)t) · [S₂ₖ₋₂(pₖt)]²
     pₖ = 1/(4 - 4^{1/(2k-1)})
-Order must be even and >= 4.
-Error: O((λt)^{2k+1}/r^{2k}) for r steps.
+Order K must be even and >= 4. K is a type parameter so `Val(K)` resolves
+at compile time — the full Suzuki recursion tree is inlined.
+Error: O((λt)^{K+1}/r^K) for r steps.
 """
-struct Suzuki <: AbstractProductFormula
-    order::Int
+struct Suzuki{K} <: AbstractProductFormula
     steps::Int
-    function Suzuki(; order::Int=4, steps::Int=1)
-        order >= 4 || error("Suzuki: order must be >= 4 (use Trotter2 for order 2), got $order")
-        iseven(order) || error("Suzuki: order must be even, got $order")
+    function Suzuki{K}(; steps::Int=1) where {K}
+        K >= 4 || error("Suzuki: order must be >= 4 (use Trotter2 for order 2), got $K")
+        iseven(K) || error("Suzuki: order must be even, got $K")
         steps >= 1 || error("Suzuki: steps must be >= 1, got $steps")
-        new(order, steps)
+        new{K}(steps)
     end
 end
+
+"""Convenience constructor: `Suzuki(order=4, steps=1)` preserves existing API."""
+Suzuki(; order::Int=4, steps::Int=1) = Suzuki{order}(; steps)
 
 # ── Suzuki recursion coefficient ─────────────────────────────────────────────
 
@@ -93,32 +97,33 @@ end
 
 # ── Core Trotter steps ───────────────────────────────────────────────────────
 
-"""One step of first-order Trotter: S₁(dt) = Πⱼ exp(-i dt hⱼ Pⱼ)."""
-function _trotter1_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N}, dt::Real) where {N}
+"""One step of first-order Trotter: S₁(dt) = Πⱼ exp(-i dt hⱼ Pⱼ).
+Generic over qubits type (Vector or NTuple) — no validation, called from evolve!."""
+function _trotter1_step!(qubits, H::PauliHamiltonian{N}, dt::Real) where {N}
     for term in H.terms
-        pauli_exp!(qubits, term, dt)
+        _pauli_exp!(qubits, term, dt)
     end
 end
 
 """One step of second-order Trotter: forward sweep at dt/2, reverse sweep at dt/2."""
-function _trotter2_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N}, dt::Real) where {N}
+function _trotter2_step!(qubits, H::PauliHamiltonian{N}, dt::Real) where {N}
     half_dt = dt / 2
     for term in H.terms
-        pauli_exp!(qubits, term, half_dt)
+        _pauli_exp!(qubits, term, half_dt)
     end
     for term in Iterators.reverse(H.terms)
-        pauli_exp!(qubits, term, half_dt)
+        _pauli_exp!(qubits, term, half_dt)
     end
 end
 
 """Recursive Suzuki step. Base case Val(2) → _trotter2_step!.
 Uses Val{K} dispatch so the compiler inlines the full recursion tree."""
-function _suzuki_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
+function _suzuki_step!(qubits, H::PauliHamiltonian{N},
                        dt::Real, ::Val{2}) where {N}
     _trotter2_step!(qubits, H, dt)
 end
 
-function _suzuki_step!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
+function _suzuki_step!(qubits, H::PauliHamiltonian{N},
                        dt::Real, ::Val{K}) where {N, K}
     # k = K ÷ 2 aligns with Suzuki 1991 indexing: order 2k uses p_k
     p = _suzuki_p(K ÷ 2)
@@ -133,7 +138,7 @@ end
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
-function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
+function _apply_formula!(qubits, H::PauliHamiltonian{N},
                          t::Real, alg::Trotter1) where {N}
     dt = t / alg.steps
     for _ in 1:alg.steps
@@ -141,7 +146,7 @@ function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
     end
 end
 
-function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
+function _apply_formula!(qubits, H::PauliHamiltonian{N},
                          t::Real, alg::Trotter2) where {N}
     dt = t / alg.steps
     for _ in 1:alg.steps
@@ -149,10 +154,10 @@ function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
     end
 end
 
-function _apply_formula!(qubits::Vector{QBool}, H::PauliHamiltonian{N},
-                         t::Real, alg::Suzuki) where {N}
+function _apply_formula!(qubits, H::PauliHamiltonian{N},
+                         t::Real, alg::Suzuki{K}) where {N, K}
     dt = t / alg.steps
     for _ in 1:alg.steps
-        _suzuki_step!(qubits, H, dt, Val(alg.order))
+        _suzuki_step!(qubits, H, dt, Val(K))
     end
 end

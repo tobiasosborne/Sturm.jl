@@ -47,6 +47,8 @@ include("library/patterns.jl")
 include("simulation/hamiltonian.jl")
 include("simulation/pauli_exp.jl")
 include("simulation/trotter.jl")
+include("simulation/qdrift.jl")
+include("simulation/composite.jl")
 include("simulation/models.jl")
 include("simulation/evolve.jl")
 
@@ -95,6 +97,8 @@ export PauliTerm, PauliHamiltonian, pauli_term, hamiltonian
 export pauli_exp!
 export AbstractSimAlgorithm, AbstractProductFormula, AbstractStochasticAlgorithm, AbstractQueryAlgorithm
 export Trotter1, Trotter2, Suzuki
+export QDrift, qdrift_samples
+export Composite
 export evolve!
 export ising, heisenberg
 

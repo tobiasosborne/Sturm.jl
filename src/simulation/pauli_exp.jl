@@ -157,34 +157,50 @@ Inverse of `_basis_change!`.
 end
 
 """
-    pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real)
+    _pauli_exp!(qubits, term::PauliTerm{N}, theta::Real)
 
-Apply exp(-i θ h P₁⊗…⊗Pₙ) to the given qubits, where h = term.coeff
-and Pⱼ = term.ops[j]. The total rotation angle is θ·h.
+Internal unchecked implementation. Called from Trotter steps where
+validation has already been done by `evolve!`. Accepts any indexable
+collection of QBool (Vector or NTuple) — Julia specialises on both.
 
-The all-identity term is a global phase (unphysical for channels) and is skipped.
+**Controlled-gate optimisation**: when called inside a `when()` block
+(non-empty control stack), only the Rz pivot is controlled. Basis changes
+and CNOT staircase run unconditionally — they are self-inverse, so
+V · controlled(Rz) · V† = controlled(V · Rz · V†). This reduces gate
+count from 7 controlled ops per term to 6 unconditional + 1 controlled Rz.
 
-Gate count: 2·|S| single-qubit rotations + 2·(|S|-1) CNOTs + 1 Rz,
-where |S| is the number of non-identity sites.
-
-Ref: Whitfield et al. (2011), arXiv:1001.3855, Section 4.
+Gate count (unconditional): 2·|S| rotations + 2·(|S|-1) CNOTs + 1 Rz.
+Gate count (controlled):    2·|S| rotations + 2·(|S|-1) CNOTs + 1 controlled-Rz.
 """
-function pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real) where {N}
-    length(qubits) == N || error(
-        "pauli_exp!: expected $N qubits for PauliTerm{$N}, got $(length(qubits))")
-    for q in qubits; check_live!(q); end
-
+function _pauli_exp!(qubits, term::PauliTerm{N}, theta::Real) where {N}
     _support_count(term) == 0 && return nothing   # all-identity = global phase
 
     angle = 2.0 * theta * term.coeff
 
-    # Step 1: basis change (rotate non-Z,non-I sites to Z basis)
+    # ── Controlled-gate optimisation ────────────────────────────────────
+    # If inside when() block, temporarily clear the control stack so that
+    # basis changes and CNOT staircase are unconditional. Only restore
+    # the stack for the Rz pivot (the only physically necessary control).
+    #
+    # Proof: Let V = basis_change · CNOT_staircase (acts on target qubits
+    # only, not on the control qubit c). Then:
+    #   V · (|0><0|_c ⊗ I + |1><1|_c ⊗ Rz) · V†
+    #   = |0><0|_c ⊗ V·V† + |1><1|_c ⊗ V·Rz·V†
+    #   = |0><0|_c ⊗ I + |1><1|_c ⊗ exp(-iθP)
+    #   = controlled(exp(-iθP))   ✓
+    controls = qubits[1].ctx.control_stack
+    has_controls = !isempty(controls)
+    if has_controls
+        saved = copy(controls)
+        empty!(controls)
+    end
+
+    # Step 1: basis change — unconditional (self-inverse, cancels if Rz = I)
     @inbounds for k in 1:N
         term.ops[k] != pauli_I && _basis_change!(qubits[k], term.ops[k])
     end
 
-    # Step 2: CNOT staircase (compute parity onto last active qubit)
-    # Walk active sites left-to-right; each XORs into the next active site.
+    # Step 2: CNOT staircase — unconditional (self-inverse)
     prev_active = 0
     last_active = 0
     @inbounds for k in 1:N
@@ -197,10 +213,16 @@ function pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real) wher
         end
     end
 
-    # Step 3: Rz(2·θ·h) on the pivot (last active qubit)
+    # Step 3: Rz(2·θ·h) on the pivot — CONTROLLED if inside when()
+    if has_controls
+        append!(controls, saved)
+    end
     @inbounds qubits[last_active].φ += angle
+    if has_controls
+        empty!(controls)
+    end
 
-    # Step 4: reverse CNOT staircase
+    # Step 4: reverse CNOT staircase — unconditional
     prev_active = 0
     @inbounds for k in N:-1:1
         if term.ops[k] != pauli_I
@@ -211,21 +233,44 @@ function pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real) wher
         end
     end
 
-    # Step 5: reverse basis change
+    # Step 5: reverse basis change — unconditional
     @inbounds for k in N:-1:1
         term.ops[k] != pauli_I && _basis_unchange!(qubits[k], term.ops[k])
+    end
+
+    # Restore control stack for subsequent operations
+    if has_controls
+        append!(controls, saved)
     end
 
     return nothing
 end
 
 """
+    pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real)
+
+Apply exp(-i θ h P₁⊗…⊗Pₙ) to the given qubits, where h = term.coeff
+and Pⱼ = term.ops[j]. The total rotation angle is θ·h.
+
+The all-identity term is a global phase (unphysical for channels) and is skipped.
+
+Ref: Whitfield et al. (2011), arXiv:1001.3855, Section 4.
+"""
+function pauli_exp!(qubits::Vector{QBool}, term::PauliTerm{N}, theta::Real) where {N}
+    length(qubits) == N || error(
+        "pauli_exp!: expected $N qubits for PauliTerm{$N}, got $(length(qubits))")
+    for q in qubits; check_live!(q); end
+    _pauli_exp!(qubits, term, theta)
+end
+
+"""
     pauli_exp!(reg::QInt{W}, term::PauliTerm{W}, theta::Real)
 
-Convenience: apply exp(-iθhP) to a QInt register.
+Apply exp(-iθhP) to a QInt register. Zero heap allocation — passes
+NTuple wire views directly to the internal implementation.
 """
 function pauli_exp!(reg::QInt{W}, term::PauliTerm{W}, theta::Real) where {W}
     check_live!(reg)
-    pauli_exp!(collect(_qbool_views(reg)), term, theta)
+    _pauli_exp!(_qbool_views(reg), term, theta)
     return nothing
 end
