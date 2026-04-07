@@ -49,6 +49,7 @@ include("simulation/pauli_exp.jl")
 include("simulation/trotter.jl")
 include("simulation/qdrift.jl")
 include("simulation/composite.jl")
+include("simulation/error_bounds.jl")
 include("simulation/models.jl")
 include("simulation/evolve.jl")
 
@@ -99,6 +100,7 @@ export AbstractSimAlgorithm, AbstractProductFormula, AbstractStochasticAlgorithm
 export Trotter1, Trotter2, Suzuki
 export QDrift, qdrift_samples
 export Composite
+export alpha_comm, trotter_error, trotter_steps
 export evolve!
 export ising, heisenberg
 
