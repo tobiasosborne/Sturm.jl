@@ -102,6 +102,39 @@ function Base.xor(a::QBool, b::QBool)
     return a
 end
 
+# ── Mixed-type XOR: quantum promotion (P8) ──────────────────────────────────
+
+"""
+    xor(a::QBool, b::Bool)
+
+Mixed quantum-classical XOR (P8). If b is true, flip a (X gate via Ry(π)).
+If b is false, no-op. Returns a. No new qubit allocated — the classical
+value is a known constant, so no entanglement is needed.
+"""
+function Base.xor(a::QBool, b::Bool)
+    check_live!(a)
+    if b
+        apply_ry!(a.ctx, a.wire, π)  # X gate: flip a
+    end
+    return a
+end
+
+"""
+    xor(a::Bool, b::QBool)
+
+Mixed classical-quantum XOR (P8). Promotes classical `a` to a fresh QBool,
+then applies CNOT with b as control. Returns a new QBool holding a ⊻ b.
+b is not consumed (used as control only, same as QBool-QBool xor).
+Context is extracted from the quantum operand b.
+"""
+function Base.xor(a::Bool, b::QBool)
+    check_live!(b)
+    ctx = b.ctx
+    target = QBool(ctx, Float64(a))
+    apply_cx!(ctx, b.wire, target.wire)  # b controls, target is target
+    return target
+end
+
 # ── Preparation ───────────────────────────────────────────────────────────────
 
 """

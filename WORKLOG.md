@@ -4,6 +4,42 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-07 — Session 5: P8 Quantum promotion (numeric tower)
+
+### Investigation: "classical by default, quantum on demand"
+- **User proposed radical design change**: classical variables (Int64, Bool) should auto-promote to quantum when quantum operations are applied.
+- **5 parallel investigation agents launched**: (1) codebase type system map, (2) simulation/noise/QECC impact, (3) Opus deep design analysis, (4) prior art research across 12 quantum languages, (5) Julia type system feasibility analysis.
+- **Unanimous finding: lazy bit-level promotion is infeasible.** Three independent reasons:
+  1. **Physics**: "partially quantum integer" doesn't exist. Carry propagation in addition makes quantum taint spread to ALL higher bits. Precise taint analysis is undecidable.
+  2. **Julia**: Variables are bindings, not boxes. Can't mutate Int64 to QInt in place. All 6 approaches (wrapper, return-value, mutable container, macro, compiler plugin, two-phase) have fatal tradeoffs.
+  3. **Language design**: Breaks P2 (type boundary = measurement) and P4 (when vs if). No prior quantum language does lazy promotion — only Qutes (2025) does auto-promotion, but its auto-measurement contradicts P2.
+- **But the intuition was sound.** Reframed as Julia numeric tower convention: `Int + Float64 → Float64` becomes `Integer + QInt{W} → QInt{W}`. Initial construction is explicit (like `complex(1)`), then mixed operations auto-promote.
+
+### P8 design decisions
+- **NO `promote_rule`/`Base.convert`**. `convert(QInt{W}, ::Integer)` would need a quantum context (side-effect in convert is un-Julian). Instead: direct method overloads.
+- **Context from quantum operand.** All mixed methods extract `ctx` from the quantum argument (`a.ctx`), never from `current_context()`. Makes the dependency explicit and traceable.
+- **`mod` before constructor.** `_promote_to_qint` applies `mod(value, 1 << W)` before calling `QInt{W}(ctx, modded)`. The constructor's range check stays strict — only the promotion path wraps.
+- **`xor(QBool, true)` = X gate, not CNOT.** When the classical operand is a known constant, no qubit allocation needed. `true` → `Ry(π)` (flip). `false` → identity. Strictly more efficient.
+- **`xor(Bool, QBool)` allocates a new qubit.** Prepare fresh QBool from classical value, CNOT from quantum operand as control. The quantum operand stays live (control wire, consistent with QBool-QBool xor semantics).
+- **Gates and when() do NOT participate.** `H!(true)` → MethodError. `when(true)` → MethodError. This preserves P4 and P5.
+- **Cross-width QInt promotion deferred.** `QInt{4} + QInt{8}` not defined — would need choosing max(W,V) and zero-extending. Not needed for P8 (classical-quantum, not quantum-quantum width mismatch).
+
+### Implementation
+- Added P8 to PRD (Sturm-PRD.md) and CLAUDE.md
+- Added `_promote_to_qint` helper to `src/types/qint.jl`
+- Added 10 mixed-type method overloads: `+`, `-`, `<`, `==` × {QInt+Int, Int+QInt}
+- Added 2 mixed-type xor methods: `xor(QBool, Bool)`, `xor(Bool, QBool)` to `src/types/qbool.jl`
+- Added `test/test_promotion.jl`: 2,052 tests (exhaustive QInt{4} + deterministic + Bell-pair entanglement + negative tests)
+- **10,626 total tests pass** (up from 8,530)
+
+### Prior art survey highlights (from research agent)
+- **12 quantum languages surveyed**: Silq, Qwerty, Tower, Twist, Quipper, Q#, Classiq, Yao.jl, Bloqade, Qrisp, Qunity, GUPPY
+- **Only Qutes (PLanQC 2025) does auto-promotion** — but with auto-measurement (contradicts P2)
+- **Silq**: quantum-by-default with `!T` classical restriction (opposite direction)
+- **Qwerty**: explicit `.sign`/`.xor`/`.inplace` embedding (sophisticated but manual)
+- **Qunity (POPL 2023)**: "classical IS quantum" via unified syntax — philosophically closest
+- **"Quantum taint analysis" is a novel concept** — no prior art under any name
+
 ## 2026-04-05 — Session 1: Project bootstrap
 
 ### Steps 1.1–1.6 — Project scaffold + Orkan FFI (all complete)

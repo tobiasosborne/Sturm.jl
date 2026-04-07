@@ -32,6 +32,8 @@ This is the ONLY mechanism for crossing the boundary. Measurement, preparation, 
 
 **P7. The abstraction is dimension-agnostic.** The core type system and channel algebra must not assume qubits (d=2). Qutrits (`QTrit`, d=3), qudits (`QDit{D}`, arbitrary d), and ultimately anyonic systems (fusion categories) should be expressible by extending the type hierarchy without modifying the core. If adding qutrits requires changes to the channel composition operators or the tracing infrastructure, the abstraction is wrong. For v0.1 only d=2 is implemented, but no design decision may foreclose higher d.
 
+**P8. Quantum promotion follows Julia's numeric tower.** When a classical value (`Bool`, `Integer`) participates in an operation with a quantum value (`QBool`, `QInt{W}`), the classical value auto-promotes to the corresponding quantum type — just as `Int + Float64 → Float64`. Initial quantum construction is explicit: `QInt{8}(42)` is preparation (a physical operation), analogous to `complex(1)`. Mixed-type methods extract context and width from the quantum operand. Promotion is always classical→quantum; quantum→classical requires measurement via P2. Gates (`H!`, `X!`, etc.) and quantum control (`when`) do NOT participate in promotion — they require exact quantum types. Implementation: mixed-type methods are defined directly (NOT via `Base.promote_rule`/`Base.convert`, because `convert(QInt{W}, ::Integer)` would require a quantum context as a side-effect, which violates Julia convention). The context is extracted from the quantum operand.
+
 ---
 
 ## 2. Type System
@@ -662,6 +664,43 @@ f = classicalise(ch)                 # ordinary Julia function Bool → Bool
 # For teleportation (a unitary channel), this is the identity map.
 @assert f(true) == true
 @assert f(false) == false
+```
+
+### 8.9 Quantum promotion (numeric tower)
+
+```julia
+# Classical values auto-promote when combined with quantum values (P8).
+# This follows Julia's convention: Int + Float64 → Float64.
+ctx = EagerContext()
+
+# Explicit construction is preparation — like complex(1) or big(42)
+a = QInt{8}(ctx, 42)
+
+# Classical 17 auto-promotes to QInt{8}(17) using a's context and width
+s = a + 17
+result::Int = s
+@assert result == 59
+
+# Commutative: classical on either side
+b = QInt{8}(ctx, 10)
+t = 5 + b
+result2::Int = t
+@assert result2 == 15
+
+# XOR with Bool: true = X gate, false = no-op
+q = QBool(ctx, 0.0)
+q ⊻= true                    # equivalent to X!(q)
+@assert Bool(q) == true
+
+# Overflow wraps: 300 mod 256 = 44
+c = QInt{8}(ctx, 42)
+u = c + 300
+result3::Int = u
+@assert result3 == 86         # (42 + 44) mod 256
+
+# Gates do NOT participate in promotion — they require exact quantum types
+# H!(true)   → MethodError    (correct: use QBool(true) then H!)
+# when(true)  → MethodError    (correct: use if for classical control)
 ```
 
 ---
