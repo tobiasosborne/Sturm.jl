@@ -49,11 +49,12 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 13. **NO DUPLICATED PRIMITIVES — USE THE DSL.** Before implementing ANY quantum subroutine, check what `src/gates.jl` and `src/library/patterns.jl` already provide. If it exists, import it. If it doesn't, add it once in the right place.
 
-14. **THE SEVEN DESIGN PRINCIPLES ARE AXIOMS.** P1-P7 from the PRD (SS1) are non-negotiable. If an implementation choice violates any principle, the implementation is wrong. In particular:
+14. **THE EIGHT DESIGN PRINCIPLES ARE AXIOMS.** P1-P8 from the PRD (SS1) are non-negotiable. If an implementation choice violates any principle, the implementation is wrong. In particular:
     - P1: Functions are channels. No separate "channel" wrapper the programmer must use.
     - P2: No `measure()` function. Type boundary only.
     - P5: No gates, no qubits in user-facing code. Registers and primitives.
     - P7: Nothing in the core may assume d=2 in a way that forecloses higher d.
+    - P8: Classical values auto-promote to quantum in mixed operations (`QInt{8}(42) + 17`). No `promote_rule`; direct method overloads. Context extracted from quantum operand.
 
 ## Global Phase and Universality
 

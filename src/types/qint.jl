@@ -69,6 +69,19 @@ function QInt{W}(ctx::AbstractContext, value::Integer) where {W}
     QInt{W}(wires, ctx, false)
 end
 
+# ── Internal: promote classical → QInt{W} for mixed operations (P8) ──────────
+
+"""
+    _promote_to_qint(ctx::AbstractContext, value::Integer, ::Val{W}) -> QInt{W}
+
+Promote a classical Integer to QInt{W} for mixed-type operations (P8).
+Applies mod 2^W to handle overflow (same semantics as modular arithmetic
+in the adder circuit). Context is provided explicitly from the quantum operand.
+"""
+@inline function _promote_to_qint(ctx::AbstractContext, value::Integer, ::Val{W}) where {W}
+    QInt{W}(ctx, mod(value, 1 << W))
+end
+
 """
     QInt{W}(value::Integer)
 
@@ -190,6 +203,11 @@ function Base.:+(a::QInt{W}, b::QInt{W}) where {W}
     return result
 end
 
+# ── Mixed-type addition: quantum promotion (P8) ─────────────────────────────
+
+Base.:+(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a + _promote_to_qint(a.ctx, b, Val(W)))
+Base.:+(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) + b)
+
 # ── Subtraction ──────────────────────────────────────────────────────────────
 
 """
@@ -267,6 +285,11 @@ function Base.:-(a::QInt{W}, b::QInt{W}) where {W}
     return result
 end
 
+# ── Mixed-type subtraction: quantum promotion (P8) ──────────────────────────
+
+Base.:-(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a - _promote_to_qint(a.ctx, b, Val(W)))
+Base.:-(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) - b)
+
 # ── Comparison ───────────────────────────────────────────────────────────────
 
 """
@@ -318,3 +341,10 @@ function Base.:(==)(a::QInt{W}, b::QInt{W}) where {W}
     q = QBool(ctx, va == vb ? 1.0 : 0.0)
     return q
 end
+
+# ── Mixed-type comparison: quantum promotion (P8) ───────────────────────────
+
+Base.:<(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a < _promote_to_qint(a.ctx, b, Val(W)))
+Base.:<(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) < b)
+Base.:(==)(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a == _promote_to_qint(a.ctx, b, Val(W)))
+Base.:(==)(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) == b)
