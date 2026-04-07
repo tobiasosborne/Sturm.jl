@@ -21,5 +21,6 @@ using Sturm
     include("test_simulation.jl")
     include("test_qdrift.jl")
     include("test_composite.jl")
+    include("test_error_bounds.jl")
     include("test_promotion.jl")
 end
