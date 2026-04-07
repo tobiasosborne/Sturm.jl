@@ -26,6 +26,8 @@ result::Bool = q    # measurement happens here, at the type boundary
 
 **P7. The abstraction is dimension-agnostic.** The core must not assume d=2 in a way that forecloses qutrits or anyonic systems.
 
+**P8. Quantum promotion follows Julia's numeric tower.** Classical values auto-promote to quantum when combined with quantum values, just as `Int + Float64 -> Float64`. Initial construction is explicit (`QInt{8}(42)` is like `complex(1)`). Mixed operations promote the classical side.
+
 ## The Four Primitives
 
 Everything in Sturm is built from exactly four operations:
@@ -93,6 +95,24 @@ end
 ```
 
 `QInt{8}` carries width in the type. Julia specialises on it. The `+` operator is a reversible ripple-carry circuit built entirely from `xor=` and `when()`.
+
+### Quantum Promotion (P8)
+
+Classical values auto-promote when combined with quantum values — same as Julia's numeric tower:
+
+```julia
+@context EagerContext() begin
+    a = QInt{8}(42)        # explicit construction, like complex(1)
+    s = a + 17             # 17 auto-promotes to QInt{8}(17)
+    t = 5 + a              # commutative
+
+    q = QBool(0.0)
+    q ⊻= true              # classical true → X gate (no qubit allocated)
+
+    result = Int(s)        # type boundary = measurement
+    @assert result == 59
+end
+```
 
 ### Deutsch-Jozsa in One Line
 
@@ -203,7 +223,7 @@ julia> ] add https://github.com/tobiasosborne/Sturm.jl
 
 ```bash
 julia --project -e 'using Pkg; Pkg.test()'
-# 8171 tests, ~47 seconds
+# 10626 tests
 ```
 
 ## Project Status
@@ -220,6 +240,8 @@ All 12 phases of the [implementation plan](docs/PLAN.md) are structurally comple
 | 10 | DensityMatrixContext | Complete |
 | 11 | Noise channels, classicalise | Complete |
 | 12 | QECC (Steane [[7,1,3]]) | Complete (encoding circuit needs verification) |
+| 13 | Trotter-Suzuki simulation (evolve!, ising, heisenberg) | Complete |
+| 14 | P8 quantum promotion (mixed-type arithmetic) | Complete |
 
 See `WORKLOG.md` for detailed session notes and gotchas.
 
