@@ -188,26 +188,27 @@ using LinearAlgebra: eigen, Diagonal, kron
     # ═════════════════════════════════════════════════════════════════════
 
     @testset "Higher Trotter order in composite" begin
-        H = ising(Val(4), J=1.0, h=0.3)
-        t = 0.2
+        # Use few composite steps so Trotter error dominates over qDRIFT noise,
+        # and high qdrift_samples to suppress qDRIFT variance.
+        H = ising(Val(4), J=1.0, h=0.1)  # small h → most weight in Trotter partition
+        t = 0.5  # longer time amplifies Trotter order difference
         ψ_exact = _exact_evolve(H, t)
 
-        # Order 1 vs order 2: order 2 should be more accurate
-        N_trials = 15
+        N_trials = 20
         err_o1 = 0.0
         err_o2 = 0.0
         for _ in 1:N_trials
             ctx1 = EagerContext()
             qs1 = [QBool(ctx1, 0) for _ in 1:4]
             evolve!(qs1, H, t,
-                    Composite(steps=10, cutoff=0.5, qdrift_samples=300, trotter_order=1))
+                    Composite(steps=5, cutoff=0.05, qdrift_samples=2000, trotter_order=1))
             err_o1 += _state_error(ctx1, ψ_exact)
             for q in qs1; discard!(q); end
 
             ctx2 = EagerContext()
             qs2 = [QBool(ctx2, 0) for _ in 1:4]
             evolve!(qs2, H, t,
-                    Composite(steps=10, cutoff=0.5, qdrift_samples=300, trotter_order=2))
+                    Composite(steps=5, cutoff=0.05, qdrift_samples=2000, trotter_order=2))
             err_o2 += _state_error(ctx2, ψ_exact)
             for q in qs2; discard!(q); end
         end
