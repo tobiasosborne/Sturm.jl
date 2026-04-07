@@ -4,6 +4,65 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-07 — Session 6: Simulation module idiomatic review
+
+### Rigorous review of src/simulation/ (product formulas, Trotter algorithms)
+
+Reviewed all 5 simulation files against CLAUDE.md rules and DSL idioms. Key findings:
+
+**Passes (good):**
+- All quantum operations use the 4 primitives only (Rule 11) ✓
+- Physics grounding exemplary — full proofs for X→Z and Y→Z basis changes in pauli_exp.jl, Suzuki 1991 equation citations (Rule 3-4) ✓
+- `Val{K}` dispatch for Suzuki recursion (compile-time inlining) — textbook Julia ✓
+- `@enum PauliOp::UInt8`, `NTuple{N, PauliOp}` — zero-overhead, stack-allocated ✓
+- DiffEq-style `evolve!(state, H, t, alg)` API — idiomatic Julia ✓
+- Correctly uses `Ry(-π/2)` for X basis change, NOT `H!` (which has sign error) ✓
+
+**Issues found (4 real, 1 retracted):**
+
+1. **`Vector{QBool}` in public API breaks P5.** `evolve!(::Vector{QBool})` and `pauli_exp!(::Vector{QBool})` are exported. P5 says no qubits in user code. `QInt{W}` overloads should be the primary API. Vector overloads kept for TracingContext compatibility (trace() creates QBools, not QInts) but should be secondary.
+
+2. **Redundant `check_live!` in inner loop.** `evolve!` validates at boundary. Then `pauli_exp!` validates again on every qubit, for every term, for every Trotter step. For 20-qubit Ising, 100 Trotter2 steps: 156,000 redundant checks. Fix: extract `_pauli_exp!` (unchecked internal) called from Trotter steps; keep `pauli_exp!` (checked) for standalone use.
+
+3. **`collect(_qbool_views(reg))` allocates per call.** The QInt overloads heap-allocate a Vector{QBool} each time. For `evolve!` this happens once (fine), but standalone `pauli_exp!(::QInt)` in a loop allocates repeatedly. Fix: internal path receives pre-collected vector.
+
+4. **`Suzuki.order` is runtime Int, dispatched via `Val(alg.order)`.** Constructs `Val` from runtime Int on every step. Should be `Suzuki{K}` with K as type parameter (like `QInt{W}`), so `Val(K)` resolves at compile time. Convenience constructor `Suzuki(order=4, steps=1)` preserves existing API.
+
+5. **~~No when() awareness~~ — RETRACTED.** Initially claimed `when(ctrl) do; evolve!(...); end` wouldn't work. WRONG. `when()` pushes to `ctx.control_stack`, and ALL primitives (regardless of call depth) check that stack. Control propagates transparently through function calls. Verified by tracing the call path: `when()` → `evolve!` → `_apply_formula!` → `_trotter1_step!` → `pauli_exp!` → `q.θ += ...` → `apply_ry!(ctx, ...)` → sees `control_stack` → applies controlled-Ry. Correctness: control=|0⟩ → identity, control=|1⟩ → full exp(-iHt). This is a STRENGTH of the DSL design.
+
+### P0: Controlled-pauli_exp! efficiency (user-flagged)
+
+**The when()+evolve! correctness is fine, but the EFFICIENCY is not.** When wrapped in `when()`, ALL operations become controlled — including basis changes and CNOT staircase. But only the Rz pivot needs to be controlled:
+
+- **when()-wrapped** (current): 7 controlled ops per term (controlled-Ry, Toffoli, controlled-Rz...)
+- **Optimal**: 6 unconditional + 1 controlled-Rz per term
+
+Each Toffoli decomposes into ~6 CX + ~15 single-qubit, so the overhead is significant for QPE/QSP/LCU where controlled-U is the inner loop.
+
+**User flagged this as P0.** Needs: a `_controlled_pauli_exp!` that checks `ctx.control_stack` and applies controls only to the Rz pivot, leaving basis changes and CNOT staircase unconditional.
+
+### Beads v1.0 upgrade — database recovery needed
+
+- Upgraded bd from 0.62.0 to 1.0.0
+- v1.0 switched from server-mode Dolt to embedded mode
+- The old server-mode database (104 issues, 37 closed, 67 open) was NOT migrated
+- `bd dolt pull` pulled schema from GitHub (`refs/dolt/data`) but issues table is empty
+- The old issues were pushed to GitHub via `bd dolt push` in previous sessions but appear to be in a different Dolt branch/commit that the embedded mode doesn't see
+- **Recovery needed**: the 104 historical issues need to be restored from the GitHub remote
+- **DO NOT run `bd init --force`** — it wipes the database
+
+### Open tasks for next session
+
+1. **Recover beads issues** from GitHub remote (104 issues, refs/dolt/data)
+2. **Create P0 issue**: controlled-pauli_exp! efficiency for QPE/QSP
+3. **Refactor simulation module** (4 issues above):
+   - Extract `_pauli_exp!` (unchecked) from `pauli_exp!` (checked)
+   - `Suzuki` → `Suzuki{K}` type parameter
+   - `evolve!(::QInt)` as primary API, no redundant delegation
+   - Update Trotter step functions to call `_pauli_exp!`
+4. **Implement controlled_pauli_exp!** — only control the Rz pivot
+5. Remaining from Session 5: qDRIFT, QBool{C} parameterization, MCGS, Choi phase polys
+
 ## 2026-04-07 — Session 5: P8 Quantum promotion (numeric tower)
 
 ### Investigation: "classical by default, quantum on demand"
