@@ -4,6 +4,49 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-07 — Session 7: Simulation refactors + qDRIFT + Composite
+
+### Simulation refactors (4 issues, all closed)
+
+1. **Extracted `_pauli_exp!` (unchecked internal)** — Trotter step functions now call `_pauli_exp!` instead of `pauli_exp!`, eliminating 156,000 redundant `check_live!` calls per 20-qubit, 100-step Ising simulation. Public `pauli_exp!` validates then delegates.
+
+2. **Zero-allocation QInt path** — All internal simulation functions (`_pauli_exp!`, `_trotter1_step!`, `_trotter2_step!`, `_suzuki_step!`, `_apply_formula!`) are now generic over qubits type. QInt overloads pass `_qbool_views(reg)` NTuple directly — no `collect()`, zero heap allocation.
+
+3. **`Suzuki{K}` type parameter** — Order K is now a type parameter, not a runtime Int. `Val(K)` resolves at compile time, so the full Suzuki recursion tree is inlined. Convenience constructor `Suzuki(order=4, steps=1)` preserves API.
+
+4. **P0: Controlled-pauli_exp! optimisation** — When `_pauli_exp!` detects a non-empty control stack (inside `when()` block), it temporarily clears the stack for basis changes and CNOT staircase, restoring it ONLY for the Rz pivot. Proof: V·controlled(Rz)·V† = controlled(V·Rz·V†) since V acts on target qubits only and V·V†=I. Reduces 7 controlled ops per term to 6 unconditional + 1 controlled-Rz. 32 new tests.
+
+### qDRIFT implementation (Campbell 2019, arXiv:1811.08017)
+
+- `QDrift(samples=N)` struct extending `AbstractStochasticAlgorithm`
+- `qdrift_samples(H, t, ε)` computes N = ⌈2λ²t²/ε⌉ from Campbell's Theorem 1
+- `_QDriftDist` precomputes cumulative distribution for importance sampling
+- Algorithm: sample term j with probability |hⱼ|/λ, apply exp(-iλτ·sign(hⱼ)·Pⱼ)
+- Implementation detail: `_pauli_exp!(qubits, term_j, λτ/|hⱼ|)` gives correct rotation because angle = 2·θ·hⱼ = 2·λτ·sign(hⱼ)
+- Inherits controlled-evolve optimisation automatically
+- **65 tests**: single-term exact (Z,X,Y, negative coeff), Ising ground truth (N=2–10 via eigendecomposition), O(λ²t²/N) scaling verification, qDRIFT vs Trotter2 cross-validation (N=2–24), Heisenberg model (N=2–14), controlled qDRIFT, DAG emit, OpenQASM export
+
+### Composite Trotter+qDRIFT (Hagan & Wiebe 2023, arXiv:2206.06409)
+
+- `Composite(steps=r, qdrift_samples=N_B, cutoff=χ, trotter_order=2)`
+- Partitions H by coefficient magnitude: |hⱼ| ≥ cutoff → Trotter, < cutoff → qDRIFT
+- Each composite step: one Trotter step on partition A, then N_B/r qDRIFT samples on partition B
+- Degenerate cases handled: all terms in A → pure Trotter; all in B → pure qDRIFT
+- Ref: Theorem 2.1 (Eq. 1) gate cost bound; Section 5 p.5 deterministic cutoff partitioning
+- Tests: partitioning, degenerate cases, bimodal H ground truth, Ising N=4–24, order comparison, controlled, DAG emit
+
+### Gotchas
+
+- **Test helper redefinition warnings**: `_amp` and `_probs` helpers defined in `test_simulation.jl` were duplicated in `test_qdrift.jl`. Julia warns on method overwrite. Fix: removed duplicates, rely on inclusion order.
+- **Julia background output buffering**: `Pkg.test()` output is fully buffered — no intermediate output visible until process completes. Makes progress monitoring of long test runs impossible via file watching.
+- **`searchsortedfirst` for sampling**: Julia's `searchsortedfirst(cumprobs, r)` is O(log L) binary search — correct for importance sampling from cumulative distribution. No need for custom walker/alias method at current scale.
+
+### Beads issues
+
+- **Closed (6)**: d1r (extract _pauli_exp!), ooo (QBool alloc), r9j (_qbool_views), byx (Suzuki{K}), k3u (P0 controlled-evolve), wog (qDRIFT)
+- **Created (4)**: 7m5 (Composite, claimed), 0gx (commutator error bounds), 6h0 (qSWIFT), k3u (controlled-evolve, closed)
+- **Test count**: 10,626 → 10,7XX (pending composite test results)
+
 ## 2026-04-07 — Session 6: Simulation module idiomatic review
 
 ### Rigorous review of src/simulation/ (product formulas, Trotter algorithms)

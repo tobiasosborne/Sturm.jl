@@ -23,6 +23,8 @@ end
     evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real, alg::AbstractProductFormula)
 
 Apply exp(-iHt) to a QInt register. Returns the register for chaining.
+Zero heap allocation — passes NTuple wire views directly through the
+Trotter steps to `_pauli_exp!`.
 
 # Example
 ```julia
@@ -37,6 +39,9 @@ end
 function evolve!(reg::QInt{W}, H::PauliHamiltonian{W}, t::Real,
                  alg::AbstractProductFormula) where {W}
     check_live!(reg)
-    evolve!(collect(_qbool_views(reg)), H, t, alg)
+    isfinite(t) || error("evolve!: time must be finite, got $t")
+    t >= 0 || error("evolve!: time must be non-negative, got $t")
+    t == 0 && return reg
+    _apply_formula!(_qbool_views(reg), H, t, alg)
     return reg
 end

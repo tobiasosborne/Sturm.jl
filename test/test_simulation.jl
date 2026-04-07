@@ -571,4 +571,138 @@ _probs(ctx) = Sturm.probabilities(ctx.orkan)
         end
     end
 
+    # ═════════════════════════════════════════════════════════════════════
+    # H. Controlled-pauli_exp! optimisation tests
+    # ═════════════════════════════════════════════════════════════════════
+    # when(ctrl) { pauli_exp!(...) } should only control the Rz pivot.
+    # Correctness: ctrl=|0⟩ → identity, ctrl=|1⟩ → exp(-iθP).
+    # The optimisation changes gate count but not the quantum channel.
+
+    @testset "controlled exp(-iθZ): ctrl=|0⟩ is identity" begin
+        # ctrl=|0⟩, target=|0⟩ → should remain |00⟩
+        θ = 0.5
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 0)      # |0⟩ control
+        target = QBool(ctx, 0)    # |0⟩ target
+        when(ctrl) do
+            pauli_exp!([target], pauli_term(1.0, :Z), θ)
+        end
+        # ctrl=|0⟩ → identity on target. State = |00⟩.
+        @test abs(_amp(ctx, 0) - 1.0) < 1e-12
+        @test abs(_amp(ctx, 1)) < 1e-12
+        @test abs(_amp(ctx, 2)) < 1e-12
+        @test abs(_amp(ctx, 3)) < 1e-12
+        discard!(ctrl); discard!(target)
+    end
+
+    @testset "controlled exp(-iθZ): ctrl=|1⟩ applies rotation" begin
+        # ctrl=|1⟩, target=|0⟩ → target gets exp(-iθZ)|0⟩ = e^{-iθ}|0⟩
+        θ = 0.5
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 1)      # |1⟩ control
+        target = QBool(ctx, 0)    # |0⟩ target
+        when(ctrl) do
+            pauli_exp!([target], pauli_term(1.0, :Z), θ)
+        end
+        # State = |10⟩ (ctrl=1) with phase e^{-iθ} on target
+        # Orkan LSB: ctrl=qubit0=1, target=qubit1=0 → index 1
+        @test abs(_amp(ctx, 0)) < 1e-12          # |00⟩
+        @test abs(_amp(ctx, 1) - exp(-im*θ)) < 1e-12  # |10⟩
+        @test abs(_amp(ctx, 2)) < 1e-12          # |01⟩
+        @test abs(_amp(ctx, 3)) < 1e-12          # |11⟩
+        discard!(ctrl); discard!(target)
+    end
+
+    @testset "controlled exp(-iθX): ctrl=|0⟩ is identity" begin
+        θ = π/6
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 0)
+        target = QBool(ctx, 0)
+        when(ctrl) do
+            pauli_exp!([target], pauli_term(1.0, :X), θ)
+        end
+        @test abs(_amp(ctx, 0) - 1.0) < 1e-12
+        for i in 1:3
+            @test abs(_amp(ctx, i)) < 1e-12
+        end
+        discard!(ctrl); discard!(target)
+    end
+
+    @testset "controlled exp(-iθX): ctrl=|1⟩ applies rotation" begin
+        # ctrl=|1⟩: exp(-iθX)|0⟩ = cos(θ)|0⟩ - i·sin(θ)|1⟩
+        θ = π/6
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 1)
+        target = QBool(ctx, 0)
+        when(ctrl) do
+            pauli_exp!([target], pauli_term(1.0, :X), θ)
+        end
+        # Orkan LSB: ctrl=qubit0, target=qubit1
+        # |ctrl=1, target=0⟩ = index 1, |ctrl=1, target=1⟩ = index 3
+        @test abs(_amp(ctx, 0)) < 1e-12                       # |00⟩
+        @test abs(_amp(ctx, 1) - cos(θ)) < 1e-12              # |10⟩ = ctrl=1, tgt=0
+        @test abs(_amp(ctx, 2)) < 1e-12                       # |01⟩
+        @test abs(_amp(ctx, 3) - (-im * sin(θ))) < 1e-12      # |11⟩ = ctrl=1, tgt=1
+        discard!(ctrl); discard!(target)
+    end
+
+    @testset "controlled exp(-iθ ZZ): ctrl in superposition" begin
+        # ctrl=|+⟩: creates entanglement between ctrl and target register.
+        # |+⟩|00⟩ → (|0⟩|00⟩ + |1⟩exp(-iθZZ)|00⟩)/√2
+        #         = (|0⟩|00⟩ + e^{-iθ}|1⟩|00⟩)/√2
+        θ = 0.4
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 0.5)    # |+⟩
+        q1 = QBool(ctx, 0)
+        q2 = QBool(ctx, 0)
+        when(ctrl) do
+            pauli_exp!([q1, q2], pauli_term(1.0, :Z, :Z), θ)
+        end
+        # 3 qubits: ctrl=qubit0, q1=qubit1, q2=qubit2
+        # |000⟩ = index 0: amplitude 1/√2
+        # |001⟩ = index 1 (ctrl=1,q1=0,q2=0): amplitude e^{-iθ}/√2
+        @test abs(_amp(ctx, 0) - 1/√2) < 1e-12
+        @test abs(_amp(ctx, 1) - exp(-im*θ)/√2) < 1e-12
+        for i in 2:7
+            @test abs(_amp(ctx, i)) < 1e-12
+        end
+        discard!(ctrl); discard!(q1); discard!(q2)
+    end
+
+    @testset "controlled evolve! on QInt" begin
+        # ctrl=|1⟩, QInt evolve should work via NTuple path
+        θ = 0.3
+        ctx = EagerContext()
+        Sturm.task_local_storage(:sturm_context, ctx) do
+            ctrl = QBool(ctx, 1)
+            q = QInt{1}(0)
+            when(ctrl) do
+                evolve!(q, hamiltonian(pauli_term(1.0, :X)), θ, Trotter1(steps=1))
+            end
+            # ctrl=1 → exp(-iθX)|0⟩ = cos(θ)|0⟩ - i·sin(θ)|1⟩
+            # ctrl=qubit0=1, q=qubit1. |10⟩=idx1, |11⟩=idx3
+            @test abs(_amp(ctx, 0)) < 1e-12
+            @test abs(_amp(ctx, 1) - cos(θ)) < 1e-12
+            @test abs(_amp(ctx, 2)) < 1e-12
+            @test abs(_amp(ctx, 3) - (-im * sin(θ))) < 1e-12
+            discard!(ctrl); discard!(q)
+        end
+    end
+
+    @testset "controlled pauli_exp! with Y operator" begin
+        # ctrl=|1⟩: exp(-iθY)|0⟩ = cos(θ)|0⟩ + sin(θ)|1⟩
+        θ = π/5
+        ctx = EagerContext()
+        ctrl = QBool(ctx, 1)
+        target = QBool(ctx, 0)
+        when(ctrl) do
+            pauli_exp!([target], pauli_term(1.0, :Y), θ)
+        end
+        @test abs(_amp(ctx, 0)) < 1e-12
+        @test abs(_amp(ctx, 1) - cos(θ)) < 1e-11
+        @test abs(_amp(ctx, 2)) < 1e-12
+        @test abs(_amp(ctx, 3) - sin(θ)) < 1e-11
+        discard!(ctrl); discard!(target)
+    end
+
 end
