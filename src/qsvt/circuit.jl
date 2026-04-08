@@ -47,19 +47,21 @@ function qsvt_protocol!(theta_signal::Float64, phases::QSVTPhases)
     ctx = current_context()
     signal = QBool(ctx, 0.0)  # |0⟩
 
-    # Initial e^{iλZ} = Rz(-2λ)
-    signal.φ += -2 * phases.lambda
-
-    # GQSP loop: A₀ · W̃ · A₁ · W̃ · ··· · W̃ · Aₙ
-    for k in 0:phases.degree
+    # GQSP protocol (Theorem 9, Laneve 2025):
+    #   Matrix product: e^{iλZ} · A₀ · W̃ · A₁ · W̃ · ··· · W̃ · Aₙ |0⟩
+    #   Time order:     Aₙ first on |0⟩, then W̃, ..., then A₀, then e^{iλZ} last.
+    for k in phases.degree:-1:0
         # Processing operator A_k = e^{iφ_k X}·e^{iθ_k Z}
         apply_processing_op!(signal, phases.phi[k + 1], phases.theta[k + 1])
 
-        # Signal operator W̃ = diag(z, 1) ≡ Rz(-θ) (between processing ops)
-        if k < phases.degree
+        # Signal operator W̃ = diag(z, 1) ≡ Rz(-θ) (between A_k and A_{k-1})
+        if k > 0
             signal.φ += -theta_signal
         end
     end
+
+    # e^{iλZ} = Rz(-2λ), applied last (leftmost in matrix product)
+    signal.φ += -2 * phases.lambda
 
     return signal
 end
@@ -225,21 +227,21 @@ function qsvt!(system::Vector{QBool}, be::BlockEncoding, phases::QSVTPhases)
     signal = QBool(ctx, 0.0)  # |0⟩
     ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
 
-    # ── Initial e^{iλZ} on signal ──
-    signal.φ += -2 * phases.lambda
-
-    # ── GQSP loop ──
-    for k in 0:phases.degree
+    # ── GQSP loop (Theorem 9): Aₙ first on |0⟩, then W̃, ..., A₀, then e^{iλZ} ──
+    for k in phases.degree:-1:0
         # Processing operator A_k on signal qubit
         apply_processing_op!(signal, phases.phi[k + 1], phases.theta[k + 1])
 
-        # Controlled oracle: apply U when signal = |1⟩
-        if k < phases.degree
+        # Controlled oracle: apply U when signal = |1⟩ (between A_k and A_{k-1})
+        if k > 0
             when(signal) do
                 be.oracle!(ancillas, system)
             end
         end
     end
+
+    # e^{iλZ} = Rz(-2λ), applied last (leftmost in matrix product)
+    signal.φ += -2 * phases.lambda
 
     # ── Measure ancilla (post-select on |0⟩) ──
     success = true

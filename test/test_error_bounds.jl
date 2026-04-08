@@ -5,7 +5,51 @@ using Sturm: nqubits, nterms, lambda,
              _alpha_comm_naive
 using LinearAlgebra: eigen, Diagonal, kron
 
-# _amp, _state_error, _exact_evolve from earlier test files
+# Helpers needed for standalone execution (also defined in test_simulation/test_qdrift)
+if !@isdefined(_amp)
+    _amp(ctx, idx) = Sturm.orkan_state_get(ctx.orkan.raw, idx, 0)
+end
+if !@isdefined(_state_error)
+    function _state_error(ctx, ψ_exact::Vector{ComplexF64})
+        dim = length(ψ_exact)
+        err = 0.0
+        for i in 0:dim-1
+            err += abs2(_amp(ctx, i) - ψ_exact[i+1])
+        end
+        err
+    end
+end
+if !@isdefined(_pauli_matrix)
+    function _pauli_matrix(H_sturm)
+        N = nqubits(H_sturm)
+        dim = 1 << N
+        I2 = ComplexF64[1 0; 0 1]
+        σx = ComplexF64[0 1; 1 0]
+        σy = ComplexF64[0 -im; im 0]
+        σz = ComplexF64[1 0; 0 -1]
+        pauli_mats = Dict(Sturm.pauli_I => I2, Sturm.pauli_X => σx,
+                          Sturm.pauli_Y => σy, Sturm.pauli_Z => σz)
+        H_mat = zeros(ComplexF64, dim, dim)
+        for term in H_sturm.terms
+            M = pauli_mats[term.ops[N]]
+            for k in (N-1):-1:1
+                M = kron(M, pauli_mats[term.ops[k]])
+            end
+            H_mat .+= term.coeff .* M
+        end
+        H_mat
+    end
+end
+if !@isdefined(_exact_evolve)
+    function _exact_evolve(H_sturm, t::Real)
+        H_mat = _pauli_matrix(H_sturm)
+        dim = size(H_mat, 1)
+        evals, evecs = eigen(H_mat)
+        U = evecs * Diagonal(exp.(-im * t .* evals)) * evecs'
+        ψ0 = zeros(ComplexF64, dim); ψ0[1] = 1.0
+        U * ψ0
+    end
+end
 
 @testset "Trotter error bounds (Childs et al. 2021)" begin
 
