@@ -4,6 +4,123 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-08 — Session 11: Ground-truth review + GQSP ordering fix + reflection QSVT
+
+### Ground-truth review — 5 Opus agents against 3 papers
+
+Reviewed ALL QSVT/block-encoding code against Laneve 2025 (arXiv:2503.03026), Berntson-Sünderhauf 2025 (CMP 406:161, arXiv:2406.04246), and GSLW 2019 (arXiv:1806.01838). Downloaded missing papers: Laneve (19 pages, was truncated to 6), BS (29 pages, was missing entirely).
+
+**Findings:**
+
+| # | Issue | Severity | Resolution |
+|---|-------|----------|------------|
+| 1 | GQSP operator ordering reversed in `qsvt_protocol!` and `qsvt!` | CRITICAL | FIXED — reversed loop direction, moved e^{iλZ} to after loop |
+| 2 | Section 4.3 correction missing (target in Q not P) | MEDIUM | FIXED in `qsvt_phases()` — φ_n += π/2 applied |
+| 3 | Missing end-to-end Hamiltonian sim test | MEDIUM | FIXED — `test_qsvt_reflect.jl` verifies cos(Ht/α) against eigendecomposition |
+| 4 | BS N formula heuristic misses log factor | LOW | Documented, works in practice |
+| 5 | LCU header comment wrong about SELECT self-adjointness | LOW | Documented |
+| 6 | Dead code `_multi_controlled_phase_flip!` | LOW | Documented |
+| 7 | `test_error_bounds.jl` missing helpers for standalone execution | MEDIUM | FIXED — added `_amp`, `_state_error`, `_pauli_matrix`, `_exact_evolve` |
+
+**Verified correct (no bugs found):**
+- Schwarz multiplier in Weiss (DC×1, positive×2, Nyquist×1, negative×0) ✓
+- RHW Toeplitz structure, block system, F_k extraction ✓
+- Phase extraction (extract_phases) matches Theorem 9 Eq (4) exactly ✓
+- Processing operator decomposition e^{iφX}·e^{iθZ} ✓
+- BS complementary polynomial (Algorithm 1-2, Π multiplier) ✓
+- Chebyshev ↔ analytic conversion (Lemma 1) ✓
+- Block encoding (PREPARE, SELECT, LCU, product) all correct against GSLW ✓
+- BS/Weiss consistency (S=2R equivalence) ✓
+
+### GQSP operator ordering fix — CRITICAL BUG
+
+**Root cause:** `qsvt_protocol!` (circuit.jl:46-65) applied `e^{iλZ}` FIRST in time, then looped k=0→n. Theorem 9 requires Aₙ first on |0⟩, e^{iλZ} last. The matrix products were fully reversed.
+
+**Why tests passed despite the bug:** For X-constrained GQSP (θ_k = 0), all operators are symmetric matrices, so M^T = M_reversed, and |P(z)|² is invariant under reversal. The statistical tests checked |P(z)|² and passed by mathematical coincidence. The GQSP matrix verification test built M in the paper's convention but compared against the circuit via statistical sampling with loose tolerance.
+
+**Fix:** Reversed loop to `k = degree:-1:0`, moved `signal.φ += -2λ` to after loop, changed signal operator condition from `k < degree` to `k > 0`. Same fix applied to both `qsvt_protocol!` and `qsvt!`.
+
+### Reflection QSVT circuit — NEW (GSLW Definition 15)
+
+Implemented `qsvt_reflect!(system, be, phases)`: the correct GSLW QSVT circuit that works with block encodings. Z-rotations on the BE ancilla qubit, interleaved with alternating U/U†. No separate signal qubit.
+
+**Circuit structure (GSLW Definition 15, Eq 31):**
+Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), ...
+Uses n phases φ₁,...,φₙ (dropping φ₀ which is absorbed by post-selection).
+
+**Key identity:** X-constrained GQSP analytic phases ARE the Z-constrained QSVT phases — same numerical values — via Laneve §2.1 Hadamard conjugation: H·e^{iφX}·H = e^{iφZ}.
+
+### Real polynomial pipeline — NEW
+
+**New functions:**
+- `jacobi_anger_cos_coeffs(t, d)`: real even Chebyshev coefficients for cos(xt)
+- `jacobi_anger_sin_coeffs(t, d)`: real odd Chebyshev coefficients for -sin(xt)
+- `qsvt_phases(cheb_real; epsilon)`: BS+NLFT pipeline for real Chebyshev polynomials → Z-constrained QSVT phases. Includes Section 4.3 correction (φ_n += π/2).
+- `qsvt_reflect!(system, be, phases)`: GSLW reflection QSVT circuit
+- `evolve!(qubits, H, t, QSVT(ε))`: end-to-end Hamiltonian simulation (cos only)
+
+### evolve!(QSVT) — cos(Ht/α) working, full e^{-iHt} blocked
+
+**Works:** `evolve!(qubits, H, t, QSVT(ε))` applies cos(Ht/α) via the full canonical pipeline. Performance: 0.95ms/shot on 2-qubit Ising, 95% post-selection success. End-to-end verified against exact eigendecomposition.
+
+**Blocked:** Full e^{-iHt} = cos(Ht/α) - i·sin(Ht/α) requires combining cos and sin QSVT circuits.
+
+**Naive LCU approach FAILED:** Wrapping `_qsvt_circuit!` inside `when(lcu_anc)` creates 3-level control nesting (LCU ancilla → QSVT oracle → LCU oracle → SELECT → Toffoli cascade). Measured: 5.7 seconds/shot vs 0.95ms for cos-only. Factor 6000× slowdown. Physically correct (3/50 successful post-selections) but computationally impractical.
+
+**The correct approach (RESEARCH STEP):** GSLW Theorem 56 proof shows a circuit `(H⊗H⊗I)·U_Φ·(H⊗H⊗I)` that combines even and odd polynomials WITHOUT control nesting. Uses a SINGLE QSVT sequence with Hadamards on an extra ancilla qubit. This avoids the `when()` wrapping entirely. Need to understand this circuit construction before implementing. Key references: GSLW Corollary 18 Eq (33), Theorem 56 proof (p.48), Theorem 58 (p.51).
+
+### Gotcha: LCU combination via when() is O(n³), not O(n)
+
+The `when(lcu_anc) { qsvt_circuit!(...) }` pattern puts the LCU ancilla on the control stack, which means EVERY gate inside the QSVT circuit gets an extra control. Each oracle call (PREPARE+SELECT+PREPARE†) already has multi-controlled gates via Toffoli cascades. Adding another control level means each Toffoli becomes a 3-controlled gate → needs MORE workspace qubits → MORE Toffoli decompositions → exponential blowup.
+
+The GSLW approach avoids this by using the LCU ancilla to SELECT between even/odd projectors, not to CONTROL the entire QSVT circuit. The single-qubit Hadamard gates on the LCU ancilla commute with the block encoding oracle (which acts on different qubits), so no control nesting occurs.
+
+### Test baseline runtimes
+
+| # | Test File | Tests | Time | Status |
+|---|-----------|-------|------|--------|
+| 1 | test_orkan_ffi | 47 | 1.4s | PASS |
+| 2 | test_primitives | 711 | 2.1s | PASS |
+| 3 | test_bell | 2002 | 1.7s | PASS |
+| 4 | test_teleportation | 1002 | 1.5s | PASS |
+| 5 | test_when | 507 | 1.9s | PASS |
+| 6 | test_gates | 604 | 2.1s | PASS |
+| 7 | test_rus | 205 | 2.2s | PASS |
+| 8 | test_qint | 567 | 35s | PASS |
+| 9 | test_patterns | 92 | 2.1s | PASS |
+| 10 | test_channel | 43 | 3.3s | PASS |
+| 11 | test_passes | 49 | 3.3s | PASS |
+| 12 | test_density_matrix | 1753 | 2.3s | PASS |
+| 13 | test_noise | 518 | 4.2s | PASS |
+| 14 | test_qecc | 102 | 1.9s | PASS |
+| 15 | test_grover | 281 | 6.2s | PASS |
+| 16 | test_memory_safety | 8 | 1.4s | PASS |
+| 17 | test_simulation | 122 | 8.4s | PASS |
+| 18 | test_qdrift | ? | KILLED | CPU hog (N=24 qubit sim) |
+| 19 | test_composite | ? | KILLED | CPU hog (N=24 qubit sim) |
+| 20 | test_error_bounds | 62 | 6.7s | PASS (was 6 errors, fixed) |
+| 21 | test_promotion | 2052 | 58s | PASS |
+| 22 | test_block_encoding | 63 | 5.2s | PASS |
+| 23 | test_qsvt_conventions | 24 | 1.9s | PASS |
+| 24 | test_qsvt_polynomials | 215 | 1.4s | PASS |
+| 25 | test_qsvt_phase_factors | 164 | 21s | PASS |
+
+### Session 11 commits
+
+1. `41b12b6` — fix: GQSP operator ordering + standalone test_error_bounds
+2. `98feed6` — feat: reflection QSVT circuit + real polynomial pipeline
+3. `7fab883` — feat: evolve!(qubits, H, t, QSVT(epsilon))
+
+### What the next session should do
+
+1. **RESEARCH: GSLW Theorem 56 circuit construction** — understand how `(H⊗H⊗I)·U_Φ·(H⊗H⊗I)` combines even+odd polynomials without control nesting. Read Corollary 18 Eq (33), Figure 1, and the Theorem 56 proof carefully. This is a research step — do NOT guess the implementation.
+2. **Implement full e^{-iHt}** — once the Theorem 56 circuit is understood, implement `evolve!` with cos+sin combination.
+3. **Oblivious amplitude amplification** — GSLW Corollary 28 boosts the /2 subnormalization to 1. Needed for practical success probability.
+4. **Clean up dead code** — `_multi_controlled_phase_flip!` in select.jl, LCU header comment fix.
+5. **Update README** — document QSVT as Phase 15, add `evolve!(qubits, H, t, QSVT(ε))` to examples.
+
+---
+
 ## 2026-04-08 — Session 10: Weiss algorithm (QSVT phase factor pipeline Step 2)
 
 ### Weiss algorithm — COMPLETE (46 new tests, 77 total in test_qsvt_phase_factors.jl)
