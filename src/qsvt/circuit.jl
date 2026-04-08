@@ -170,3 +170,87 @@ function qsvt_hamiltonian_sim_phases(t::Real, alg::QSVT)
 
     return phases
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# QSVT circuit with block encoding (GQSP convention — signal qubit)
+#
+# WARNING: This circuit uses the GQSP analytic signal operator W̃ = diag(z,1)
+# via controlled-U. This does NOT correctly implement QSVT on block encodings
+# because the controlled-U action in the (signal × eigenspace) Hilbert space
+# does not reduce to diag(z,1). Confirmed numerically: H=X, t=0.5 gives
+# P(|1⟩)=0% vs expected 23%.
+#
+# For correct QSVT on block encodings, use the GSLW reflection circuit
+# (Z-rotations on ancilla, alternating U/U†, no signal qubit) with
+# Chebyshev Z-constrained phases. See Sturm.jl-x25.
+#
+# This function is retained for hand-crafted oracles where the signal
+# operator IS diag(z,1) (e.g., the _cz!-based Z block encoding test).
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qsvt!(system::Vector{QBool}, be::BlockEncoding, phases::QSVTPhases) -> Bool
+
+Execute the GQSP protocol with a block encoding oracle.
+
+Allocates a signal qubit and ancilla qubits, applies the GQSP circuit:
+
+    e^{iλZ} · A₀ · [controlled-U] · A₁ · [controlled-U] · ··· · Aₙ
+
+where controlled-U applies the block encoding oracle when signal = |1⟩,
+and A_k are processing operators on the signal qubit.
+
+After the protocol: measures signal and ancilla qubits. Post-selection
+succeeds when all ancilla measure |0⟩. The signal qubit measurement
+determines whether P(A/α) (signal=|0⟩) or Q(A/α) (signal=|1⟩) was applied.
+
+Returns `true` if post-selection succeeded (all ancilla = |0⟩).
+The system register is left in state P(A/α)|ψ⟩ or Q(A/α)|ψ⟩ (normalized).
+
+# Arguments
+- `system`: system qubits (must match `be.n_system`)
+- `be`: block encoding of the target operator
+- `phases`: GQSP phase factors from the classical preprocessing pipeline
+
+# Ref
+Laneve (2025), arXiv:2503.03026, Theorem 9.
+GSLW (2019), arXiv:1806.01838, Theorem 56.
+"""
+function qsvt!(system::Vector{QBool}, be::BlockEncoding, phases::QSVTPhases)
+    length(system) == be.n_system || error(
+        "qsvt!: expected $(be.n_system) system qubits, got $(length(system))")
+    ctx = system[1].ctx
+
+    # ── Allocate signal qubit and ancilla qubits ──
+    signal = QBool(ctx, 0.0)  # |0⟩
+    ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
+
+    # ── Initial e^{iλZ} on signal ──
+    signal.φ += -2 * phases.lambda
+
+    # ── GQSP loop ──
+    for k in 0:phases.degree
+        # Processing operator A_k on signal qubit
+        apply_processing_op!(signal, phases.phi[k + 1], phases.theta[k + 1])
+
+        # Controlled oracle: apply U when signal = |1⟩
+        if k < phases.degree
+            when(signal) do
+                be.oracle!(ancillas, system)
+            end
+        end
+    end
+
+    # ── Measure ancilla (post-select on |0⟩) ──
+    success = true
+    for a in ancillas
+        if Bool(a)
+            success = false
+        end
+    end
+
+    # ── Measure signal ──
+    signal_result = Bool(signal)
+
+    return success
+end
