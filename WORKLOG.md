@@ -64,12 +64,33 @@ The Fourier coefficient ĉ_0 = (1/2π) ∫_𝕋 b(z)/a(z) dz. Even when b(0) = 0
 
 **NLFT roundtrip verified.** Forward NLFT: G_F(z) = Π 1/√(1+|F_k|²)[1,F_k z^k;-F̄_k z^{-k},1]. The (1,2) entry matches b(z) to 1e-4 at 5 test points on 𝕋. Jacobi-Anger pipeline roundtrip passes for (t=0.5,d=8) and (t=1.0,d=12).
 
+### Phase extraction — COMPLETE (24 new tests, 135 total)
+
+**Implemented Theorem 9 Eq (4) from Laneve 2025 (Section 4.1, p.9).** Given NLFT sequence F_k, computes canonical GQSP phase factors (λ, φ_k, θ_k) via phase prefactors ψ_k.
+
+**Files modified:**
+- `src/qsvt/phase_factors.jl`: Added `extract_phases()`
+- `test/test_qsvt_phase_factors.jl`: 5 new test sets (24 tests)
+
+**Key formulas (Theorem 9 Eq 4):**
+- ψ_k = 0 if F_k=0; -π/4 if F_k∈ℝ; -(1/2)arctan(Re/Im) otherwise
+- λ = ψ_0, θ_k = ψ_{k+1} - ψ_k, φ_k = arctan(-i·e^{-2iψ_k}·F_k)
+- Canonical: ψ_{n+1} = 0 → λ + Σθ_k = 0 (Eq 5)
+
+**Purely imaginary F simplification confirmed:** When F_k ∈ iℝ (Hamiltonian simulation), ψ_k=0, λ=0, θ_k=0, φ_k=arctan(Im(F_k)).
+
+**GQSP protocol verification:** Built the full GQSP matrix e^{iλZ}·A₀·W·A₁·W·...·Aₙ and compared the (1,2) entry against the forward NLFT at 4 points on 𝕋. Match to 1e-4.
+
+**The classical preprocessing pipeline is now complete:**
+```
+jacobi_anger_coeffs → chebyshev_to_analytic → b=-iP → weiss → rhw_factorize → extract_phases → QSVTPhases
+```
+
 ### What the next session should do
 
-1. **Implement phase extraction** (Sturm.jl-27n) — F_k → (λ, φ_k, θ_k) via Theorem 9 Eq (4)
-2. **Implement qsvt! core circuit** (Sturm.jl-897)
-3. **Implement evolve! integration** (Sturm.jl-x3m)
-4. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
+1. **Implement qsvt! core circuit** (Sturm.jl-897) — the quantum part
+2. **Implement evolve! integration** (Sturm.jl-x3m)
+3. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
 
 ---
 
