@@ -151,12 +151,19 @@ Auto-computes polynomial degree from t and ε. Downscales to create gap η=ε/4 
 
 **Remaining blocker:** Multi-controlled Rz in EagerContext (Sturm.jl-97w). SELECT adds its own ancilla control + signal control = 2+ controls on Rz pivot → crash. Need Toffoli cascade for multi-controlled single-qubit gates.
 
+### Multi-controlled Rz/Ry/CX — COMPLETE (15 new tests)
+
+**Implemented Toffoli cascade decomposition** (Barenco et al. 1995, Lemma 7.2) for N ≥ 2 controls in `apply_rz!`, `apply_ry!`, `apply_cx!`. AND-reduces N controls into a single workspace qubit via N-1 Toffoli gates, applies single-controlled gate, then uncomputes.
+
+**Full controlled-LCU test passes:** `when(signal) { be.oracle!(anc, sys) }` with signal in |+⟩ superposition produces correct controlled-U behavior. The signal=|0⟩ subspace is identity, signal=|1⟩ subspace matches reference oracle.
+
+**The entire QSVT → LCU pipeline is now unblocked.**
+
 ### What the next session should do
 
-1. **Multi-controlled Rz** (97w) — Toffoli cascade for >1 control. Unblocks LCU+QSVT end-to-end.
-2. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` once multi-controlled Rz works
-3. **QSVT DAG/OpenQASM** (4x1) — trace QSVT circuit, export to OpenQASM
-4. **Block encoding algebra** (gdh) — product of block encodings
+1. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` end-to-end test on 2-qubit Ising
+2. **QSVT DAG/OpenQASM** (4x1) — trace QSVT circuit, export to OpenQASM
+3. **Block encoding algebra** (gdh) — product of block encodings
 
 ---
 
