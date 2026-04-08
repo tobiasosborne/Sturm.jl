@@ -59,6 +59,11 @@ include("block_encoding/prepare.jl")
 include("block_encoding/select.jl")
 include("block_encoding/lcu.jl")
 
+# QSVT (quantum singular value transformation)
+include("qsvt/conventions.jl")
+include("qsvt/polynomials.jl")
+include("qsvt/phase_factors.jl")
+
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()
     _set_omp_threads!()
@@ -112,5 +117,8 @@ export ising, heisenberg
 
 # Block encoding
 export BlockEncoding, block_encode_lcu
+
+# QSVT
+export QSVTPhases, apply_processing_op!
 
 end # module Sturm
