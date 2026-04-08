@@ -5,7 +5,8 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              complementary_polynomial,
              chebyshev_to_analytic,
              weiss, _weiss_schwarz,
-             rhw_factorize
+             rhw_factorize,
+             extract_phases, QSVTPhases
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -392,6 +393,106 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         @test_throws ErrorException rhw_factorize(ComplexF64[], 0.5, 1e-10)
         @test_throws ErrorException rhw_factorize(ComplexF64[0.1], 0.0, 1e-10)
         @test_throws ErrorException rhw_factorize(ComplexF64[0.1], 0.5, 0.0)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 4: Phase extraction (F_k → GQSP angles λ, φ_k, θ_k)
+    # Ref: Laneve 2025, arXiv:2503.03026, Theorem 9 Eq (4), Section 4.1.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "extract_phases: F_k=0 gives trivial phases" begin
+        F = zeros(ComplexF64, 5)
+        phases = extract_phases(F)
+        @test phases isa QSVTPhases
+        @test phases.degree == 4
+        @test abs(phases.lambda) < 1e-15
+        @test all(abs.(phases.phi) .< 1e-15)
+        @test all(abs.(phases.theta) .< 1e-15)
+    end
+
+    @testset "extract_phases: purely imaginary F (Hamiltonian sim case)" begin
+        # F_k ∈ iℝ → ψ_k = 0 → λ=0, θ_k=0, φ_k=arctan(Im(F_k))
+        F = ComplexF64[0.0, 0.5im, -0.3im, 0.1im]
+        phases = extract_phases(F)
+        @test abs(phases.lambda) < 1e-12
+        @test all(abs.(phases.theta) .< 1e-12)
+        # φ_k = arctan(-i·F_k) = arctan(Im(F_k)) since ψ_k=0
+        @test abs(phases.phi[1] - atan(0.0)) < 1e-12
+        @test abs(phases.phi[2] - atan(0.5)) < 1e-12
+        @test abs(phases.phi[3] - atan(-0.3)) < 1e-12
+        @test abs(phases.phi[4] - atan(0.1)) < 1e-12
+    end
+
+    @testset "extract_phases: canonical condition λ + Σθ_k = 0" begin
+        # Eq (5): canonical GQSP requires λ + Σ_{k=0}^n θ_k = 0.
+        for F in [
+            ComplexF64[0.3im, -0.2im, 0.1im],
+            ComplexF64[0.1 + 0.2im, 0.05 - 0.1im],
+            ComplexF64[0.4, -0.3im, 0.0, 0.1 + 0.05im],
+        ]
+            phases = extract_phases(F)
+            canonical_sum = phases.lambda + sum(phases.theta)
+            @test abs(canonical_sum) < 1e-12
+        end
+    end
+
+    @testset "extract_phases: GQSP protocol reconstructs (P,Q)" begin
+        # Build the full GQSP protocol matrix from phases and verify
+        # it matches the NLFT of F at test points on 𝕋.
+        # Protocol: e^{iλZ} · A₀ · W · A₁ · W · ··· · W · Aₙ |0⟩ = (P, Q)
+        # where A_k = e^{iφ_k X}·e^{iθ_k Z}, W = diag(z, 1)
+        F = ComplexF64[0.0, 0.3im, -0.15im]  # degree 2
+        phases = extract_phases(F)
+
+        for θ in [0.0, π/3, π, 5π/3]
+            z = exp(im * θ)
+            W = ComplexF64[z 0; 0 1]
+
+            # Build GQSP protocol matrix
+            eZ(α) = ComplexF64[exp(im*α) 0; 0 exp(-im*α)]
+            eX(α) = let c=cos(α), s=sin(α)
+                ComplexF64[c im*s; im*s c]
+            end
+
+            M = eZ(phases.lambda)  # initial e^{iλZ}
+            for k in 0:phases.degree
+                Ak = eX(phases.phi[k+1]) * eZ(phases.theta[k+1])
+                M = M * Ak
+                if k < phases.degree
+                    M = M * W  # interleave oracle
+                end
+            end
+
+            # Forward NLFT for comparison
+            G = ComplexF64[1 0; 0 1]
+            for k in 0:length(F)-1
+                Fk = F[k+1]
+                s = 1.0 / sqrt(1.0 + abs2(Fk))
+                Ak_nlft = s .* ComplexF64[1 Fk*z^k; -conj(Fk)/z^k 1]
+                G = G * Ak_nlft
+            end
+
+            # The GQSP protocol on |0⟩ gives (P, Q) as first column of M.
+            # The NLFT gives [z^n·a, b; ...] as G.
+            # Compare (1,2) entries: both should give b(z).
+            @test abs(M[1,2] - G[1,2]) < 1e-4
+        end
+    end
+
+    @testset "extract_phases: full pipeline b → F → phases" begin
+        # b → RHW → F → extract_phases → QSVTPhases
+        α = 0.25im
+        b = ComplexF64[0.0, α]
+        F = rhw_factorize(b, 0.7, 1e-10)
+        phases = extract_phases(F)
+
+        @test phases isa QSVTPhases
+        @test phases.degree == 1
+        @test all(isfinite.(phases.phi))
+        @test all(isfinite.(phases.theta))
+        @test isfinite(phases.lambda)
+        # Canonical condition
+        @test abs(phases.lambda + sum(phases.theta)) < 1e-10
     end
 
 end

@@ -434,3 +434,89 @@ function rhw_factorize(b::Vector{ComplexF64}, eta::Float64, epsilon::Float64)
 
     return F
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 4: Phase extraction (F_k → GQSP angles λ, φ_k, θ_k)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    extract_phases(F::Vector{ComplexF64}) -> QSVTPhases
+
+Extract GQSP phase factors (λ, φ_k, θ_k) from the NLFT sequence F_k.
+
+Given the NLFT sequence F = (F_0, ..., F_n), computes the canonical GQSP
+phase factors satisfying λ + Σ θ_k = 0 (Eq. 5).
+
+The phase prefactors ψ_k are computed first:
+- F_k = 0:       ψ_k = 0
+- F_k ∈ ℝ\\{0}:  ψ_k = -π/4
+- F_k ∉ ℝ:       ψ_k = -(1/2)·arctan(Re(F_k)/Im(F_k))
+
+Then: λ = ψ_0, θ_k = ψ_{k+1} - ψ_k, φ_k = arctan(-i·e^{-2iψ_k}·F_k).
+Canonical condition: ψ_{n+1} = 0.
+
+**Simplification for purely imaginary F** (Hamiltonian simulation):
+If F_k ∈ iℝ for all k, then ψ_k = 0, λ = 0, θ_k = 0,
+and φ_k = arctan(Im(F_k)).
+
+# Ref
+Laneve (2025), arXiv:2503.03026, Theorem 9 Eq (4), Section 4.1 p.9.
+"""
+function extract_phases(F::Vector{ComplexF64})
+    n = length(F) - 1
+    n >= 0 || error("extract_phases: F must have at least 1 element, got $(length(F))")
+
+    # ── Compute phase prefactors ψ_k (k = 0..n) ──
+    # Threshold for "is this effectively zero" or "is this effectively real"
+    REAL_TOL = 1e-12
+
+    psi = Vector{Float64}(undef, n + 1)
+    for k in 0:n
+        Fk = F[k + 1]
+        if abs(Fk) < REAL_TOL
+            # F_k ≈ 0
+            psi[k + 1] = 0.0
+        elseif abs(imag(Fk)) < REAL_TOL * abs(Fk)
+            # F_k ∈ ℝ\{0} (imaginary part negligible relative to magnitude)
+            psi[k + 1] = -π / 4
+        else
+            # F_k ∉ ℝ (general complex)
+            psi[k + 1] = -0.5 * atan(real(Fk) / imag(Fk))
+        end
+    end
+
+    # ── Canonical condition: ψ_{n+1} = 0 (Eq. 5) ──
+    psi_np1 = 0.0
+
+    # ── Compute λ = ψ_0 ──
+    lambda = psi[1]
+
+    # ── Compute θ_k = ψ_{k+1} - ψ_k (k = 0..n) ──
+    theta = Vector{Float64}(undef, n + 1)
+    for k in 0:n - 1
+        theta[k + 1] = psi[k + 2] - psi[k + 1]
+    end
+    theta[n + 1] = psi_np1 - psi[n + 1]  # θ_n = -ψ_n
+
+    # ── Compute φ_k = arctan(-i·e^{-2iψ_k}·F_k) (k = 0..n) ──
+    # By construction of ψ_k, the argument is real:
+    #   F_k ∉ ℝ: -i·e^{-2iψ_k}·F_k = |F_k| (real positive)
+    #   F_k ∈ ℝ: -i·i·F_k = F_k (real)
+    #   F_k = 0: 0
+    phi = Vector{Float64}(undef, n + 1)
+    for k in 0:n
+        Fk = F[k + 1]
+        psi_k = psi[k + 1]
+        arg = -im * exp(-2im * psi_k) * Fk
+        # arg should be real by construction; take real part
+        arg_real = real(arg)
+        if abs(imag(arg)) > 1e-8 * max(abs(arg_real), 1.0)
+            @warn "extract_phases: φ_$k argument has imaginary part $(imag(arg)) (should be ≈ 0)"
+        end
+        phi[k + 1] = atan(arg_real)
+    end
+
+    @debug "extract_phases: n=$n, λ=$lambda, canonical=$(lambda + sum(theta))"
+
+    return QSVTPhases(lambda, phi, theta)
+end
