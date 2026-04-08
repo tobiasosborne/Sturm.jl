@@ -474,6 +474,50 @@ end
     # 7. LCU adjoint oracle
     # ─────────────────────────────────────────────────────────────────────
 
+    # ─────────────────────────────────────────────────────────────────────
+    # 7b. Controlled oracle: when(signal) { oracle! } (QSVT use case)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "LCU: oracle unconditional still works after control-stack isolation" begin
+        # Verify that the control-stack isolation in oracle! doesn't break
+        # the unconditional case (no outer when()). This is a regression test.
+        H1 = hamiltonian(
+            pauli_term(0.7, :X),
+            pauli_term(0.3, :Z),
+        )
+        be = block_encode_lcu(H1)
+        N = nqubits(H1)
+        a = be.n_ancilla
+
+        # Run oracle without any when() — should work as before
+        ctx = EagerContext()
+        @context ctx begin
+            ancillas = [QBool(0) for _ in 1:a]
+            system = [QBool(0) for _ in 1:N]
+            be.oracle!(ancillas, system)
+            # Just verify it completes without error and state is finite
+            dim = 1 << (a + N)
+            total_prob = sum(abs2(_amp(ctx, i)) for i in 0:dim-1)
+            @test abs(total_prob - 1.0) < 1e-8
+
+            # Run oracle_adj! to verify roundtrip still works
+            be.oracle_adj!(ancillas, system)
+            # Should be back to |0⟩^(a+N)
+            @test abs2(_amp(ctx, 0)) > 1.0 - 1e-8
+
+            for q in ancillas; discard!(q); end
+            for q in system; discard!(q); end
+        end
+    end
+
+    # NOTE: Full controlled-LCU test (when(signal) { be.oracle! }) is blocked by
+    # EagerContext's multi-controlled Rz limit. SELECT adds its own ancilla control
+    # on top of the signal control → 2+ controls on the Rz pivot → crash.
+    # The control-stack isolation in oracle! is mathematically correct (verified by
+    # Opus review), but requires multi-controlled Rz support to test end-to-end.
+    # The hand-crafted oracle test in test_qsvt_phase_factors.jl verifies the
+    # when(signal) { oracle! } pattern works for simple oracles.
+
     @testset "LCU: oracle then oracle_adj restores initial state" begin
         N = nqubits(H_ising)
         lam = lambda(H_ising)

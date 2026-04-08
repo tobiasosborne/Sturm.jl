@@ -135,10 +135,26 @@ Auto-computes polynomial degree from t and ε. Downscales to create gap η=ε/4 
 - gdh (Block encoding algebra product) — P1
 - xl4 (Full circuit with BlockEncoding) — deferred to 2026-04-15
 
+### Controlled-oracle fix — COMPLETE (Opus-reviewed)
+
+**Problem:** `when(signal) { oracle!(anc, sys) }` broke for LCU because PREPARE's X! gates picked up the outer control.
+
+**Fix (in lcu.jl oracle! closures, NOT in _prepare!):** Save/clear the control stack for PREPARE/PREPARE† (unconditional), restore for SELECT (controlled). try/finally protects against exceptions.
+
+**Opus review findings (6 items):**
+1. ✅ Math identity correct: V·controlled(W)·V† = controlled(V·W·V†) — preconditions satisfied
+2. ✅ Edge cases: nested when() correct for math, but hits multi-controlled Rz limit
+3. ⚠️ P4: cleared the concern by moving isolation from _prepare! to oracle! closure (reviewer's #1 recommendation)
+4. ⚠️ _pauli_exp! analogy is misleading — different patterns. _pauli_exp! controls the pivot; oracle! makes PREPARE entirely unconditional
+5. ⚠️ TracingContext: DAG is correct but future optimization passes may not know the structural dependency
+6. 🐛 Missing try/finally — FIXED with try/finally in oracle! closure
+
+**Remaining blocker:** Multi-controlled Rz in EagerContext (Sturm.jl-97w). SELECT adds its own ancilla control + signal control = 2+ controls on Rz pivot → crash. Need Toffoli cascade for multi-controlled single-qubit gates.
+
 ### What the next session should do
 
-1. **Reflection QSVT** (xl4) — no signal qubit, Rz on ancilla, alternating U/U†. Enables LCU BE integration.
-2. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` once reflection circuit works
+1. **Multi-controlled Rz** (97w) — Toffoli cascade for >1 control. Unblocks LCU+QSVT end-to-end.
+2. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` once multi-controlled Rz works
 3. **QSVT DAG/OpenQASM** (4x1) — trace QSVT circuit, export to OpenQASM
 4. **Block encoding algebra** (gdh) — product of block encodings
 

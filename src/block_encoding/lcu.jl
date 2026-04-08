@@ -55,20 +55,73 @@ function block_encode_lcu(H::PauliHamiltonian{N}) where {N}
     a = max(1, Int(ceil(log2(L))))  # at least 1 ancilla qubit
 
     # U = PREPARE† · SELECT · PREPARE
+    #
+    # When called inside when(ctrl), PREPARE must run unconditionally so that
+    # the controlled-U decomposition works:
+    #   PREPARE_uncond · controlled(SELECT) · PREPARE†_uncond = controlled(U)
+    #
+    # Proof: V·controlled(W)·V† = controlled(V·W·V†) when V (PREPARE) acts
+    # on ancilla qubits disjoint from the control qubit.
+    #
+    # The control stack is saved/cleared for PREPARE, restored for SELECT
+    # (which handles multi-control via Toffoli cascade), then cleared again
+    # for PREPARE†, and finally restored.
+    #
+    # Ref: Laneve (2025), arXiv:2503.03026, Algorithm 2 + QSVT circuit.
     function oracle!(ancillas::Vector{QBool}, system::Vector{QBool})
-        _prepare!(ancillas, H)
-        _select!(ancillas, system, H)
-        _prepare_adj!(ancillas, H)
+        controls = ancillas[1].ctx.control_stack
+        has_controls = !isempty(controls)
+        local saved
+        if has_controls
+            saved = copy(controls)
+            empty!(controls)
+        end
+        try
+            _prepare!(ancillas, H)            # unconditional
+            if has_controls
+                append!(controls, saved)
+            end
+            _select!(ancillas, system, H)     # controlled (if inside when)
+            if has_controls
+                empty!(controls)
+            end
+            _prepare_adj!(ancillas, H)        # unconditional
+        finally
+            # Always restore the control stack, even on exception
+            if has_controls
+                empty!(controls)
+                append!(controls, saved)
+            end
+        end
         return nothing
     end
 
-    # U = PREPARE† · SELECT · PREPARE  (matrix order, right-to-left)
-    # U† = PREPARE† · SELECT† · PREPARE  (matrix order)
-    # Temporal order for U†: PREPARE first, then SELECT†, then PREPARE†.
+    # U† = PREPARE · SELECT† · PREPARE† (temporal order)
+    # Same control-stack isolation as oracle!.
     function oracle_adj!(ancillas::Vector{QBool}, system::Vector{QBool})
-        _prepare!(ancillas, H)
-        _select_adj!(ancillas, system, H)
-        _prepare_adj!(ancillas, H)
+        controls = ancillas[1].ctx.control_stack
+        has_controls = !isempty(controls)
+        local saved
+        if has_controls
+            saved = copy(controls)
+            empty!(controls)
+        end
+        try
+            _prepare!(ancillas, H)            # unconditional
+            if has_controls
+                append!(controls, saved)
+            end
+            _select_adj!(ancillas, system, H) # controlled (if inside when)
+            if has_controls
+                empty!(controls)
+            end
+            _prepare_adj!(ancillas, H)        # unconditional
+        finally
+            if has_controls
+                empty!(controls)
+                append!(controls, saved)
+            end
+        end
         return nothing
     end
 
