@@ -24,4 +24,7 @@ using Sturm
     include("test_error_bounds.jl")
     include("test_promotion.jl")
     include("test_block_encoding.jl")
+    include("test_qsvt_conventions.jl")
+    include("test_qsvt_polynomials.jl")
+    include("test_qsvt_phase_factors.jl")
 end

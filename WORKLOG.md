@@ -4,6 +4,60 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-08 — Session 10: Weiss algorithm (QSVT phase factor pipeline Step 2)
+
+### Weiss algorithm — COMPLETE (46 new tests, 77 total in test_qsvt_phase_factors.jl)
+
+**Implemented Algorithm 1 from Laneve 2025 (arXiv:2503.03026, Section 5.1 p.11-12).** Given polynomial b(z) with ||b||_∞ ≤ 1-η on the unit circle, computes Fourier coefficients ĉ_0,...,ĉ_n of b/a where a = e^{G*} is the outer function satisfying |a|² + |b|² = 1.
+
+**Files modified:**
+- `src/qsvt/phase_factors.jl`: Added `weiss()` and `_weiss_schwarz()` (internal, testable)
+- `test/test_qsvt_phase_factors.jl`: 13 new test sets (46 tests)
+
+**Pipeline steps (all in `weiss()`):**
+1. Choose FFT size N from Algorithm 1 formula: N ≥ (8n/η)·log(576n²/(η⁴ε))
+2. Evaluate b at N-th roots of unity via IFFT
+3. Compute R(z) = (1/2)log(1-|b(z)|²) with defensive clamping
+4. Schwarz transform → G(z) (analytic in 𝔻): positive freqs doubled, DC kept, negative zeroed
+5. G*(z) = conj(G(z)) on 𝕋
+6. Fourier coefficients of b·e^{-G*} = b/a, extract indices [0, n]
+
+### Gotcha: Schwarz multiplier differs between Weiss and BS
+
+**Critical bug found and fixed.** The existing `_bs_algorithm1` halves the DC term because it starts from S = log(1-|P|²) = 2R, so halving DC on S gives the correct R_hat[0] for G. The Weiss implementation starts from R = (1/2)log(1-|b|²) directly, so DC must NOT be halved again. Wrong multiplier gave Re(G*) ≠ R with error ≈ 0.04.
+
+**Correct Schwarz multiplier when starting from R (not 2R):**
+- DC (k=0): ×1 (keep)
+- Positive freqs (k=1..N/2-1): ×2 (double)
+- Nyquist (k=N/2): ×1 (keep)
+- Negative freqs: ×0 (zero)
+
+### Gotcha: chebyshev_to_analytic does NOT amplify norm on 𝕋
+
+The Chebyshev→analytic conversion preserves |P_a(e^{iθ})| = |P(cos(θ))| on the unit circle. The Laurent polynomial P_L(z) = c_0 + Σ c_k(z^k+z^{-k})/2 evaluates to P(cos(θ)) at z = e^{iθ}. So if |P(x)| ≤ 1 on [-1,1], then |P_a| ≤ 1 on 𝕋.
+
+However: this only holds for Chebyshev polynomials that actually satisfy |P(x)| ≤ 1 on [-1,1]. The Jacobi-Anger expansion guarantees this (since |e^{-ixt}| = 1), but hand-written test polynomials must be checked (e.g., P = [0.8, 0, -0.3, 0, 0.05] gives P(0) = 1.15 > 1!).
+
+### Gotcha: ĉ_0 ≠ 0 even when b_0 = 0
+
+The Fourier coefficient ĉ_0 = (1/2π) ∫_𝕋 b(z)/a(z) dz. Even when b(0) = 0, the ratio b/a can have a non-zero DC component because a is a non-constant outer function. Only in the limit ||b|| → 0 does ĉ → b.
+
+### Beads issues
+- **Closed (5):** 6s6 (N formula), 48f (evaluate b + R), 0ii (Schwarz transform), 4nw (c_hat extraction), 8co (integration tests)
+- **Still open:** 6e3 (parent Weiss issue — closing after full test suite passes)
+- **New test count this session:** 46 (77 total in test_qsvt_phase_factors.jl)
+
+### What the next session should do
+
+1. **Close Sturm.jl-6e3** (Weiss parent) once full test suite confirmed
+2. **Implement RHW factorization** (Sturm.jl-mxr) — ĉ → F_k via Toeplitz system solve
+3. **Implement phase extraction** (Sturm.jl-27n) — F_k → (λ, φ_k, θ_k)
+4. **Implement qsvt! core circuit** (Sturm.jl-897)
+5. **Implement evolve! integration** (Sturm.jl-x3m)
+6. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
+
+---
+
 ## 2026-04-08 — Session 9: Literature re-download + QSVT deprecation + Block Encoding Phase 1
 
 ### Literature re-download (new machine)
