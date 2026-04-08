@@ -101,11 +101,46 @@ The circuit: Rz(-2λ) · A₀ · W̃ · A₁ · W̃ · ... · W̃ · Aₙ applie
 
 **Deferred:** Full BlockEncoding integration (xl4) — the when()+PREPARE control stacking issue means LCU oracles can't be called inside when(signal). Needs reflection QSVT (no signal qubit, Rz on ancilla, alternating U/U†) or a controlled-oracle wrapper.
 
+### QSVT struct + classical pipeline function — COMPLETE (15 new tests, 156 total)
+
+**Implemented `QSVT` struct and `qsvt_hamiltonian_sim_phases(t, alg)`.**
+
+The full classical preprocessing pipeline in one call:
+```
+jacobi_anger → chebyshev_to_analytic → b=-iP·scale → weiss → rhw → extract_phases → QSVTPhases
+```
+
+Auto-computes polynomial degree from t and ε. Downscales to create gap η=ε/4 using actual ||b||_∞ evaluation on 𝕋.
+
+**End-to-end verification:** `qsvt_hamiltonian_sim_phases(0.5, QSVT(ε=1e-3, degree=8))` → phases → `qsvt_protocol!` circuit → statistical measurement → matches GQSP matrix prediction.
+
+**Blocked:** Full `evolve!(qubits, H, t, QSVT(ε))` requires the reflection QSVT circuit (xl4) to work with LCU block encodings. The when()+PREPARE control stacking issue prevents using controlled-oracle directly.
+
+### Session 10 final status
+
+**Implemented (7 items):**
+1. Weiss algorithm (Step 2) — 46 tests
+2. RHW factorization (Step 3) — 20 tests
+3. Phase extraction (Step 4) — 24 tests
+4. qsvt_protocol! circuit (Step 5) — 6 tests
+5. QSVT struct + qsvt_hamiltonian_sim_phases — 15 tests
+6. Added 3 QSVT test files to runtests.jl
+7. Closed 4 stale issues (a6r, 80q, 9ox, 2ra)
+
+**New test count this session:** 111 tests (156 total in test_qsvt_phase_factors.jl)
+**New files:** `src/qsvt/circuit.jl`
+
+**Open issues (3):**
+- 4x1 (QSVT DAG and OpenQASM tests) — P1
+- gdh (Block encoding algebra product) — P1
+- xl4 (Full circuit with BlockEncoding) — deferred to 2026-04-15
+
 ### What the next session should do
 
-1. **Implement evolve! integration** (Sturm.jl-x3m) — `evolve!(reg, H, t, QSVT(ε))`
-2. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
-3. **Reflection QSVT** (xl4, deferred) — for full BE integration
+1. **Reflection QSVT** (xl4) — no signal qubit, Rz on ancilla, alternating U/U†. Enables LCU BE integration.
+2. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` once reflection circuit works
+3. **QSVT DAG/OpenQASM** (4x1) — trace QSVT circuit, export to OpenQASM
+4. **Block encoding algebra** (gdh) — product of block encodings
 
 ---
 

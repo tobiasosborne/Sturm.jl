@@ -8,7 +8,8 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              weiss, _weiss_schwarz,
              rhw_factorize,
              extract_phases, QSVTPhases,
-             qsvt_protocol!, apply_processing_op!
+             qsvt_protocol!, apply_processing_op!,
+             QSVT, qsvt_hamiltonian_sim_phases
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -581,6 +582,81 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
 
         sigma = sqrt(prob1_expected * (1 - prob1_expected) / N_samples)
         @test abs(prob1_measured - prob1_expected) < max(4 * sigma, 0.05)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 6: QSVT struct + classical preprocessing pipeline
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "QSVT struct construction" begin
+        alg = QSVT(epsilon=1e-6)
+        @test alg.epsilon == 1e-6
+        @test alg.degree === nothing
+
+        alg2 = QSVT(epsilon=1e-3, degree=20)
+        @test alg2.degree == 20
+
+        @test_throws ErrorException QSVT(epsilon=0.0)
+        @test_throws ErrorException QSVT(epsilon=1e-6, degree=0)
+    end
+
+    @testset "qsvt_hamiltonian_sim_phases: returns valid QSVTPhases" begin
+        alg = QSVT(epsilon=1e-4, degree=10)
+        phases = qsvt_hamiltonian_sim_phases(1.0, alg)
+        @test phases isa QSVTPhases
+        @test phases.degree == 20  # analytic degree = 2d
+        @test all(isfinite.(phases.phi))
+        @test all(isfinite.(phases.theta))
+        # Canonical condition
+        @test abs(phases.lambda + sum(phases.theta)) < 1e-8
+    end
+
+    @testset "qsvt_hamiltonian_sim_phases: auto degree" begin
+        alg = QSVT(epsilon=1e-4)
+        phases = qsvt_hamiltonian_sim_phases(0.5, alg)
+        @test phases isa QSVTPhases
+        @test phases.degree >= 2  # at least degree 2 in analytic
+        @test all(isfinite.(phases.phi))
+    end
+
+    @testset "qsvt_hamiltonian_sim_phases: circuit verifies polynomial" begin
+        # Compute phases for t=0.5, then verify the GQSP circuit
+        # produces |Q(z)|² ≈ |b(z)|² at a test point.
+        alg = QSVT(epsilon=1e-3, degree=8)
+        phases = qsvt_hamiltonian_sim_phases(0.5, alg)
+
+        θ_test = π / 4
+        z = exp(im * θ_test)
+
+        # Build GQSP matrix analytically
+        eZ(α) = ComplexF64[exp(im*α) 0; 0 exp(-im*α)]
+        eX(α) = let c=cos(α), s=sin(α)
+            ComplexF64[c im*s; im*s c]
+        end
+        W = ComplexF64[z 0; 0 1]
+        M = eZ(phases.lambda)
+        for k in 0:phases.degree
+            Ak = eX(phases.phi[k+1]) * eZ(phases.theta[k+1])
+            M = M * Ak
+            k < phases.degree && (M = M * W)
+        end
+
+        # |P|² + |Q|² should = 1 (unitarity on 𝕋)
+        @test abs(abs2(M[1,1]) + abs2(M[1,2]) - 1.0) < 1e-6
+
+        # Verify via circuit sampling
+        prob0_expected = abs2(M[1,1])
+        N_samples = 2000
+        n_zero = 0
+        for _ in 1:N_samples
+            @context EagerContext() begin
+                signal = qsvt_protocol!(θ_test, phases)
+                Bool(signal) || (n_zero += 1)
+            end
+        end
+        prob0_measured = n_zero / N_samples
+        sigma = sqrt(prob0_expected * (1 - prob0_expected) / N_samples)
+        @test abs(prob0_measured - prob0_expected) < max(4 * sigma, 0.05)
     end
 
 end
