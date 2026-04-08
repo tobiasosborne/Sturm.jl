@@ -63,6 +63,7 @@ include("block_encoding/lcu.jl")
 include("qsvt/conventions.jl")
 include("qsvt/polynomials.jl")
 include("qsvt/phase_factors.jl")
+include("qsvt/circuit.jl")
 
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()

@@ -1,12 +1,14 @@
 using Test
 using LinearAlgebra: norm
 using FFTW: ifft, fft
+using Sturm
 using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              complementary_polynomial,
              chebyshev_to_analytic,
              weiss, _weiss_schwarz,
              rhw_factorize,
-             extract_phases, QSVTPhases
+             extract_phases, QSVTPhases,
+             qsvt_protocol!, apply_processing_op!
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -493,6 +495,92 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         @test isfinite(phases.lambda)
         # Canonical condition
         @test abs(phases.lambda + sum(phases.theta)) < 1e-10
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 5: QSVT circuit (qsvt_protocol! — GQSP on single signal qubit)
+    # Ref: Laneve 2025, arXiv:2503.03026, Theorem 9.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "qsvt_protocol!: single qubit, trivial phases → |0⟩" begin
+        # F=0 → phases=(λ=0, φ=0, θ=0) → protocol is identity → signal stays |0⟩
+        F = zeros(ComplexF64, 3)
+        phases = extract_phases(F)
+
+        @context EagerContext() begin
+            signal = qsvt_protocol!(0.5, phases)  # θ_signal = 0.5 (arbitrary)
+            @test Bool(signal) == false  # should be |0⟩ deterministically
+        end
+    end
+
+    @testset "qsvt_protocol!: amplitudes match NLFT prediction" begin
+        # Known F → phases → run circuit at z=e^{iθ} → compare |⟨0|ψ⟩|²
+        # against |P(z)|² from the NLFT.
+        #
+        # On a single qubit: W̃ = diag(z, 1) ≡ Rz(-θ) (up to global phase).
+        # Protocol gives P(z)|0⟩ + Q(z)|1⟩.
+        # (P, Q) is the first column of the GQSP matrix.
+        F = ComplexF64[0.0, 0.3im, -0.15im]  # degree 2
+        phases = extract_phases(F)
+
+        for θ_signal in [0.3, 1.0, 2.0, π]
+            z = exp(im * θ_signal)
+
+            # Compute expected (P, Q) from GQSP matrix
+            eZ(α) = ComplexF64[exp(im*α) 0; 0 exp(-im*α)]
+            eX(α) = let c=cos(α), s=sin(α)
+                ComplexF64[c im*s; im*s c]
+            end
+            M = eZ(phases.lambda)
+            for k in 0:phases.degree
+                Ak = eX(phases.phi[k+1]) * eZ(phases.theta[k+1])
+                M = M * Ak
+                k < phases.degree && (M = M * ComplexF64[z 0; 0 1])
+            end
+            prob0_expected = abs2(M[1,1])  # |P(z)|²
+
+            # Run circuit N times, check P(|0⟩) matches
+            N_samples = 2000
+            n_zero = 0
+            for _ in 1:N_samples
+                @context EagerContext() begin
+                    signal = qsvt_protocol!(θ_signal, phases)
+                    Bool(signal) || (n_zero += 1)
+                end
+            end
+            prob0_measured = n_zero / N_samples
+
+            # Statistical test: |measured - expected| < 4σ
+            sigma = sqrt(prob0_expected * (1 - prob0_expected) / N_samples)
+            @test abs(prob0_measured - prob0_expected) < max(4 * sigma, 0.05)
+        end
+    end
+
+    @testset "qsvt_protocol!: full pipeline b → qsvt → verify Q(z)" begin
+        # b → RHW → phases → circuit → verify Q(z) = b(z) component
+        α = 0.2im
+        b = ComplexF64[0.0, α]  # b(z) = 0.2i·z
+        F = rhw_factorize(b, 0.7, 1e-10)
+        phases = extract_phases(F)
+
+        # At z = e^{iπ/3}: b(z) = 0.2i·e^{iπ/3}
+        θ_signal = π / 3
+        z = exp(im * θ_signal)
+        bz = α * z
+        prob1_expected = abs2(bz)  # |Q(z)|² = |b(z)|²
+
+        N_samples = 2000
+        n_one = 0
+        for _ in 1:N_samples
+            @context EagerContext() begin
+                signal = qsvt_protocol!(θ_signal, phases)
+                Bool(signal) && (n_one += 1)
+            end
+        end
+        prob1_measured = n_one / N_samples
+
+        sigma = sqrt(prob1_expected * (1 - prob1_expected) / N_samples)
+        @test abs(prob1_measured - prob1_expected) < max(4 * sigma, 0.05)
     end
 
 end
