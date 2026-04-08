@@ -510,13 +510,63 @@ end
         end
     end
 
-    # NOTE: Full controlled-LCU test (when(signal) { be.oracle! }) is blocked by
-    # EagerContext's multi-controlled Rz limit. SELECT adds its own ancilla control
-    # on top of the signal control → 2+ controls on the Rz pivot → crash.
-    # The control-stack isolation in oracle! is mathematically correct (verified by
-    # Opus review), but requires multi-controlled Rz support to test end-to-end.
-    # The hand-crafted oracle test in test_qsvt_phase_factors.jl verifies the
-    # when(signal) { oracle! } pattern works for simple oracles.
+    @testset "LCU: controlled oracle when(signal) in superposition" begin
+        # Full controlled-LCU: signal=|+⟩, verify controlled-U behavior.
+        # |+⟩|0⟩^a|ψ⟩ → (1/√2)(|0⟩|0⟩^a|ψ⟩ + |1⟩ U|0⟩^a|ψ⟩)
+        # Requires multi-controlled Rz (Toffoli cascade) to work.
+        H1 = hamiltonian(
+            pauli_term(0.7, :X),
+            pauli_term(0.3, :Z),
+        )
+        be = block_encode_lcu(H1)
+        N = nqubits(H1)
+        a = be.n_ancilla
+
+        ctx = EagerContext()
+        @context ctx begin
+            signal = QBool(0.5)  # |+⟩
+            ancillas = [QBool(0) for _ in 1:a]
+            system = [QBool(0) for _ in 1:N]
+
+            when(signal) do
+                be.oracle!(ancillas, system)
+            end
+
+            # Reference: oracle without control
+            ctx_ref = EagerContext()
+            ref_amps = @context ctx_ref begin
+                anc_ref = [QBool(0) for _ in 1:a]
+                sys_ref = [QBool(0) for _ in 1:N]
+                be.oracle!(anc_ref, sys_ref)
+                dim_ref = 1 << (a + N)
+                amps = [_amp(ctx_ref, i) for i in 0:dim_ref-1]
+                for q in anc_ref; discard!(q); end
+                for q in sys_ref; discard!(q); end
+                amps
+            end
+
+            # signal=|1⟩ subspace should match reference × 1/√2
+            for idx in 0:(1 << (a + N))-1
+                full_idx = 1 + (idx << 1)  # signal=|1⟩ is bit 0
+                amp = _amp(ctx, full_idx)
+                expected = ref_amps[idx + 1] / sqrt(2)
+                @test abs(amp - expected) < 1e-6
+            end
+
+            # signal=|0⟩ subspace should be identity × 1/√2
+            # Only |0⟩^(a+N) should have amplitude
+            amp_000 = _amp(ctx, 0)  # signal=|0⟩, all else |0⟩
+            @test abs(amp_000 - 1/sqrt(2)) < 1e-6
+            for idx in 1:(1 << (a + N))-1
+                full_idx = 0 + (idx << 1)  # signal=|0⟩
+                @test abs(_amp(ctx, full_idx)) < 1e-6
+            end
+
+            discard!(signal)
+            for q in ancillas; discard!(q); end
+            for q in system; discard!(q); end
+        end
+    end
 
     @testset "LCU: oracle then oracle_adj restores initial state" begin
         N = nqubits(H_ising)

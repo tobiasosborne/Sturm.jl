@@ -130,36 +130,41 @@ current_controls(ctx::EagerContext) = copy(ctx.control_stack)
 
 function apply_ry!(ctx::EagerContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_ry!(ctx.orkan.raw, target, angle)
-    elseif length(ctx.control_stack) == 1
+    elseif nc == 1
         _controlled_ry!(ctx, ctx.control_stack[1], wire, angle)
     else
-        error("Multi-controlled Ry (>1 control) not yet implemented")
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_ry!)
     end
 end
 
 function apply_rz!(ctx::EagerContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_rz!(ctx.orkan.raw, target, angle)
-    elseif length(ctx.control_stack) == 1
+    elseif nc == 1
         _controlled_rz!(ctx, ctx.control_stack[1], wire, angle)
     else
-        error("Multi-controlled Rz (>1 control) not yet implemented")
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_rz!)
     end
 end
 
 function apply_cx!(ctx::EagerContext, control_wire::WireID, target_wire::WireID)
     ctrl = _resolve(ctx, control_wire)
     tgt = _resolve(ctx, target_wire)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-    elseif length(ctx.control_stack) == 1
+    elseif nc == 1
         extra_ctrl = _resolve(ctx, ctx.control_stack[1])
         orkan_ccx!(ctx.orkan.raw, extra_ctrl, ctrl, tgt)
     else
-        error("Multi-controlled CX (>1 additional control) not yet implemented")
+        # Multi-controlled CX: AND-reduce stack controls into workspace,
+        # then CCX(workspace, cx_ctrl, target).
+        _multi_controlled_cx!(ctx, control_wire, target_wire)
     end
 end
 
@@ -186,6 +191,91 @@ function _controlled_rz!(ctx::EagerContext, ctrl_wire::WireID, target_wire::Wire
     orkan_cx!(ctx.orkan.raw, ctrl, tgt)
     orkan_rz!(ctx.orkan.raw, tgt, -angle / 2)
     orkan_cx!(ctx.orkan.raw, ctrl, tgt)
+end
+
+# ── Multi-controlled gate decomposition (Toffoli cascade) ───────────────────
+# For N ≥ 2 controls: AND-reduce all controls into a single workspace qubit
+# via Toffoli (CCX) cascade, apply single-controlled gate, then uncompute.
+#
+# Workspace: N-1 temporary qubits allocated in |0⟩, deallocated after.
+# Gate cost: 2(N-1) Toffoli gates + 1 single-controlled gate.
+#
+# Ref: Barenco et al. (1995), Phys. Rev. A 52(5):3457, Lemma 7.2.
+
+function _toffoli_cascade_forward!(ctx::EagerContext, controls::Vector{WireID},
+                                    workspace::Vector{WireID})
+    nc = length(controls)
+    # First: CCX(ctrl[1], ctrl[2], ws[1])
+    c1 = _resolve(ctx, controls[1])
+    c2 = _resolve(ctx, controls[2])
+    w1 = _resolve(ctx, workspace[1])
+    orkan_ccx!(ctx.orkan.raw, c1, c2, w1)
+    # Chain: CCX(ws[k-1], ctrl[k+1], ws[k]) for k = 2..nc-1
+    for k in 2:nc-1
+        wp = _resolve(ctx, workspace[k - 1])
+        ck = _resolve(ctx, controls[k + 1])
+        wk = _resolve(ctx, workspace[k])
+        orkan_ccx!(ctx.orkan.raw, wp, ck, wk)
+    end
+end
+
+function _toffoli_cascade_reverse!(ctx::EagerContext, controls::Vector{WireID},
+                                    workspace::Vector{WireID})
+    nc = length(controls)
+    for k in nc-1:-1:2
+        wp = _resolve(ctx, workspace[k - 1])
+        ck = _resolve(ctx, controls[k + 1])
+        wk = _resolve(ctx, workspace[k])
+        orkan_ccx!(ctx.orkan.raw, wp, ck, wk)
+    end
+    c1 = _resolve(ctx, controls[1])
+    c2 = _resolve(ctx, controls[2])
+    w1 = _resolve(ctx, workspace[1])
+    orkan_ccx!(ctx.orkan.raw, c1, c2, w1)
+end
+
+function _multi_controlled_gate!(ctx::EagerContext, target_wire::WireID,
+                                  angle::Real, single_ctrl_fn!::Function)
+    controls = copy(ctx.control_stack)
+    nc = length(controls)
+    nc >= 2 || error("_multi_controlled_gate!: need ≥2 controls, got $nc")
+
+    # Allocate workspace qubits
+    nw = nc - 1
+    workspace = WireID[allocate!(ctx) for _ in 1:nw]
+
+    try
+        _toffoli_cascade_forward!(ctx, controls, workspace)
+        single_ctrl_fn!(ctx, workspace[end], target_wire, angle)
+        _toffoli_cascade_reverse!(ctx, controls, workspace)
+    finally
+        for ws in workspace
+            deallocate!(ctx, ws)
+        end
+    end
+end
+
+function _multi_controlled_cx!(ctx::EagerContext, cx_ctrl_wire::WireID, target_wire::WireID)
+    controls = copy(ctx.control_stack)
+    nc = length(controls)
+    nc >= 2 || error("_multi_controlled_cx!: need ≥2 stack controls, got $nc")
+
+    nw = nc - 1
+    workspace = WireID[allocate!(ctx) for _ in 1:nw]
+
+    try
+        _toffoli_cascade_forward!(ctx, controls, workspace)
+        # CCX(workspace_out, cx_ctrl, target)
+        ws_out = _resolve(ctx, workspace[end])
+        cx_ctrl = _resolve(ctx, cx_ctrl_wire)
+        tgt = _resolve(ctx, target_wire)
+        orkan_ccx!(ctx.orkan.raw, ws_out, cx_ctrl, tgt)
+        _toffoli_cascade_reverse!(ctx, controls, workspace)
+    finally
+        for ws in workspace
+            deallocate!(ctx, ws)
+        end
+    end
 end
 
 # ── Measurement with qubit recycling ──────────────────────────────────────────
