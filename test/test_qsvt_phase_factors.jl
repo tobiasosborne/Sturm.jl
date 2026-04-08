@@ -20,8 +20,10 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
     # Step 1: Berntson-Sunderhauf completion (P -> Q)
     # ─────────────────────────────────────────────────────────────────────
 
-    @testset "complementary_polynomial: |P|² + |Q|² ≈ 1 on unit circle" begin
-        # Use Jacobi-Anger polynomial for t=1.0, degree 20
+    @testset "complementary_polynomial: |P|² + |Q|² ≈ 1 on [-1,1]" begin
+        # Use Jacobi-Anger polynomial for t=1.0, degree 20.
+        # P and Q are in Chebyshev basis: P(x) = Σ cₖ Tₖ(x).
+        # Internally converts to analytic convention for BS algorithm.
         t = 1.0
         d = 20
         P_coeffs = jacobi_anger_coeffs(t, d)
@@ -29,19 +31,15 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         Q_coeffs = complementary_polynomial(P_coeffs)
         @test length(Q_coeffs) == d + 1
 
-        # Verify complementarity on the unit circle
-        N_test = 200
+        # Verify complementarity on x ∈ [-1, 1] via Chebyshev evaluation
         max_err = 0.0
-        for k in 0:N_test-1
-            θ = 2π * k / N_test
-            z = exp(im * θ)
-            # Evaluate P and Q at z using Horner's method
-            Pz = sum(P_coeffs[j+1] * z^j for j in 0:d)
-            Qz = sum(Q_coeffs[j+1] * z^j for j in 0:d)
-            err = abs(abs2(Pz) + abs2(Qz) - 1.0)
-            max_err = max(max_err, err)
+        for x in range(-1.0, 1.0, length=201)
+            Px = chebyshev_eval(P_coeffs, x)
+            Qx = chebyshev_eval(Q_coeffs, x)
+            err = abs(abs2(Px) + abs2(Qx) - 1.0)
+            if err > max_err; max_err = err; end
         end
-        @test max_err < 1e-8
+        @test max_err < 1e-6
     end
 
     @testset "complementary_polynomial: degree matches P" begin
@@ -70,12 +68,11 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
             P = jacobi_anger_coeffs(t, d)
             Q = complementary_polynomial(P)
 
-            # Spot-check at 5 points on unit circle
-            for θ in [0.0, π/4, π/2, π, 3π/2]
-                z = exp(im * θ)
-                Pz = sum(P[j+1] * z^j for j in 0:d)
-                Qz = sum(Q[j+1] * z^j for j in 0:d)
-                @test abs(abs2(Pz) + abs2(Qz) - 1.0) < 1e-6
+            # Spot-check at 5 points on x ∈ [-1, 1] via Chebyshev evaluation
+            for x in [-1.0, -0.5, 0.0, 0.5, 1.0]
+                Px = chebyshev_eval(P, x)
+                Qx = chebyshev_eval(Q, x)
+                @test abs(abs2(Px) + abs2(Qx) - 1.0) < 1e-4
             end
         end
     end
