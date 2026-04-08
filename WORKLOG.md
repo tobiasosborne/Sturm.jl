@@ -4,6 +4,74 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-08 — Session 9: Literature re-download + QSVT deprecation + Block Encoding Phase 1
+
+### Literature re-download (new machine)
+- Re-downloaded 90 arXiv PDFs via `download_all.sh`, 0 failures
+- Downloaded Trotter 1959 (AMS, free), Feynman 1982 (Springer via TIB), Lloyd 1996 (arXiv preprint)
+- Suzuki 1985/1990 need headed browser (Playwright) — skipped this session
+
+### QSVT landscape change — Motlagh GQSP deprecated
+- Downloaded two new canonical papers:
+  - **Berntson, Sünderhauf (CMP 2025)**: FFT-based complementary polynomial Q from target P. O(N log N), rigorous error bounds (Theorem 3). Solves the "completion step" of QSP.
+  - **Laneve (arXiv:2503.03026, July 2025)**: Proves GQSP ≡ NLFT over SU(2). The Riemann-Hilbert-Weiss algorithm gives provably stable GQSP phase factors. Machine precision (10⁻¹⁵) up to degree 10⁴.
+- Also downloaded: Motlagh GQSP (2308.01501), Alexis et al. NLFA (2407.05634), Ni-Ying fast RHW (2410.06409), Yamamoto-Yoshioka (2402.03016), Ni et al. fast inverse NLFT (2505.12615), Sünderhauf generalized QSVT (2312.00723)
+- Updated `qsp_qsvt/survey.md`: MOTLAGH-24 marked ⚠ DEPRECATED, BERNTSON-SUNDERHAUF-25 and LANEVE-25 marked ⚠ CANONICAL, all superseded-by chains updated, implementation roadmap rewritten
+
+### Block Encoding Phase 1 (in progress)
+
+**Created 14 beads issues** for the full Tier 0 plan (block encoding + QSVT). BD dependency system broken (missing table from prior DB wipe), but issues themselves are solid.
+
+**Files created:**
+```
+src/block_encoding/
+    types.jl      # BlockEncoding{N,A} struct — DONE, tested
+    prepare.jl    # PREPARE oracle (rotation tree) — DONE, tested (3 testsets pass)
+    select.jl     # SELECT oracle — IN PROGRESS, has the Session 8 bug
+    lcu.jl        # LCU assembly — IN PROGRESS, blocked on SELECT
+test/
+    test_block_encoding.jl  # 37 pass, 15 fail
+```
+
+**PREPARE oracle works correctly:**
+- Binary rotation tree on ⌈log₂ L⌉ ancilla qubits
+- Amplitude verification against √(|hⱼ|/λ) — 4/4 pass
+- Statistical sampling N=10000 — 4/4 pass
+- Adjoint roundtrip PREPARE†·PREPARE = I — 4/4 pass
+
+### Gotcha: SELECT hits the Session 8 bug (controlled-Pauli phase errors)
+
+**Root cause:** The four primitives generate SU(2) gates (det=1), NOT standard Paulis (det=-1). Inside `when()`, the phase difference becomes a relative phase:
+- X! = Ry(π), controlled-Ry(π) ≠ controlled-X. Off by -i phase.
+- Z! = Rz(π), controlled-Rz(π) = diag(1,1,-i,i) ≠ CZ = diag(1,1,1,-1). Off by i on |10⟩.
+- `_cz!(a,b)` decomposition (2 CX + 3 Rz) leaves Rz(π/2) local phase on control qubit.
+
+This means: ANY use of X!/Z!/Y! inside `when()` gives wrong controlled-Pauli operations. And even the `_cz!` decomposition leaves phases on the ancilla, which corrupts SELECT (ancilla must remain unmodified by SELECT except for the controlled Pauli on the system).
+
+**First attempted fix:** Replace X!/Z!/Y! with proper controlled-Pauli decompositions:
+- Controlled-X = CNOT = `target ⊻= ctrl` (correct, no phase)
+- Controlled-Z = `_cz!(ctrl, target)` (WRONG: leaves Rz(π/2) on ctrl = ancilla)
+- Controlled-Y = Sdg·CNOT·S (correct decomposition verified)
+
+**Second bug discovered:** `_cz!` leaves an Rz(π/2) local phase on the first argument (the control qubit in the CZ). When the control is the ancilla qubit, this phase persists through the unflip (X!) and corrupts the LCU post-selection.
+
+**Status:** Need a CZ decomposition that is phase-clean on the control qubit. Options:
+1. Move the Rz(π/2) from control to target in `_cz!` → need new `_cz_phase_on_target!`
+2. Use the pauli_exp! approach: basis change + CNOT staircase + single controlled-Rz(2θ) on pivot
+3. Rethink SELECT: instead of per-Pauli controlled gates, decompose the full string P_j as a circuit and control the entire circuit on a single qubit via Toffoli cascade
+
+Option 3 is the most correct — it matches how `_pauli_exp!` handles controlled operations (the "P0 controlled-evolve optimization" from Session 7).
+
+### Gotcha: NEVER run two Julia processes simultaneously
+- Background agent spawned `Pkg.test()` while main conversation had another running
+- Both hit the same `.julia/compiled/` cache → potential corruption
+- Killed both immediately. Rule: all Julia runs sequential, from main conversation only.
+
+### Beads DB status
+- DB was wiped by a prior agent. Reinitialized in embedded mode.
+- `bd dep` is broken (missing wisp_dependencies table). Dependencies documented in issue descriptions only.
+- 14 issues created successfully, all open.
+
 ## 2026-04-08 — Session 8: PDE paper formalization (Childs et al. 2604.05098)
 
 ### Paper: Quantum Algorithms for Heterogeneous PDEs — Neutron Diffusion Eigenvalue Problem
@@ -535,7 +603,7 @@ Comprehensive survey of the entire quantum simulation field. **8 parallel Sonnet
 
 **Key findings for Sturm.jl:**
 - QSP signal processing rotations ARE the θ/φ primitives. Block encoding uses controlled ops (when/⊻=). No new primitives needed.
-- GQSP (Motlagh 2024) is the recommended classical preprocessor for QSP phase angles.
+- ~~GQSP (Motlagh 2024) is the recommended classical preprocessor for QSP phase angles.~~ **DEPRECATED (Session 9, 2026-04-08)**: The canonical pipeline is now Berntson-Sünderhauf (CMP 2025, FFT completion) + Laneve (arXiv:2503.03026, NLFT factorization). See `docs/literature/quantum_simulation/qsp_qsvt/survey.md`.
 - Szegedy walk operators decompose exactly into 4 primitives (reflections = state prep + CNOT + phase kick + uncompute).
 - `pauli_exp!` is the universal building block: every simulation algorithm (Trotter, qDRIFT, LCU) compiles to Pauli exponentials.
 - Variational circuits (VQE/ADAPT) are directly expressible as θ/φ rotation + CNOT entangling layers.

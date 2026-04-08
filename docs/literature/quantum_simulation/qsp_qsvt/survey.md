@@ -6,7 +6,13 @@ Quantum Signal Processing (QSP) and its generalisation, the Quantum Singular Val
 
 The framework subsumes an impressive catalogue of quantum algorithms: Hamiltonian simulation (e^{-iHt} applied via Jacobi-Anger expansion), quantum phase estimation (eigenvalue thresholding), amplitude amplification (Grover's algorithm as a degree-1 QSP circuit), HHL matrix inversion (polynomial approximation to 1/x), quantum walks (the Szegedy walk operator IS a block encoding), and ground-state preparation (low-pass eigenvalue filters). The "grand unification" framing of Martyn et al. (2021) makes this explicit with a single pedagogical framework.
 
-The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal query complexity for essentially every known quantum simulation task; (2) the practical bottleneck has shifted from circuit structure to phase-factor computation — stable double-precision algorithms (QSPPACK, Ying's Prony method, GQSP's recursive formula) now handle polynomial degrees up to 10^7; (3) the framework has been extended to multiple variables (M-QSP), non-polynomial functions via infinite sequences (infinite QSP), and non-normal operators (quantum eigenvalue processing / QEVT); (4) hardware demonstrations on trapped-ion processors have validated the approach at circuit depths up to 360 layers.
+The state of the art as of mid-2025 is: (1) QSVT achieves optimal or near-optimal query complexity for essentially every known quantum simulation task; (2) **the phase-factor computation problem is now solved with provable stability**: Berntson and Sünderhauf (CMP 2025) give an FFT-based O(N log N) algorithm with rigorous error bounds for the complementary polynomial (the "completion" step), while Laneve (arXiv:2503.03026, 2025) proves that GQSP is equivalent to the Non-Linear Fourier Transform (NLFT) over SU(2), giving the first provably stable algorithm for GQSP phase factors via the generalized Riemann-Hilbert-Weiss algorithm; (3) the framework has been extended to multiple variables (M-QSP), non-polynomial functions via infinite sequences (infinite QSP), and non-normal operators (quantum eigenvalue processing / QEVT); (4) hardware demonstrations on trapped-ion processors have validated the approach at circuit depths up to 360 layers.
+
+> **⚠ DEPRECATION NOTICE (2025-04-08):** The previous recommendation to use Motlagh-Wiebe GQSP (2024) as the primary phase-finding algorithm is **SUPERSEDED**. The canonical pipeline is now:
+> 1. **Completion**: Berntson-Sünderhauf FFT algorithm (CMP 2025) — given target polynomial P, compute complementary Q via contour integral / FFT. O(N log N), provably stable, rigorous error bounds.
+> 2. **Factorization**: Laneve/NLFT inverse (arXiv:2503.03026) — given (P,Q), compute GQSP phase factors via generalized Riemann-Hilbert-Weiss algorithm. Provably stable even in the fully-coherent regime (||P||∞ ≈ 1) where Motlagh's optimization-based approach fails.
+>
+> Motlagh-Wiebe's recursive formula was a breakthrough but is heuristic (GPU-accelerated optimization with no stability guarantees). The new pipeline is entirely analytical/FFT-based with explicit error bounds at both steps. **All future QSVT implementation in Sturm.jl MUST use BERNTSON-SUNDERHAUF-25 + LANEVE-25, not MOTLAGH-24.**
 
 ## Timeline
 
@@ -22,8 +28,9 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 - **2020–2021**: Dong, Meng, Whaley, Lin (QSPPACK); Chao, Ding, Gilyén, Huang, Szegedy give practical double-precision algorithms for phase-factor computation; Martyn et al. write the pedagogical grand-unification tutorial.
 - **2021**: Lin and Tong achieve near-optimal ground-state preparation; first chemistry simulations with explicit QSVT resource counts (Su, Berry, Babbush et al.).
 - **2022**: Wang, Dong, Lin analyse the benign energy landscape of symmetric QSP; Ying gives a Prony-based stable factorisation; Rossi and Chuang extend to multi-variable QSP; Lin's UC Berkeley lecture notes become the standard graduate reference.
-- **2023–2024**: Motlagh and Wiebe introduce Generalized QSP (GQSP) lifting all polynomial restrictions; Low and Su extend to non-normal operators (QEVT/quantum eigenvalue processing); Dong, Lin et al. extend QSP to infinite sequences (Szegő functions); hardware experiments on trapped-ion devices demonstrate deep QSP circuits.
-- **2025–2026**: Ongoing work on adversary bounds, multi-variable constructive algorithms, and noise-resilient QSP ensembles.
+- **2023–2024**: Motlagh and Wiebe introduce Generalized QSP (GQSP) lifting all polynomial restrictions; Low and Su extend to non-normal operators (QEVT/quantum eigenvalue processing); Dong, Lin et al. extend QSP to infinite sequences (Szegő functions); hardware experiments on trapped-ion devices demonstrate deep QSP circuits; Alexis, Lin, Mnatsakanyan, Thiele, Wang connect QSP to Non-Linear Fourier Analysis (NLFA) and prove infinite QSP for arbitrary Szegő functions.
+- **2025**: **Phase-finding problem solved.** Berntson and Sünderhauf (Commun. Math. Phys. 406:161) give FFT-based complementary polynomial construction with rigorous error bounds. Laneve (arXiv:2503.03026) proves GQSP ≡ NLFT over SU(2), giving provably stable phase-factor computation via the generalized Riemann-Hilbert-Weiss algorithm. Ni and Ying (arXiv:2410.06409) give fast Half-Cholesky factorization reducing RHW complexity to O(n² + n/η log ε). Ni, Sarkar, Ying, Lin (arXiv:2505.12615) give O(n log² n) inverse NLFT. Together these make GQSP phase finding a solved problem with provable stability.
+- **2025–2026**: Ongoing work on adversary bounds, multi-variable constructive algorithms, noise-resilient QSP ensembles, and O(n log² n) inverse NLFT algorithms.
 
 ---
 
@@ -98,7 +105,7 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 - **Limitations**: Optimization landscape is non-convex; convergence relies on the benign landscape result later characterised by WANG-22; not guaranteed to converge from arbitrary initialisation.
 - **Relevance to Sturm.jl**: QSPPACK directly provides the classical preprocessing for any QSVT compilation pass in Sturm.jl. The output phase angles are the `delta` parameters in `q.theta += delta` and `q.phi += delta`.
 - **Depends on**: HAAH-19, GILYEN-19
-- **Superseded by**: YING-22 (Prony-based, more stable), MOTLAGH-24 (analytic recursive formula for GQSP)
+- **Superseded by**: YING-22 (Prony-based), LANEVE-25 (GQSP via NLFT, provably stable RHW factorization)
 - **Cites/cited-by**: HAAH-19, GILYEN-19; cited by WANG-22, YING-22, MARTYN-21
 
 ### [CHAO-20] Chao, Ding, Gilyén, Huang, Szegedy (2020) — Finding Angles for Quantum Signal Processing with Machine Precision
@@ -110,7 +117,7 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 - **Limitations**: The "halving" step requires the polynomial to satisfy certain symmetry properties; less general than YING-22 or GQSP.
 - **Relevance to Sturm.jl**: Alternative (complementary) classical preprocessing algorithm for QSVT compiler pass. Can be used for Hamiltonian simulation angle sequences when QSPPACK is not available.
 - **Depends on**: HAAH-19, LOW-CHUANG-17
-- **Superseded by**: YING-22, MOTLAGH-24
+- **Superseded by**: YING-22, BERNTSON-SUNDERHAUF-25 (FFT completion), LANEVE-25 (NLFT factorization)
 - **Cites/cited-by**: HAAH-19; cited by DONG-21, WANG-22, MOTLAGH-24
 
 ### [WANG-22] Wang, Dong, Lin (2022) — On the Energy Landscape of Symmetric Quantum Signal Processing
@@ -122,7 +129,7 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 - **Limitations**: Analysis specific to the symmetric QSP case; extensions to non-symmetric and GQSP landscapes are ongoing work.
 - **Relevance to Sturm.jl**: Provides theoretical justification that the classical preprocessing step for a QSVT compiler pass will converge reliably. Informs choice of optimization algorithm for phase-factor computation.
 - **Depends on**: DONG-21, HAAH-19
-- **Superseded by**: MOTLAGH-24 (GQSP has a direct analytic formula, no optimization needed)
+- **Superseded by**: BERNTSON-SUNDERHAUF-25 (FFT completion, provably stable) + LANEVE-25 (NLFT factorization, provably stable). Motlagh-24's recursive formula also supersedes but is itself now deprecated in favor of the NLFT pipeline.
 - **Cites/cited-by**: DONG-21; cited by YING-22, MOTLAGH-24
 
 ### [YING-22] Ying (2022) — Stable Factorization for Phase Factors of Quantum Signal Processing
@@ -134,20 +141,60 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 - **Limitations**: Requires the polynomial to be of definite parity (symmetric case); less general than GQSP.
 - **Relevance to Sturm.jl**: The most practically reliable classical algorithm for generating QSP phase sequences for Sturm.jl's QSVT compilation pass. Prony stability means phase factors for degree-1000+ Hamiltonian simulation polynomials can be precomputed reliably.
 - **Depends on**: HAAH-19, DONG-21
-- **Superseded by**: MOTLAGH-24 (GQSP with analytic formula removes need for numerical phase finding)
-- **Cites/cited-by**: DONG-21, HAAH-19; cited by MOTLAGH-24
+- **Superseded by**: BERNTSON-SUNDERHAUF-25 (FFT-based, provably stable, rigorous error bounds) + LANEVE-25 (NLFT factorization). Motlagh-24 also supersedes but is itself deprecated.
+- **Cites/cited-by**: DONG-21, HAAH-19; cited by MOTLAGH-24, BERNTSON-SUNDERHAUF-25, LANEVE-25
 
 ### [MOTLAGH-24] Motlagh, Wiebe (2024) — Generalized Quantum Signal Processing
+
+> **⚠ DEPRECATED as recommended phase-finding method.** Superseded by BERNTSON-SUNDERHAUF-25 (complementary polynomial via FFT) + LANEVE-25 (GQSP ≡ NLFT, provably stable factorization). Motlagh's recursive formula is heuristic (optimization-based, no stability proof for ||P||∞ ≈ 1). The GQSP *framework* (SU(2) processing operators) remains correct and foundational — only the *phase-finding algorithm* is deprecated.
+
 - **arXiv/DOI**: arXiv:2308.01501 / doi:10.1103/PRXQuantum.5.020368
-- **PDF status**: not_found (available at https://arxiv.org/pdf/2308.01501)
+- **PDF status**: downloaded (2308.01501.pdf)
 - **Category**: SYNTHESIS | PHASE_POLY
 - **Key idea**: Replaces QSP signal processing operators (rotations in a single basis, Rz) with general SU(2) rotations. This lifts ALL practical restrictions on achievable polynomials — the only remaining constraint is |P| ≤ 1 (unitarity). Provides a simple recursive formula for computing the required angles. Can find phase factors for polynomials of degree 10^7 in under a minute of GPU time. Subsumes standard QSP, QSVT, and enables new applications (bosonic operators, convolution algorithms).
 - **Complexity**: Degree-10^7 phase finding in < 1 min GPU time (O(N log N) via recursive formula).
-- **Limitations**: The generalised SU(2) rotations require implementing arbitrary single-qubit gates, not just Rz; adds minor hardware overhead compared to standard QSP (only Rz + Ry in the DSL).
-- **Relevance to Sturm.jl**: CRITICAL. GQSP phase angles decompose naturally into `q.theta += delta` followed by `q.phi += delta` (since SU(2) = Ry·Rz). The recursive angle formula eliminates the need for expensive numerical optimization in the QSVT compilation pass. This is the recommended classical preprocessing algorithm.
+- **Limitations**: The recursive formula is optimization-based with **no provable stability guarantee** for the fully-coherent regime (||P||∞ ≈ 1). Laneve (2025) showed that Motlagh's convolution optimization + layer stripping consistently gives errors between 10⁻³ and 10⁻⁴ at degree ≥100 (Figure 3 of arXiv:2503.03026), while the generalized RHW algorithm achieves 10⁻¹⁵ at the same degree. The SU(2) rotations add minor hardware overhead (Ry + Rz vs just Rz).
+- **Relevance to Sturm.jl**: The GQSP framework (SU(2) = Ry·Rz processing operators) maps perfectly to `q.theta += delta` followed by `q.phi += delta`. **However, the phase-finding algorithm is no longer recommended.** Use BERNTSON-SUNDERHAUF-25 for completion and LANEVE-25/RHW for factorization instead.
 - **Depends on**: GILYEN-19, HAAH-19, DONG-21
-- **Superseded by**: Nothing yet (current state of the art for phase finding)
+- **Superseded by**: BERNTSON-SUNDERHAUF-25 (completion step) + LANEVE-25 (factorization step). The GQSP circuit *structure* is correct; only the phase-finding *algorithm* is deprecated.
 - **Cites/cited-by**: GILYEN-19, DONG-21, YING-22; see also companion paper arXiv:2401.10321 (Doubling efficiency via GQSP)
+
+### [BERNTSON-SUNDERHAUF-25] Berntson, Sünderhauf (2025) — Complementary Polynomials in Quantum Signal Processing
+
+> **⚠ CANONICAL — this is now the recommended algorithm for the QSP completion step (P → Q).**
+
+- **arXiv/DOI**: doi:10.1007/s00220-025-05302-9 (Commun. Math. Phys. 406:161, 2025)
+- **PDF status**: downloaded (s00220-025-05302-9.pdf)
+- **Category**: SYNTHESIS | PHASE_POLY
+- **Key idea**: Solves the complementary polynomial problem — given P ∈ ℂ[z] with |P(z)|² + |Q(z)|² = 1 on 𝕋, find Q — via an exact contour integral representation (Theorem 2). The canonical Q is expressed as Q(z) = Q₀(z) · exp(Schwarz integral of log(1-|P|²)), where Q₀ encodes the roots of 1-|P|² on 𝕋. On the unit circle, this has a Fourier analytic interpretation: Q can be computed by (1) FFT of log(1-|P|²), (2) applying the Fourier multiplier Π (projection to positive frequencies + ½ at zero), (3) exponentiating, (4) interpolation through roots of unity + IFFT. Two algorithms given:
+  - **Algorithm 1**: For known δ (where ||P||∞,𝕋 ≤ 1-δ). Runtime O(N log N), N = O(d/δ · log(d/(δε))). Provably stable with explicit error bound (Theorem 3).
+  - **Algorithm 2**: For unknown/zero δ (||P||∞,𝕋 ≤ 1). Downscales P → (1-ε/4)P to create artificial gap δ=ε/4, then applies Algorithm 1. Runtime O(N log N), N = O(d/ε · log(d/ε)). Error bound Theorem 4.
+- **Complexity**: O(N log N) where N = O(d/δ · log(d/(δε))). For fixed δ, N = O(d log(d/ε)) — essentially linear in degree.
+- **Limitations**: The FFT size N grows as 1/δ when the polynomial is near-extremal (||P||∞ ≈ 1). For practical QSP polynomials (Hamiltonian simulation, eigenvalue filtering), δ is bounded away from 0 and the algorithm is fast. Reference Python implementation uses PyTorch FFT.
+- **Relevance to Sturm.jl**: **CRITICAL. This is step 1 of the new QSVT compilation pipeline.** Given target polynomial P (e.g., Jacobi-Anger for e^{-iHt}), compute Q via FFT. Then pass (P,Q) to LANEVE-25/RHW for phase factors. Entirely replaces the need for Motlagh's optimization-based completion. Reference code at Riverlane's implementation; a Julia port using FFTW.jl is straightforward.
+- **Depends on**: Schwarz integral formula, Fejér-Riesz theorem, GILYEN-19 (GQSP framework via Motlagh)
+- **Superseded by**: Nothing — current state of the art for QSP completion
+- **Cites/cited-by**: GILYEN-19, MOTLAGH-24, HAAH-19, DONG-21, YING-22; cited by LANEVE-25
+
+### [LANEVE-25] Laneve (2025) — Generalized Quantum Signal Processing and Non-Linear Fourier Transform are equivalent
+
+> **⚠ CANONICAL — this is now the recommended algorithm for the QSP factorization step ((P,Q) → phase factors).**
+
+- **arXiv/DOI**: arXiv:2503.03026v2 (July 2025)
+- **PDF status**: downloaded (2503.03026.pdf)
+- **Category**: SYNTHESIS | PHASE_POLY
+- **Key idea**: Proves that GQSP (Motlagh-Wiebe) is exactly the Non-Linear Fourier Transform (NLFT) over SU(2). The NLFT maps a sequence F = (F_k) ∈ ℓ²(ℤ) to a pair of functions (a,b) on the unit circle via an infinite product of SU(2) matrices. The key equivalences are:
+  - Traditional QSP (X-rotations): F_k ∈ iℝ, phase factors φ_k = arctan(-iF_k)
+  - Y-constrained QSP: F_k ∈ ℝ, phase factors φ_k = arctan(F_k)
+  - **GQSP** (general SU(2)): F_k ∈ ℂ, phase factors via Theorem 9: φ_k = arctan(-ie^{-2iψ_k}F_k), θ_k = ψ_{k+1} - ψ_k
+  This means computing GQSP phase factors = computing the inverse NLFT, which is exactly what the Riemann-Hilbert-Weiss (RHW) algorithm does. The generalized RHW algorithm (Section 5) works for ALL QSP variants, including GQSP with complex sequences, and achieves machine-precision accuracy (10⁻¹⁵) up to degree 10⁴ (Figure 3), vastly outperforming Motlagh's optimization approach.
+  Additionally proves **uniqueness** of canonical GQSP phase factors (Corollary 10) and gives a complete theory of **infinite GQSP** via the NLFT bijectivity theorem.
+- **Complexity**: RHW: O(n⁴ + n/η log ε) for base algorithm; Half-Cholesky method (Ni-Ying 2024): O(n² + n/η log ε). Recent work (Ni, Sarkar, Ying, Lin 2025, arXiv:2505.12615): O(n log² n).
+- **Limitations**: The O(n²) Half-Cholesky complexity may matter for very high-degree polynomials (d > 10⁶); the O(n log² n) fast inverse NLFT (2505.12615) addresses this.
+- **Relevance to Sturm.jl**: **CRITICAL. This is step 2 of the new QSVT compilation pipeline.** Given (P,Q) from BERNTSON-SUNDERHAUF-25, compute GQSP phase factors (φ_k, θ_k) via the generalized RHW algorithm. The phase factors map directly to Sturm.jl primitives: each processing operator A_k = e^{iφ_k X} e^{iθ_k Z} decomposes as `q.theta += 2φ_k; q.phi += 2θ_k` (using Ry = e^{-iθY/2}, Rz = e^{-iφZ/2} conventions). Reference Python implementation at github.com/LorenzoLaneve/nlft-qsp.
+- **Depends on**: MOTLAGH-24 (GQSP framework), Alexis et al. 2024 (arXiv:2407.05634, QSP + NLFA), Ni-Ying 2024 (arXiv:2410.06409, fast RHW)
+- **Superseded by**: Nothing — current state of the art for QSP factorization
+- **Cites/cited-by**: MOTLAGH-24, GILYEN-19, DONG-21, YING-22, ALEXIS-24, NI-YING-24; see also arXiv:2505.12615 (O(n log² n) fast inverse NLFT)
 
 ### [ROSSI-22] Rossi, Chuang (2022) — Multivariable Quantum Signal Processing (M-QSP)
 - **arXiv/DOI**: arXiv:2205.06261 / doi:10.22331/q-2022-09-20-811
@@ -369,7 +416,7 @@ The state of the art as of 2026 is: (1) QSVT achieves optimal or near-optimal qu
 
 ## Open Problems
 
-**Phase-finding at scale**: GQSP (MOTLAGH-24) provides a recursive formula that in principle handles degree 10^7, but numerical stability for ultra-high-degree polynomials in finite precision remains an active area. The 2025 paper arXiv:2510.00443 (Lin, ICM 2026 submission) surveys the current mathematical status.
+**Phase-finding at scale**: ~~GQSP (MOTLAGH-24) provides a recursive formula that in principle handles degree 10^7, but numerical stability for ultra-high-degree polynomials in finite precision remains an active area.~~ **UPDATE (2025)**: The phase-finding problem is now essentially solved. BERNTSON-SUNDERHAUF-25 gives O(N log N) completion with explicit error bounds; LANEVE-25 proves GQSP ≡ NLFT and gives provably stable factorization via generalized RHW. The remaining frontier is computational: the O(n²) Half-Cholesky factorization dominates for d > 10⁵; the fast inverse NLFT (Ni, Sarkar, Ying, Lin 2025, arXiv:2505.12615) reduces this to O(n log² n). Practical implementations up to d = 10⁷ are demonstrated.
 
 **Multi-variable QSP**: M-QSP (ROSSI-22) gives existence conditions, but polynomial-time constructive algorithms for angle sequences are only just appearing (arXiv:2410.02332, 2024). Full automation for multi-variable Hamiltonians is not yet available.
 
@@ -398,7 +445,7 @@ for i in 1:d
 end
 ```
 
-The angles `phi_angles` and `theta_angles` are computed classically by GQSP/QSPPACK from the target polynomial approximation to e^{-iHt}. This is a natural fit with Sturm.jl: the DSL already expresses exactly this structure.
+The angles `phi_angles` and `theta_angles` are computed classically by the BERNTSON-SUNDERHAUF-25 + LANEVE-25 pipeline from the target polynomial approximation to e^{-iHt}. This is a natural fit with Sturm.jl: the DSL already expresses exactly this structure.
 
 **2. Block encoding uses `when()` and `a xor= b`.** The block-encoding oracle U that encodes Hamiltonian H is constructed from a SELECT oracle (applying individual Pauli strings conditioned on ancilla register values) and a PREPARE oracle (loading LCU coefficients into superposition). SELECT is a sequence of `when(ancilla_bits) { a xor= b }` CNOT gates; PREPARE is a `QBool(p)` preparation + `q.theta +=` rotation tree. Both fit the 4-primitive DSL exactly.
 
@@ -407,10 +454,11 @@ The angles `phi_angles` and `theta_angles` are computed classically by GQSP/QSPP
 **Implementation roadmap for a QSVT pass in Sturm.jl:**
 1. Partition DAG at ObserveNode/DiscardNode boundaries (unitary subcircuits).
 2. For each unitary block: identify the block-encoding structure (LCU decomposition or sparse oracle).
-3. Compute the polynomial approximation to the target function (e.g., Jacobi-Anger for e^{-iHt}).
-4. Run GQSP (MOTLAGH-24) or QSPPACK (DONG-21/YING-22) to find QSP phase angles.
-5. Emit QSP circuit: sequence of `q.phi +=` and `q.theta +=` rotations interleaved with oracle calls.
-6. Verify correctness against EagerContext statevector simulation.
+3. Compute the polynomial approximation P to the target function (e.g., Jacobi-Anger for e^{-iHt}).
+4. **Completion**: Run BERNTSON-SUNDERHAUF-25 Algorithm 1/2 (FFT-based) to compute complementary polynomial Q satisfying |P|² + |Q|² = 1 on 𝕋. Julia: FFTW.jl.
+5. **Factorization**: Run LANEVE-25 generalized RHW algorithm to compute GQSP phase factors (φ_k, θ_k) from (P,Q) via inverse NLFT. Julia: Toeplitz solve + Cholesky.
+6. Emit GQSP circuit: sequence of `q.theta +=` (Ry) and `q.phi +=` (Rz) rotations interleaved with signal operator (block-encoding oracle) calls.
+7. Verify correctness against EagerContext statevector simulation.
 
 **Key identities for implementers:**
 - Ry(2arcsin(√p))|0⟩ = √(1-p)|0⟩ + √p|1⟩ — this is `QBool(p)`, the PREPARE oracle state for amplitude p.

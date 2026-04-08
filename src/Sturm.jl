@@ -53,6 +53,12 @@ include("simulation/error_bounds.jl")
 include("simulation/models.jl")
 include("simulation/evolve.jl")
 
+# Block encoding (LCU, query-model algorithms)
+include("block_encoding/types.jl")
+include("block_encoding/prepare.jl")
+include("block_encoding/select.jl")
+include("block_encoding/lcu.jl")
+
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()
     _set_omp_threads!()
@@ -103,5 +109,8 @@ export Composite
 export alpha_comm, trotter_error, trotter_steps
 export evolve!
 export ising, heisenberg
+
+# Block encoding
+export BlockEncoding, block_encode_lcu
 
 end # module Sturm
