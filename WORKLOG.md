@@ -86,11 +86,26 @@ The Fourier coefficient ĉ_0 = (1/2π) ∫_𝕋 b(z)/a(z) dz. Even when b(0) = 0
 jacobi_anger_coeffs → chebyshev_to_analytic → b=-iP → weiss → rhw_factorize → extract_phases → QSVTPhases
 ```
 
+### qsvt_protocol! circuit — COMPLETE (6 new tests, 141 total)
+
+**Implemented the GQSP protocol circuit on a single signal qubit.**
+
+**File created:** `src/qsvt/circuit.jl`
+
+The circuit: Rz(-2λ) · A₀ · W̃ · A₁ · W̃ · ... · W̃ · Aₙ applied to |0⟩, where W̃ = diag(z,1) ≡ Rz(-θ) on the signal qubit (up to global phase).
+
+**Tests verified:**
+- Trivial phases (F=0) → signal stays |0⟩ deterministically
+- Amplitudes match NLFT prediction at 4 test points (N=2000 statistical, 4σ tolerance)
+- Full pipeline: b → RHW → phases → circuit → measure → verify |Q(z)|² = |b(z)|²
+
+**Deferred:** Full BlockEncoding integration (xl4) — the when()+PREPARE control stacking issue means LCU oracles can't be called inside when(signal). Needs reflection QSVT (no signal qubit, Rz on ancilla, alternating U/U†) or a controlled-oracle wrapper.
+
 ### What the next session should do
 
-1. **Implement qsvt! core circuit** (Sturm.jl-897) — the quantum part
-2. **Implement evolve! integration** (Sturm.jl-x3m)
-3. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
+1. **Implement evolve! integration** (Sturm.jl-x3m) — `evolve!(reg, H, t, QSVT(ε))`
+2. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
+3. **Reflection QSVT** (xl4, deferred) — for full BE integration
 
 ---
 
