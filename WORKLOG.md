@@ -165,9 +165,36 @@ Auto-computes polynomial degree from t and ε. Downscales to create gap η=ε/4 
 
 **QSVT DAG/OpenQASM:** `trace(0) do; qsvt_protocol!(θ, phases); end` captures the GQSP circuit as a Channel DAG. `to_openqasm(ch)` exports valid OpenQASM 3.0 with ry/rz gates. 5 new tests.
 
-### ALL QSVT ISSUES CLOSED
+### Signal variable mapping research — CRITICAL FINDING
 
-**Session 10 total: 9 commits, ~130 new tests, 31/31 issues closed.**
+**The GQSP circuit with controlled-U does NOT implement QSVT on block encodings.** Confirmed numerically: H=X, t=0.5, expected P(|1⟩)=23%, got 0%.
+
+**Root cause:** The controlled-U signal operator in the 4D (signal × eigenspace) Hilbert space does NOT reduce to the GQSP signal operator W̃ = diag(z, 1) on the 2D signal space. The CS decomposition (GSLW Lemma 14 Eq 24) shows U decomposes as [ς, √(1-ς²); √(1-ς²), -ς] in each eigenspace, but this is the CHEBYSHEV signal operator x̃, not the analytic W̃.
+
+**The correct QSVT circuit for block encodings is GSLW Definition 15:** Z-rotations on the ancilla, alternating U/U†, NO signal qubit. This requires Chebyshev Z-constrained QSP phases, which are DIFFERENT from our GQSP analytic phases.
+
+**Key constraint discovered:** QSP normalization requires |P(±1)| = 1, so the target polynomial must satisfy this boundary condition. Raw cos(xt) has |cos(t)| < 1 at x=±1, so it needs modification near the boundary.
+
+**What the existing GQSP pipeline provides:**
+- Single-qubit GQSP protocol: CORRECT (verified statistically)
+- Analytic QSP phases (Weiss/RHW/extract): CORRECT for analytic signal operator
+- Block encoding (LCU): CORRECT
+- Controlled oracle: CORRECT (control-stack isolation + Toffoli cascade)
+
+**What's missing (Sturm.jl-x25):**
+- Chebyshev QSP phase computation (layer stripping, Prony, or convention conversion)
+- Reflection QSVT circuit implementation
+- `evolve!(qubits, H, t, QSVT(ε))` wrapper
+
+**Options for Chebyshev phase computation:**
+1. Layer stripping (Haah 2019) — direct factorization, unstable for high degree
+2. Prony method (Ying 2022) — stable factorization via root finding
+3. Optimization (QSPPACK/Wang 2022) — gradient descent with benign landscape, needs good init
+4. GQSP→Chebyshev convention conversion — algebraic, but non-trivial mapping
+
+### Session 10 final status (updated)
+
+**9 commits pushed.** ~140 new tests. Classical GQSP pipeline complete. Block encoding infrastructure (controlled oracle, multi-controlled gates, product algebra) complete. Full evolve! blocked by Chebyshev phase computation (x25).
 
 ---
 
