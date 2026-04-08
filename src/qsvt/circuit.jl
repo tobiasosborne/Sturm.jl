@@ -256,3 +256,179 @@ function qsvt!(system::Vector{QBool}, be::BlockEncoding, phases::QSVTPhases)
 
     return success
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reflection QSVT circuit (GSLW Definition 15 + Theorem 17)
+#
+# The correct way to apply polynomial transformations to block encodings.
+# Uses Z-rotations on the block encoding's ancilla qubit, interleaved
+# with alternating U / U† applications. No separate signal qubit.
+#
+# Circuit structure for n phases (GSLW Definition 15, Eq 31):
+#   Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), ...
+#   Pattern: start with U, alternate oracle (U↔U†) and Rz
+#   Total: n oracle calls + n Z-rotations on ancilla
+#
+# Phase convention: Rz here means e^{iφ_k Z} = diag(e^{iφ}, e^{-iφ})
+# on the ancilla qubit. In Sturm DSL: ancilla.φ += -2φ_k.
+#
+# Post-selection: project ancilla onto |0⟩ after the circuit.
+#   Even n: P^{(SV)}(A) = Π U_Φ Π  (Theorem 17)
+#   Odd n:  P^{(SV)}(A) = Π̃ U_Φ Π  (Theorem 17)
+# For single-ancilla: Π = Π̃ = |0⟩⟨0|, so both cases project the same way.
+#
+# Ref: Gilyén, Su, Low, Wiebe (2019), arXiv:1806.01838,
+#      Definition 15, Theorem 17, Lemma 19.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qsvt_reflect!(system::Vector{QBool}, be::BlockEncoding,
+                   phases::Vector{Float64}) -> Bool
+
+Execute the GSLW reflection QSVT circuit on a block encoding.
+
+Applies a polynomial P(x) to the singular values of the block-encoded
+operator A/α, using Z-rotations on the ancilla interleaved with
+alternating U / U† applications.
+
+The circuit implements (GSLW Definition 15):
+    U_Φ = e^{iφ₁Z}·U†·e^{iφ₂Z}·U·...    (even n)
+    U_Φ = e^{iφ₁Z}·U·e^{iφ₂Z}·U†·...     (odd n)
+
+Post-selecting ancilla on |0⟩ gives P^{(SV)}(A/α).
+
+# Arguments
+- `system`: system qubits (must match `be.n_system`)
+- `be`: block encoding of the target operator
+- `phases`: Z-constrained QSVT phases [φ₁, φ₂, ..., φₙ] (n phases, NOT n+1)
+
+# Returns
+`true` if post-selection succeeded (all ancilla measured |0⟩).
+
+# Ref
+GSLW (2019), arXiv:1806.01838, Definition 15, Theorem 17.
+"""
+function qsvt_reflect!(system::Vector{QBool}, be::BlockEncoding,
+                        phases::Vector{Float64})
+    length(system) == be.n_system || error(
+        "qsvt_reflect!: expected $(be.n_system) system qubits, got $(length(system))")
+    n = length(phases)
+    n >= 1 || error("qsvt_reflect!: need at least 1 phase, got 0")
+    ctx = system[1].ctx
+
+    # ── Allocate ancilla qubits ──
+    ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
+
+    # ── QSVT circuit (GSLW Definition 15) ──
+    # Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), ...
+    # Oracle alternates: U first, then U†, then U, then U†, ...
+    use_oracle = true  # true = U, false = U†
+    for j in n:-1:1
+        # Apply oracle (U or U†)
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+
+        # Apply Z-rotation e^{iφ_j Z} on first ancilla qubit
+        # e^{iφZ} = diag(e^{iφ}, e^{-iφ}) = Rz(-2φ)
+        ancillas[1].φ += -2.0 * phases[j]
+
+        use_oracle = !use_oracle  # alternate U ↔ U†
+    end
+
+    # ── Post-select ancilla on |0⟩ ──
+    success = true
+    for a in ancillas
+        if Bool(a)
+            success = false
+        end
+    end
+
+    return success
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Z-constrained phase computation for real Chebyshev polynomials
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qsvt_phases(cheb_real::Vector{Float64}; epsilon::Float64=1e-10) -> Vector{Float64}
+
+Compute Z-constrained QSVT phases for a REAL Chebyshev polynomial.
+
+Given a real polynomial P(x) = Σ cₖ Tₖ(x) with |P(x)| ≤ 1 on [-1,1],
+computes the phase angles φ₁,...,φₙ for the GSLW reflection QSVT circuit
+(Definition 15, Theorem 17).
+
+Pipeline:
+1. Chebyshev → analytic conversion (degree d → 2d), Laneve Lemma 1
+2. b = -i·P_analytic·scale (Section 4.3 + downscaling)
+3. Weiss + RHW → NLFT sequence F_k ∈ iℝ (purely imaginary for real P)
+4. Phase extraction → X-constrained GQSP phases (θ_k = 0, λ = 0)
+5. Section 4.3 correction: φₙ += π/2
+6. Return φ₁,...,φₙ (drop φ₀, it's absorbed by post-selection)
+
+The X-constrained GQSP phases ARE the Z-constrained QSVT phases
+(same numerical values) via the Hadamard conjugation identity
+H·e^{iφX}·H = e^{iφZ} (Laneve Section 2.1).
+
+# Arguments
+- `cheb_real`: real Chebyshev coefficients [c₀, c₁, ..., c_d]
+- `epsilon`: target precision for the phase computation
+
+# Returns
+Vector{Float64} of length 2d: the QSVT phases [φ₁, ..., φ_{2d}].
+
+# Ref
+Berntson, Sünderhauf (2025), CMP 406:161 (completion step).
+Laneve (2025), arXiv:2503.03026, Theorem 9, Section 4.3.
+GSLW (2019), arXiv:1806.01838, Theorem 3, Definition 15.
+"""
+function qsvt_phases(cheb_real::Vector{Float64}; epsilon::Float64=1e-10)
+    d = length(cheb_real) - 1
+    d >= 0 || error("qsvt_phases: need at least 1 coefficient")
+
+    # ── Step 1: Chebyshev → analytic (degree d → 2d) ──
+    P_analytic = chebyshev_to_analytic(ComplexF64.(cheb_real))
+    n_a = length(P_analytic) - 1  # = 2d
+
+    # ── Step 2: b = -i·P (Laneve Section 4.3) ──
+    b_raw = -im .* P_analytic
+
+    # ── Step 3: Downscale to create gap ──
+    η = epsilon / 4
+    N_est = nextpow(2, max(1024, 4 * length(b_raw)))
+    b_pad = zeros(ComplexF64, N_est)
+    b_pad[1:length(b_raw)] .= b_raw
+    b_est = ifft(b_pad) .* N_est
+    max_b = sqrt(maximum(abs2.(b_est)))
+    scale = (1.0 - η) / max(max_b, 1.0 - η)
+    b_scaled = b_raw .* scale
+
+    # ── Step 4: NLFT inverse → phase extraction ──
+    F = rhw_factorize(b_scaled, η, epsilon / 4)
+    phases = extract_phases(F)
+
+    # ── Validate X-constrained (θ_k ≈ 0, λ ≈ 0) ──
+    max_theta = maximum(abs.(phases.theta))
+    if max_theta > 1e-3
+        @warn "qsvt_phases: non-zero θ_k detected (max |θ| = $max_theta). " *
+              "Input may not be a real Chebyshev polynomial."
+    end
+    if abs(phases.lambda) > 1e-3
+        @warn "qsvt_phases: non-zero λ = $(phases.lambda). " *
+              "Input may not be a real Chebyshev polynomial."
+    end
+
+    # ── Step 5: Section 4.3 correction: φₙ += π/2 ──
+    # Puts the target polynomial in the P (|0⟩) position.
+    phi = copy(phases.phi)
+    phi[end] += π / 2
+
+    # ── Step 6: Drop φ₀ (absorbed by post-selection) ──
+    # The QSVT circuit (GSLW Definition 15) uses n phases φ₁,...,φₙ.
+    # The QSP phase φ₀ is determined by P(0) = e^{-iφ₀} (Corollary 8).
+    return phi[2:end]
+end
