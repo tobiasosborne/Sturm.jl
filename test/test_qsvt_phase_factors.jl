@@ -1,7 +1,10 @@
 using Test
 using LinearAlgebra: norm
+using FFTW: ifft, fft
 using Sturm: jacobi_anger_coeffs, chebyshev_eval,
-             complementary_polynomial
+             complementary_polynomial,
+             chebyshev_to_analytic,
+             weiss, _weiss_schwarz
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -75,6 +78,209 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
                 @test abs(abs2(Px) + abs2(Qx) - 1.0) < 1e-4
             end
         end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 2: Weiss algorithm (b → ĉ = Fourier coeffs of b/a)
+    # Ref: Laneve 2025, arXiv:2503.03026, Algorithm 1, Section 5.1.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "weiss: N size formula" begin
+        # Algorithm 1 line 1: N = nextpow2(max(⌈(8n/η)·log(576n²/(η⁴ε))⌉, 2(n+1)))
+        # We test indirectly: weiss must accept valid inputs and return
+        # correct-length output of correct type.
+        b = ComplexF64[0.0, 0.05im, 0.0]  # b(z) = 0.05i·z, n=2, tiny
+        c_hat = weiss(b, 0.9, 1e-6)
+        @test length(c_hat) == length(b)
+        @test c_hat isa Vector{ComplexF64}
+    end
+
+    @testset "weiss: trivial b=0 gives c_hat=0" begin
+        b = zeros(ComplexF64, 5)  # b(z) = 0
+        c_hat = weiss(b, 0.99, 1e-10)
+        @test length(c_hat) == 5
+        @test all(abs.(c_hat) .< 1e-10)
+    end
+
+    @testset "weiss: small b gives c_hat ≈ b (first order)" begin
+        # For small ||b||, a ≈ 1, so b/a ≈ b.
+        eps_val = 1e-4
+        b = ComplexF64[0.0, eps_val * im, 0.0, 0.0]  # b = ε·i·z
+        c_hat = weiss(b, 1.0 - eps_val, 1e-12)
+        @test length(c_hat) == 4
+        # c_hat should approximate b to O(ε³)
+        @test abs(c_hat[1]) < 1e-6   # c_hat_0 ≈ 0
+        @test abs(c_hat[2] - eps_val * im) < eps_val^2  # c_hat_1 ≈ ε·i
+        @test abs(c_hat[3]) < 1e-6   # c_hat_2 ≈ 0
+        @test abs(c_hat[4]) < 1e-6   # c_hat_3 ≈ 0
+    end
+
+    @testset "weiss: Schwarz identity Re(G*) = R on 𝕋" begin
+        # The fundamental Schwarz identity: the outer function G satisfies
+        # Re(G(z)) = R(z) on 𝕋, so Re(G*(z)) = Re(conj(G(z))) = Re(G(z)) = R.
+        # _weiss_schwarz exposes G_vals and R_vals for testing.
+        b = ComplexF64[0.0, 0.3im, 0.1, 0.0, 0.0]  # moderate b
+        R_vals, G_vals, _, _ = _weiss_schwarz(b, 0.5, 1e-10)
+        G_star_vals = conj.(G_vals)
+
+        # Re(G*) should equal R at every root of unity
+        max_err = maximum(abs.(real.(G_star_vals) .- R_vals))
+        @test max_err < 1e-10
+    end
+
+    @testset "weiss: |a|² + |b|² = 1 identity" begin
+        # a = e^{G*}, so |a|² = e^{2·Re(G*)} = e^{2R} = 1-|b|².
+        # This is the fundamental identity that Weiss relies on.
+        b = ComplexF64[0.0, 0.2 + 0.1im, 0.05im, 0.0]  # complex b
+        R_vals, G_vals, b_vals, _ = _weiss_schwarz(b, 0.6, 1e-10)
+
+        # a = exp(G*), |a|² + |b|² should be 1
+        a_vals = exp.(conj.(G_vals))
+        identity_err = maximum(abs.(abs2.(a_vals) .+ abs2.(b_vals) .- 1.0))
+        @test identity_err < 1e-10
+    end
+
+    @testset "weiss: c_hat reconstructs b from a (ĉ·a ≈ b)" begin
+        # ĉ = Fourier(b/a) truncated to degree n. Multiplying the truncated
+        # ĉ polynomial by a recovers b approximately — the approximation
+        # quality depends on how much of b/a falls outside [0, n].
+        # For moderate-norm b, error ≈ O(||b||²) from higher-order terms.
+        b = ComplexF64[0.0, 0.2im, 0.1 + 0.05im, 0.0, 0.0]  # degree 4
+        eta = 0.5
+        eps_prec = 1e-10
+        c_hat = weiss(b, eta, eps_prec)
+
+        # Recover a from Schwarz to verify reconstruction
+        R_vals, G_vals, b_vals, N = _weiss_schwarz(b, eta, eps_prec)
+        a_vals = exp.(conj.(G_vals))
+
+        # Evaluate c_hat at roots of unity
+        n = length(c_hat) - 1
+        c_padded = zeros(ComplexF64, N)
+        c_padded[1:n+1] .= c_hat
+        c_vals = ifft(c_padded) .* N
+
+        # Pointwise: c_hat(z) · a(z) ≈ b(z) (truncation error ≈ 1e-3)
+        recon_err = maximum(abs.(c_vals .* a_vals .- b_vals))
+        @test recon_err < 1e-2
+    end
+
+    @testset "weiss: output is finite and correct length" begin
+        b = ComplexF64[0.0, 0.15im, 0.08, 0.02im, 0.0, 0.0]  # degree 5
+        c_hat = weiss(b, 0.7, 1e-10)
+        @test length(c_hat) == 6
+        @test all(isfinite.(c_hat))
+    end
+
+    @testset "weiss: small b gives near-zero c_hat for zero coefficients" begin
+        # For very small ||b||, a ≈ 1, so ĉ ≈ b. Zero entries in b
+        # should map to near-zero entries in ĉ.
+        b = ComplexF64[0.0, 1e-6im, 0.0, 0.0]
+        c_hat = weiss(b, 1.0 - 1e-6, 1e-12)
+        @test abs(c_hat[1]) < 1e-10   # ĉ_0 ≈ b_0 = 0
+        @test abs(c_hat[3]) < 1e-10   # ĉ_2 ≈ b_2 = 0
+        @test abs(c_hat[4]) < 1e-10   # ĉ_3 ≈ b_3 = 0
+    end
+
+    @testset "weiss: Jacobi-Anger pipeline integration" begin
+        # Full pipeline: jacobi_anger_coeffs → chebyshev_to_analytic → b=-iP → weiss
+        # For real target P(x) ≈ e^{-ixt}, set b = -iP (Section 4.3 convention).
+        # Verify: |a|² + |b|² = 1 and ĉ is finite with correct length.
+        for (t, d) in [(0.5, 10), (1.0, 20), (2.0, 30)]
+            P_cheb = jacobi_anger_coeffs(t, d)
+            P_analytic = chebyshev_to_analytic(P_cheb)
+            b_raw = -im .* P_analytic  # b = -iP (Laneve Section 4.3)
+
+            # Estimate ||b||_∞ on 𝕋 via FFT, then downscale to create gap.
+            # chebyshev_to_analytic can push ||P_a|| above 1 on 𝕋 even
+            # when |P| ≤ 1 on [-1,1], so must check on the circle directly.
+            N_est = nextpow(2, max(1024, 4 * length(b_raw)))
+            b_pad = zeros(ComplexF64, N_est)
+            b_pad[1:length(b_raw)] .= b_raw
+            b_est = ifft(b_pad) .* N_est
+            max_b = sqrt(maximum(abs2.(b_est)))
+            scale = 0.9 / max(max_b, 1.0)  # ensure ||b_scaled||_∞ ≤ 0.9
+            b_scaled = b_raw .* scale
+            eta = 0.1  # guaranteed gap
+
+            c_hat = weiss(b_scaled, eta, 1e-8)
+
+            n_analytic = length(b_scaled) - 1
+            @test length(c_hat) == n_analytic + 1
+            @test all(isfinite.(c_hat))
+
+            # Verify fundamental identity |a|² + |b|² = 1 via Schwarz
+            R_vals, G_vals, b_vals, N = _weiss_schwarz(b_scaled, eta, 1e-8)
+            a_vals = exp.(conj.(G_vals))
+            identity_err = maximum(abs.(abs2.(a_vals) .+ abs2.(b_vals) .- 1.0))
+            @test identity_err < 1e-8
+        end
+    end
+
+    @testset "weiss: purely imaginary b from real Chebyshev P" begin
+        # For a REAL polynomial P (e.g., cos approximation: even-k Chebyshev
+        # terms), b = -iP is purely imaginary. Jacobi-Anger gives complex P
+        # (mixed cos+sin), so extract only the real-coefficient part.
+        #
+        # Real Chebyshev P: c_k real for all k.
+        # Then P_analytic is real, and b = -i·P_analytic is purely imaginary.
+        # P(x) = 0.5 - 0.2·T₂(x) + 0.05·T₄(x) → max|P|=0.75 at x=0.
+        P_cheb = ComplexF64[0.5, 0.0, -0.2, 0.0, 0.05]  # real, ||P||_∞ < 1
+        P_analytic = chebyshev_to_analytic(P_cheb)
+        @test all(abs.(imag.(P_analytic)) .< 1e-15)  # P_analytic is real
+
+        b = -im .* P_analytic .* 0.9  # downscaled, purely imaginary
+        @test all(abs.(real.(b)) .< 1e-15)  # b is purely imaginary
+
+        eta = 0.1
+        c_hat = weiss(b, eta, 1e-10)
+        @test length(c_hat) == length(b)
+        @test all(isfinite.(c_hat))
+    end
+
+    @testset "weiss: complex Jacobi-Anger b (full e^{-ixt})" begin
+        # Jacobi-Anger gives complex P (c_k = 2(-i)^k J_k(t)).
+        # b = -iP is also complex. Weiss should handle this correctly.
+        # Use scale=0.75 to create generous gap (analytic conversion can
+        # amplify norm on 𝕋 relative to [-1,1]).
+        P_cheb = jacobi_anger_coeffs(1.0, 15)
+        P_analytic = chebyshev_to_analytic(P_cheb)
+        b = -im .* P_analytic .* 0.75  # generous downscaling
+        eta = 0.25
+
+        c_hat = weiss(b, eta, 1e-10)
+        @test length(c_hat) == length(b)
+        @test all(isfinite.(c_hat))
+    end
+
+    @testset "weiss: multiple complex b polynomials" begin
+        # Test with various complex b polynomials (not just imaginary)
+        for (b, eta) in [
+            (ComplexF64[0.1 + 0.2im, 0.05 - 0.1im, 0.0], 0.6),
+            (ComplexF64[0.0, 0.0, 0.3im, 0.0, 0.0, 0.0], 0.5),
+            (ComplexF64[0.1, 0.1, 0.1, 0.1, 0.1], 0.3),
+        ]
+            c_hat = weiss(b, eta, 1e-10)
+            @test length(c_hat) == length(b)
+            @test all(isfinite.(c_hat))
+
+            # Verify |a|² + |b|² = 1
+            R_vals, G_vals, b_vals, _ = _weiss_schwarz(b, eta, 1e-10)
+            a_vals = exp.(conj.(G_vals))
+            identity_err = maximum(abs.(abs2.(a_vals) .+ abs2.(b_vals) .- 1.0))
+            @test identity_err < 1e-8
+        end
+    end
+
+    @testset "weiss: input validation (fail fast)" begin
+        # Empty b
+        @test_throws ErrorException weiss(ComplexF64[], 0.5, 1e-10)
+        # eta <= 0
+        @test_throws ErrorException weiss(ComplexF64[0.1], 0.0, 1e-10)
+        @test_throws ErrorException weiss(ComplexF64[0.1], -0.1, 1e-10)
+        # epsilon <= 0
+        @test_throws ErrorException weiss(ComplexF64[0.1], 0.5, 0.0)
+        @test_throws ErrorException weiss(ComplexF64[0.1], 0.5, -1e-10)
     end
 
 end
