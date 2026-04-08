@@ -4,6 +4,55 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-08 — Session 8: PDE paper formalization (Childs et al. 2604.05098)
+
+### Paper: Quantum Algorithms for Heterogeneous PDEs — Neutron Diffusion Eigenvalue Problem
+
+Downloaded Childs, Johnston, Kiedrowski, Vempati, Yu (arXiv:2604.05098, April 8 2026) to `docs/literature/quantum_pde/2604.05098.pdf`. Andrew Childs et al. (UMD/Michigan) present a hybrid classical-quantum algorithm for solving the neutron diffusion k-eigenvalue PDE with piecewise-constant coefficients on [0,1]^3 using uniform FEM. Main result: O(z/ε poly(log 1/ε)) gate complexity where z = number of material regions, vs classical Ω(ε^{-3π/γ}) mesh elements.
+
+### Algorithm pipeline (Figure 1)
+
+1. **Classical**: Solve coarse-grid eigenvalue problem classically → coarse eigenvector
+2. **Quantum state prep**: Interpolate coarse eigenvector onto fine grid, apply C^{1/2}
+3. **Quantum core**: QPE on block-encoded H = C^{1/2}(L+A)^{-1}C^{1/2} using quantum preconditioning (BPX preconditioner F such that F(F^T L F)^+ F^T = L^{-1} with O(1) condition number)
+4. **Measurement**: Read out eigenvalue k
+
+Key insight: the fast-inversion preconditioning technique (TAWL21) rewrites (L+A)^{-1} as (I + L^{-1}A)^{-1}L^{-1}, and the BPX preconditioner (DP25) gives L^{-1} with O(1) effective condition number, bypassing the κ = Θ(1/h²) condition number of direct inversion.
+
+### Formalization via `af` (adversarial proof framework)
+
+Initialized `af` workspace at `docs/literature/quantum_pde/formalization/` with 26 nodes decomposing the algorithm into quantum subroutines mapped against Sturm.jl capabilities.
+
+### Gap analysis: Sturm.jl subroutine readiness
+
+**EXISTS (sufficient or needs minor extension):**
+- QPE (`src/library/patterns.jl:136`) — needs extension for block-encoded operators
+- Hamiltonian simulation (`src/simulation/`) — Trotter/qDRIFT work on PauliHamiltonian, not block-encoded matrices
+- Controlled operations (`when()`) — sufficient as-is
+- Quantum arithmetic (QInt add/sub/compare) — partial; missing modular arithmetic, integer division
+
+**MISSING — must build (ordered by dependency):**
+1. **Block Encoding Framework** (P0, ~1000 LOC) — types, sparse-access construction (GSLW19 Lemma 47-48), multiplication, linear combination, tensor product. Everything depends on this.
+2. **QSVT** (P0, ~500 LOC) — matrix inversion (pseudoinverse) and square root via polynomial singular value transformation. Depends on block encoding.
+3. **Grover-Rudolph State Preparation** (P1, ~200 LOC) — arbitrary amplitude state prep from classical vector. Needed for LCU coefficients and initial state.
+4. **Sparse-Access Oracle Construction** (P1, ~400 LOC) — row/column/entry oracles for FEM matrices. Reversible classical computations with region identification.
+5. **LCU Module** (P2, ~300 LOC) — linear combination of block-encoded unitaries via state-preparation pairs.
+
+### Key physics/math from the paper
+
+- **FEM matrices**: L (diffusion, 27-point stencil, κ=O(1/h²)), A (absorption, mass-type, κ=O(1)), C (fission, block-diagonal with zero+nonzero blocks, κ=O(1) on nonzero block). All sparse with ≤27 nonzeros/row.
+- **BPX preconditioner**: F^d_L = Σ 2^{-l(2-d)/2} I''_{l→L} where I_{l→l+1} is multigrid interpolation. Spectral norm O((1/h)^{d/2}). Block encoding via O(L) interpolation operator BEs combined with LCU.
+- **Convergence rate**: eigenvalue error |λ - λ_h| = O(h^{γ/π}) where γ = √(D_min/D_max). For checkerboard with D_max=100, γ/π ≈ 0.032 → classical needs N = Ω(ε^{-31}) mesh elements! Quantum: O(1/ε).
+- **Interpolation operator**: 1D I_{l→l+1} is a (2n_{l+1}) × n_l matrix with entries {0, 1/2, 1}. Block encoding factor √2 per level, 2^{d(L-l)/2} for l→L.
+
+### Gotchas
+
+- **Block encodings are NOT unitaries.** A block encoding U is a unitary that encodes matrix A in its top-left block: A = α⟨0|^⊗q U |0⟩^⊗q. The Sturm.jl channel IR (DAG with non-unitary nodes) could represent block encodings naturally — the ancilla qubits are prepared in |0⟩ and post-selected.
+- **QSVT is a meta-algorithm, not a single circuit.** It requires classical preprocessing (computing phase angles Φ from a target polynomial P) and then constructs a circuit of alternating signal/processing operators. The phase angle computation is itself nontrivial (optimization or Remez algorithm).
+- **The paper uses GSLW19 extensively** — at least Lemmas 20, 22, 41, 47, 48 and Theorems 41, 56. Should download GSLW19 to `docs/literature/` if not already there.
+
+---
+
 ## 2026-04-07 — Session 7: Simulation refactors + qDRIFT + Composite
 
 ### Simulation refactors (4 issues, all closed)
