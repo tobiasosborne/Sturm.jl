@@ -602,4 +602,82 @@ end
         end
     end
 
+    # ─────────────────────────────────────────────────────────────────────
+    # 8. Block encoding product (GSLW19 Lemma 30)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "BE product: alpha and ancilla count" begin
+        H_a = hamiltonian(pauli_term(0.7, :X), pauli_term(0.3, :Z))
+        H_b = hamiltonian(pauli_term(0.5, :Y), pauli_term(0.5, :Z))
+        be_a = block_encode_lcu(H_a)
+        be_b = block_encode_lcu(H_b)
+        be_ab = be_a * be_b
+
+        @test be_ab.alpha ≈ be_a.alpha * be_b.alpha
+        @test be_ab.n_ancilla == be_a.n_ancilla + be_b.n_ancilla
+        @test be_ab.n_system == 1
+    end
+
+    @testset "BE product: encodes AB in ancilla=|0⟩ subspace" begin
+        H_a = hamiltonian(pauli_term(0.7, :X), pauli_term(0.3, :Z))
+        H_b = hamiltonian(pauli_term(0.5, :Y), pauli_term(0.5, :Z))
+        be_a = block_encode_lcu(H_a)
+        be_b = block_encode_lcu(H_b)
+        be_ab = be_a * be_b
+
+        A_mat = _pauli_matrix(H_a) / lambda(H_a)
+        B_mat = _pauli_matrix(H_b) / lambda(H_b)
+        AB_expected = A_mat * B_mat
+
+        N = 1
+        a_total = be_ab.n_ancilla
+
+        ctx = EagerContext()
+        @context ctx begin
+            ancillas = [QBool(0) for _ in 1:a_total]
+            system = [QBool(0) for _ in 1:N]
+
+            be_ab.oracle!(ancillas, system)
+
+            sys_dim = 1 << N
+            projected = zeros(ComplexF64, sys_dim)
+            for s in 0:sys_dim-1
+                full_idx = 0 + (s << a_total)  # ancilla = |0...0⟩
+                projected[s + 1] = _amp(ctx, full_idx)
+            end
+
+            input_vec = zeros(ComplexF64, sys_dim)
+            input_vec[1] = 1.0  # |0⟩
+            expected = AB_expected * input_vec
+
+            @test _proportional(projected, expected, tol=1e-6)
+
+            for q in ancillas; discard!(q); end
+            for q in system; discard!(q); end
+        end
+    end
+
+    @testset "BE product: adjoint roundtrip" begin
+        H_a = hamiltonian(pauli_term(0.7, :X), pauli_term(0.3, :Z))
+        H_b = hamiltonian(pauli_term(0.5, :Y), pauli_term(0.5, :Z))
+        be_ab = block_encode_lcu(H_a) * block_encode_lcu(H_b)
+
+        a_total = be_ab.n_ancilla
+        ctx = EagerContext()
+        @context ctx begin
+            ancillas = [QBool(0) for _ in 1:a_total]
+            system = [QBool(0)]
+
+            be_ab.oracle!(ancillas, system)
+            be_ab.oracle_adj!(ancillas, system)
+
+            # Should restore to initial state
+            total = a_total + 1
+            @test abs2(_amp(ctx, 0)) > 1.0 - 1e-6
+
+            for q in ancillas; discard!(q); end
+            for q in system; discard!(q); end
+        end
+    end
+
 end
