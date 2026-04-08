@@ -53,6 +53,70 @@ function jacobi_anger_coeffs(t::Real, d::Int)
 end
 
 """
+    jacobi_anger_cos_coeffs(t::Real, d::Int) -> Vector{Float64}
+
+Compute REAL Chebyshev coefficients for the degree-d approximation to cos(xt).
+
+The even part of the Jacobi-Anger expansion:
+  cos(xt) = J₀(t) + 2Σ_{k=1}^{⌊d/2⌋} (-1)^k J_{2k}(t) T_{2k}(x)
+
+Returns a vector of length d+1 where odd-indexed coefficients are zero.
+The result satisfies |P(x)| ≤ 1 for x ∈ [-1, 1] and P has even parity.
+
+Ref: Martyn et al. (2021), arXiv:2105.02859, Eq. (29)-(30).
+     GSLW (2019), arXiv:1806.01838, Corollary 62.
+"""
+function jacobi_anger_cos_coeffs(t::Real, d::Int)
+    d >= 0 || error("jacobi_anger_cos_coeffs: degree must be ≥ 0, got $d")
+    tf = Float64(t)
+    coeffs = zeros(Float64, d + 1)
+    coeffs[1] = besselj(0, tf)  # c₀ = J₀(t)
+    for k in 1:d÷2
+        # (-i)^{2k} = (-1)^k, so Re[2(-i)^{2k} J_{2k}(t)] = 2(-1)^k J_{2k}(t)
+        idx = 2k + 1  # Julia 1-indexed
+        if idx <= d + 1
+            coeffs[idx] = 2.0 * (-1)^k * besselj(2k, tf)
+        end
+    end
+    return coeffs
+end
+
+"""
+    jacobi_anger_sin_coeffs(t::Real, d::Int) -> Vector{Float64}
+
+Compute REAL Chebyshev coefficients for the degree-d approximation to -sin(xt).
+
+The odd part of the Jacobi-Anger expansion:
+  -sin(xt) = 2Σ_{k=0}^{⌊(d-1)/2⌋} (-1)^{k+1} J_{2k+1}(t) T_{2k+1}(x)
+
+Returns a vector of length d+1 where even-indexed coefficients are zero.
+The result satisfies |P(x)| ≤ 1 for x ∈ [-1, 1] and P has odd parity.
+
+Ref: Martyn et al. (2021), arXiv:2105.02859, Eq. (29)-(30).
+"""
+function jacobi_anger_sin_coeffs(t::Real, d::Int)
+    d >= 1 || error("jacobi_anger_sin_coeffs: degree must be ≥ 1, got $d")
+    tf = Float64(t)
+    coeffs = zeros(Float64, d + 1)
+    for k in 0:(d-1)÷2
+        # (-i)^{2k+1} = (-1)^k · (-i), so Im[2(-i)^{2k+1} J_{2k+1}(t)] = -2(-1)^k J_{2k+1}(t)
+        # We want -sin(xt), so coefficient is -2(-1)^k J_{2k+1}(t) ... wait:
+        # e^{-ixt} = cos(xt) - i·sin(xt)
+        # The full Jacobi-Anger: c_k = 2(-i)^k J_k(t) for k ≥ 1
+        # For odd k=2m+1: c_{2m+1} = 2(-i)^{2m+1} J_{2m+1}(t) = 2(-1)^m·(-i)·J_{2m+1}(t)
+        # This is purely imaginary. The imaginary part is Im(c_{2m+1}) = -2(-1)^m J_{2m+1}(t)
+        # Since e^{-ixt} = Re(e^{-ixt}) + i·Im(e^{-ixt}) = cos(xt) - i·sin(xt),
+        # and the odd Chebyshev terms contribute to -i·sin(xt),
+        # we have: -sin(xt) = Σ Im(c_{2m+1}) T_{2m+1}(x) = -2Σ(-1)^m J_{2m+1}(t) T_{2m+1}(x)
+        idx = 2k + 2  # Julia 1-indexed for T_{2k+1}
+        if idx <= d + 1
+            coeffs[idx] = -2.0 * (-1)^k * besselj(2k + 1, tf)
+        end
+    end
+    return coeffs
+end
+
+"""
     chebyshev_eval(coeffs::Vector{ComplexF64}, x::Real) -> ComplexF64
 
 Evaluate a Chebyshev expansion P(x) = Σ_{k=0}^d cₖ Tₖ(x) using
