@@ -47,14 +47,29 @@ The Fourier coefficient ĉ_0 = (1/2π) ∫_𝕋 b(z)/a(z) dz. Even when b(0) = 0
 - **Still open:** 6e3 (parent Weiss issue — closing after full test suite passes)
 - **New test count this session:** 46 (77 total in test_qsvt_phase_factors.jl)
 
+### RHW factorization — COMPLETE (20 new tests, 111 total in test_qsvt_phase_factors.jl)
+
+**Implemented Algorithm 2 from Laneve 2025 (Section 5.2, p.12-13).** Given Weiss output ĉ and original polynomial b, computes NLFT sequence F_0,...,F_n via n+1 Toeplitz system solves.
+
+**Files modified:**
+- `src/qsvt/phase_factors.jl`: Added `rhw_factorize()`
+- `test/test_qsvt_phase_factors.jl`: 7 new test sets (20 tests)
+
+**Implementation:**
+- Calls `_weiss_schwarz` internally to get full ĉ[0..2n] (not just [0..n])
+- For each k: builds (n-k+1)×(n-k+1) Toeplitz T_k from ĉ, forms 2m×2m block system [𝟙,-T_kᵀ;T_k*,𝟙], solves via dense `\`, extracts F_k = b_{k,0}/a_{k,0}
+- Dense O(n³) — Half-Cholesky O(n²) deferred
+
+**Key test: b=αz closed-form.** For b(z) = αz (degree-1 monomial), the NLFT sequence is exactly F_0=0, F_1=α/√(1-|α|²). Test passes to 1e-6.
+
+**NLFT roundtrip verified.** Forward NLFT: G_F(z) = Π 1/√(1+|F_k|²)[1,F_k z^k;-F̄_k z^{-k},1]. The (1,2) entry matches b(z) to 1e-4 at 5 test points on 𝕋. Jacobi-Anger pipeline roundtrip passes for (t=0.5,d=8) and (t=1.0,d=12).
+
 ### What the next session should do
 
-1. **Close Sturm.jl-6e3** (Weiss parent) once full test suite confirmed
-2. **Implement RHW factorization** (Sturm.jl-mxr) — ĉ → F_k via Toeplitz system solve
-3. **Implement phase extraction** (Sturm.jl-27n) — F_k → (λ, φ_k, θ_k)
-4. **Implement qsvt! core circuit** (Sturm.jl-897)
-5. **Implement evolve! integration** (Sturm.jl-x3m)
-6. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
+1. **Implement phase extraction** (Sturm.jl-27n) — F_k → (λ, φ_k, θ_k) via Theorem 9 Eq (4)
+2. **Implement qsvt! core circuit** (Sturm.jl-897)
+3. **Implement evolve! integration** (Sturm.jl-x3m)
+4. **End-to-end test** (Sturm.jl-4wh) — QSVT vs exact exp(-iHt) on 2-qubit Ising
 
 ---
 

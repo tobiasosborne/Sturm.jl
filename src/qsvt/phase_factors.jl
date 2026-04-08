@@ -322,3 +322,115 @@ function weiss(b::Vector{ComplexF64}, eta::Float64, epsilon::Float64)
 
     return c_hat
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 3: RHW factorization (ĉ → F_k, the NLFT sequence)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    rhw_factorize(b::Vector{ComplexF64}, eta::Float64, epsilon::Float64) -> Vector{ComplexF64}
+
+Generalized Riemann-Hilbert-Weiss algorithm: compute the NLFT sequence F_k
+from polynomial b(z), such that the NLFT of F maps to (·, b).
+
+Internally calls the Weiss algorithm (Step 2) to get Fourier coefficients ĉ
+of b/a, then solves n+1 structured Toeplitz systems to extract F_0,...,F_n.
+
+At each step k, forms the (n-k+1)×(n-k+1) Toeplitz matrix T_k from ĉ, then
+solves the 2(n-k+1)×2(n-k+1) block system:
+
+    [𝟙   -T_kᵀ ] [b_k    ]   [ 0      ]
+    [T_k*   𝟙  ] [rev(a_k)] = [rev(e_0)]
+
+and extracts F_k = b_{k,0} / a_{k,0}.
+
+Current implementation: dense O(n³) solve. Half-Cholesky O(n²) deferred.
+
+# Arguments
+- `b`: Monomial coefficients [b_0, ..., b_n] of polynomial b(z)
+- `eta`: Gap parameter, ||b||_∞ ≤ 1-η on 𝕋 (η > 0)
+- `epsilon`: Target precision (ε > 0)
+
+# Returns
+Vector{ComplexF64} of length n+1: NLFT sequence [F_0, ..., F_n].
+
+# Ref
+Laneve (2025), arXiv:2503.03026, Algorithm 2, Section 5.2 p.12-13.
+Alexis et al. (2024), arXiv:2407.05634, [30] (original RHW algorithm).
+Ni, Ying (2024), arXiv:2410.06409, [31] (Half-Cholesky acceleration).
+"""
+function rhw_factorize(b::Vector{ComplexF64}, eta::Float64, epsilon::Float64)
+    n = length(b) - 1
+    n >= 0 || error("rhw_factorize: b must have at least 1 coefficient, got $(length(b))")
+    eta > 0 || error("rhw_factorize: eta must be positive, got $eta")
+    epsilon > 0 || error("rhw_factorize: epsilon must be positive, got $epsilon")
+
+    @debug "rhw_factorize: n=$n, η=$eta, ε=$epsilon"
+
+    # ── Step 1: Weiss algorithm → full ĉ sequence ──
+    # Need ĉ_0 through ĉ_{2n} for the Toeplitz matrices.
+    # Use _weiss_schwarz + FFT to get the full coefficient array.
+    R_vals, G_vals, b_vals, N = _weiss_schwarz(b, eta, epsilon)
+    G_star_vals = conj.(G_vals)
+    c_vals = b_vals .* exp.(-G_star_vals)
+    c_hat_full = fft(c_vals) ./ N
+
+    # Extract ĉ[0..2n] (Julia indices 1..2n+1), zero-pad if needed
+    n_need = 2 * n + 1
+    if N >= n_need
+        c_hat = c_hat_full[1:n_need]
+    else
+        c_hat = [c_hat_full[1:N]; zeros(ComplexF64, n_need - N)]
+    end
+
+    @debug "rhw_factorize: N=$N, extracted $(length(c_hat)) ĉ coefficients"
+
+    # ── Step 2: Solve Toeplitz systems for each k ──
+    F = Vector{ComplexF64}(undef, n + 1)
+
+    for k in 0:n
+        m = n - k + 1  # system block size
+
+        # Build Toeplitz T_k (m × m): T_k[i,j] = c_{n-(i-j)}
+        # 0-indexed i,j ∈ {0,...,m-1}. In Julia 1-indexed:
+        # T_k[i,j] = c_hat[n + 1 - (i - j)]  (1-indexed into c_hat)
+        T_k = zeros(ComplexF64, m, m)
+        for i in 1:m, j in 1:m
+            idx = n + 1 - (i - j)  # 1-indexed into c_hat
+            if 1 <= idx <= length(c_hat)
+                T_k[i, j] = c_hat[idx]
+            end
+        end
+
+        # Build 2m × 2m block system:
+        # [I, -T_kᵀ; T_k*, I] x = [0; rev(e_0)]
+        A = zeros(ComplexF64, 2m, 2m)
+        for i in 1:m; A[i, i] = 1.0; end          # upper-left: I
+        A[1:m, m+1:2m] .= -transpose(T_k)          # upper-right: -T_kᵀ
+        A[m+1:2m, 1:m] .= conj.(T_k)               # lower-left: T_k*
+        for i in 1:m; A[m+i, m+i] = 1.0; end       # lower-right: I
+
+        # RHS: [0; rev(e_0)] where rev(e_0) = [0,...,0,1]
+        rhs = zeros(ComplexF64, 2m)
+        rhs[2m] = 1.0
+
+        # Solve
+        x = A \ rhs
+
+        # Extract F_k = b_{k,0} / a_{k,0}
+        # x[1:m] = b_k, x[m+1:2m] = rev(a_k)
+        # b_{k,0} = x[1], a_{k,0} = rev(a_k)[end] = x[2m]
+        b_k0 = x[1]
+        a_k0 = x[2m]
+
+        if abs(a_k0) < 1e-15
+            error("rhw_factorize: a_{k,0} ≈ 0 at k=$k (system degenerate)")
+        end
+
+        F[k+1] = b_k0 / a_k0
+
+        @debug "rhw_factorize: k=$k, F_k=$(F[k+1]), |F_k|=$(abs(F[k+1]))"
+    end
+
+    return F
+end

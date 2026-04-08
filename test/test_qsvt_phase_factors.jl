@@ -4,7 +4,8 @@ using FFTW: ifft, fft
 using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              complementary_polynomial,
              chebyshev_to_analytic,
-             weiss, _weiss_schwarz
+             weiss, _weiss_schwarz,
+             rhw_factorize
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -281,6 +282,116 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         # epsilon <= 0
         @test_throws ErrorException weiss(ComplexF64[0.1], 0.5, 0.0)
         @test_throws ErrorException weiss(ComplexF64[0.1], 0.5, -1e-10)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 3: RHW factorization (ĉ → F_k, the NLFT sequence)
+    # Ref: Laneve 2025, arXiv:2503.03026, Algorithm 2, Section 5.2.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "rhw: trivial b=0 gives F_k=0" begin
+        b = zeros(ComplexF64, 4)
+        F = rhw_factorize(b, 0.99, 1e-10)
+        @test length(F) == 4
+        @test all(abs.(F) .< 1e-10)
+    end
+
+    @testset "rhw: b=αz gives F_0=0, F_1=α/√(1-|α|²)" begin
+        # Exact closed form: for b(z) = αz (degree 1 monomial),
+        # F_0 = 0, F_1 = α/√(1-|α|²).
+        # Ref: NLFT Definition 3 + manual computation.
+        α = 0.3im
+        b = ComplexF64[0.0, α]
+        eta = 1.0 - abs(α) - 0.01  # gap
+        F = rhw_factorize(b, eta, 1e-10)
+
+        @test length(F) == 2
+        expected_F1 = α / sqrt(1 - abs2(α))
+        @test abs(F[1]) < 1e-6          # F_0 ≈ 0
+        @test abs(F[2] - expected_F1) < 1e-6  # F_1 ≈ α/√(1-|α|²)
+    end
+
+    @testset "rhw: NLFT roundtrip (F_k → b(z))" begin
+        # Compute forward NLFT of F, verify (1,2) entry ≈ b(z) at test points.
+        # Forward NLFT: G_F(z) = Π_k 1/√(1+|F_k|²) [1, F_k z^k; -F̄_k z^{-k}, 1]
+        # The (1,2) entry of G_F(z) should equal b(z).
+        b = ComplexF64[0.0, 0.2im, 0.1, 0.0]  # degree 3
+        F = rhw_factorize(b, 0.5, 1e-10)
+        @test length(F) == 4
+
+        # Forward NLFT at test points on 𝕋
+        for θ in [0.0, π/4, π/2, π, 3π/2]
+            z = exp(im * θ)
+            # Accumulate product G_F(z)
+            G = ComplexF64[1 0; 0 1]
+            for k in 0:length(F)-1
+                Fk = F[k+1]
+                zk = z^k
+                s = 1.0 / sqrt(1.0 + abs2(Fk))
+                Ak = s .* ComplexF64[1 Fk*zk; -conj(Fk)/zk 1]
+                G = G * Ak
+            end
+            # (1,2) entry should ≈ b(z)
+            bz = sum(b[j+1] * z^j for j in 0:length(b)-1)
+            @test abs(G[1,2] - bz) < 1e-4
+        end
+    end
+
+    @testset "rhw: Jacobi-Anger pipeline → F_k → NLFT roundtrip" begin
+        # Full pipeline: Jacobi-Anger → analytic → b=-iP → RHW → F_k → NLFT → b'
+        for (t, d) in [(0.5, 8), (1.0, 12)]
+            P_cheb = jacobi_anger_coeffs(t, d)
+            P_analytic = chebyshev_to_analytic(P_cheb)
+            b_raw = -im .* P_analytic
+
+            # Downscale: estimate ||b||_∞ on 𝕋, then create gap
+            N_est = nextpow(2, max(1024, 4 * length(b_raw)))
+            bp = zeros(ComplexF64, N_est)
+            bp[1:length(b_raw)] .= b_raw
+            bv = ifft(bp) .* N_est
+            max_b = sqrt(maximum(abs2.(bv)))
+            scale = 0.85 / max(max_b, 1.0)
+            b_scaled = b_raw .* scale
+            eta = 0.15
+
+            F = rhw_factorize(b_scaled, eta, 1e-8)
+            @test length(F) == length(b_scaled)
+            @test all(isfinite.(F))
+
+            # NLFT roundtrip at 5 points on 𝕋
+            n_b = length(b_scaled) - 1
+            for θ in [0.0, π/3, π/2, π, 5π/3]
+                z = exp(im * θ)
+                G = ComplexF64[1 0; 0 1]
+                for k in 0:n_b
+                    Fk = F[k+1]
+                    zk = z^k
+                    s = 1.0 / sqrt(1.0 + abs2(Fk))
+                    Ak = s .* ComplexF64[1 Fk*zk; -conj(Fk)/zk 1]
+                    G = G * Ak
+                end
+                bz = sum(b_scaled[j+1] * z^j for j in 0:n_b)
+                @test abs(G[1,2] - bz) < 1e-3
+            end
+        end
+    end
+
+    @testset "rhw: multiple small polynomials" begin
+        for (b, eta) in [
+            (ComplexF64[0.1im, 0.05, 0.0], 0.8),
+            (ComplexF64[0.0, 0.0, 0.2im], 0.7),
+            (ComplexF64[0.05, 0.05, 0.05, 0.05], 0.5),
+        ]
+            F = rhw_factorize(b, eta, 1e-10)
+            @test length(F) == length(b)
+            @test all(isfinite.(F))
+        end
+    end
+
+    @testset "rhw: input validation" begin
+        @test_throws ErrorException rhw_factorize(ComplexF64[], 0.5, 1e-10)
+        @test_throws ErrorException rhw_factorize(ComplexF64[0.1], 0.0, 1e-10)
+        @test_throws ErrorException rhw_factorize(ComplexF64[0.1], 0.5, 0.0)
     end
 
 end
