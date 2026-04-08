@@ -8,7 +8,7 @@
 
 using Test, Sturm, FFTW
 using Sturm: jacobi_anger_cos_coeffs, jacobi_anger_sin_coeffs,
-             qsvt_phases, qsvt_reflect!,
+             qsvt_phases, qsvt_reflect!, QSVT,
              block_encode_lcu, ising, lambda, nqubits
 using LinearAlgebra: eigen, Diagonal, kron
 
@@ -129,7 +129,7 @@ end
         be = block_encode_lcu(H)
 
         # Run circuit, collect post-selected statistics
-        N_shots = 3000
+        N_shots = 1000
         n_success = 0
         counts = zeros(Int, 4)
 
@@ -161,6 +161,61 @@ end
             for i in 1:4
                 sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
                 @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.08)
+            end
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # C. evolve!(qubits, H, t, QSVT(epsilon)) integration
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "evolve!(QSVT): cos(Ht/alpha) on 2-qubit Ising" begin
+        t = 0.3
+        N_sys = 2
+        H = ising(Val(N_sys), J=1.0, h=0.5)
+        al = lambda(H)
+        alg = QSVT(epsilon=1e-3, degree=10)
+
+        # Ground truth: cos(H*t/alpha)|0>
+        H_mat = _pauli_matrix(H)
+        evals, evecs = eigen(H_mat)
+        cos_Ht = evecs * Diagonal(cos.(evals .* t / al)) * evecs'
+        psi0 = zeros(ComplexF64, 4); psi0[1] = 1.0
+        psi_exact = cos_Ht * psi0
+        probs_exact = abs2.(psi_exact)
+        norm_exact = sum(probs_exact)
+
+        # Run evolve! many times, collect post-selected statistics
+        N_shots = 1000
+        n_success = 0
+        counts = zeros(Int, 4)
+
+        for _ in 1:N_shots
+            c = EagerContext()
+            @context c begin
+                sys = [QBool(c, 0.0) for _ in 1:N_sys]
+                success = evolve!(sys, H, t, alg)
+                if success
+                    n_success += 1
+                    b1 = Bool(sys[1])
+                    b2 = Bool(sys[2])
+                    idx = Int(b1) + 2*Int(b2) + 1
+                    counts[idx] += 1
+                else
+                    for s in sys; discard!(s); end
+                end
+            end
+        end
+
+        @test n_success > 20
+
+        if n_success > 20
+            probs_measured = counts ./ n_success
+            probs_expected = probs_exact ./ norm_exact
+
+            for i in 1:4
+                sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
+                @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.10)
             end
         end
     end

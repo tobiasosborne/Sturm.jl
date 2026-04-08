@@ -432,3 +432,70 @@ function qsvt_phases(cheb_real::Vector{Float64}; epsilon::Float64=1e-10)
     # The QSP phase φ₀ is determined by P(0) = e^{-iφ₀} (Corollary 8).
     return phi[2:end]
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# evolve! integration: Hamiltonian simulation via QSVT
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    evolve!(qubits::Vector{QBool}, H::PauliHamiltonian, t::Real, alg::QSVT)
+
+Hamiltonian simulation via QSVT: apply cos(H·t/α) to the system state,
+where α = λ(H) is the block encoding normalization factor.
+
+Uses the canonical pipeline:
+1. Jacobi-Anger cos polynomial of degree d (GSLW Lemma 57)
+2. BS completion + NLFT inverse → Z-constrained QSVT phases (Laneve §4.3)
+3. LCU block encoding of H (Berry et al. 2015)
+4. Reflection QSVT circuit (GSLW Definition 15)
+5. Post-select ancilla on |0⟩
+
+Returns `true` if post-selection succeeded (system is in cos(Ht/α)|ψ⟩,
+unnormalized). Returns `false` if post-selection failed (system state
+is garbage — discard and retry).
+
+**Limitation:** This implements cos(Ht/α), not the full e^{-iHt}. The
+full unitary requires combining cos + i·sin via LCU and oblivious
+amplitude amplification (GSLW Theorem 58). This is a future extension.
+
+# Arguments
+- `qubits`: system qubits (state |ψ⟩ to evolve)
+- `H`: Pauli Hamiltonian
+- `t`: simulation time
+- `alg`: QSVT algorithm parameters (epsilon, optional degree)
+
+# Ref
+GSLW (2019), arXiv:1806.01838, Theorem 56-58, Lemma 57.
+Laneve (2025), arXiv:2503.03026, §2.1, §4.3.
+Berntson, Sünderhauf (2025), CMP 406:161.
+"""
+function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian,
+                  t::Real, alg::QSVT)
+    N = length(qubits)
+    N == nqubits(H) || error(
+        "evolve!(QSVT): Hamiltonian has $(nqubits(H)) qubits, got $N")
+    t_f = Float64(t)
+    eps = alg.epsilon
+
+    # ── Step 1: Polynomial degree ──
+    if alg.degree !== nothing
+        d = alg.degree
+    else
+        # GSLW Lemma 57: R = ⌊r(e|t|/2, 5ε/3)/2⌋ where r(t,ε) ~ t + ln(1/ε)/...
+        # Heuristic: d ≈ |t| + 1.5·log₁₀(1/ε), round up to even (cos = even poly)
+        d = max(2, ceil(Int, abs(t_f) + 1.5 / log(10) * log(1 / eps)))
+        iseven(d) || (d += 1)  # cos polynomial needs even degree
+    end
+
+    # ── Step 2: Jacobi-Anger cos polynomial (real, even parity) ──
+    cos_coeffs = jacobi_anger_cos_coeffs(t_f, d)
+
+    # ── Step 3: QSVT phases via BS + NLFT pipeline ──
+    phases = qsvt_phases(cos_coeffs; epsilon=eps)
+
+    # ── Step 4: LCU block encoding of H ──
+    be = block_encode_lcu(H)
+
+    # ── Step 5: Reflection QSVT circuit ──
+    return qsvt_reflect!(qubits, be, phases)
+end
