@@ -58,6 +58,7 @@ include("block_encoding/types.jl")
 include("block_encoding/prepare.jl")
 include("block_encoding/select.jl")
 include("block_encoding/lcu.jl")
+include("block_encoding/algebra.jl")
 
 # QSVT (quantum singular value transformation)
 include("qsvt/conventions.jl")

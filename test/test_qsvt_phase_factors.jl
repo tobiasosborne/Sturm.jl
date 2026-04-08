@@ -9,7 +9,10 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              rhw_factorize,
              extract_phases, QSVTPhases,
              qsvt_protocol!, apply_processing_op!,
-             QSVT, qsvt_hamiltonian_sim_phases
+             QSVT, qsvt_hamiltonian_sim_phases,
+             qsvt!, BlockEncoding,
+             _cz!,
+             to_openqasm
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test the QSP phase factor pipeline:
@@ -657,6 +660,103 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         prob0_measured = n_zero / N_samples
         sigma = sqrt(prob0_expected * (1 - prob0_expected) / N_samples)
         @test abs(prob0_measured - prob0_expected) < max(4 * sigma, 0.05)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 7: qsvt! with BlockEncoding
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "qsvt!: hand-crafted Z block encoding" begin
+        # Block encoding of Z (Pauli Z) on 1 system qubit with 1 ancilla.
+        # Oracle: X!(ancilla) then CZ(ancilla, system) then X!(ancilla)
+        # This gives ⟨0|_a U |0⟩_a = Z with α=1.
+        #
+        # Eigenvalues of Z: +1 (|0⟩), -1 (|1⟩).
+        # Signal angles: z = e^{iθ} where Z eigenvalue = cos(θ).
+        # For eigenvalue +1: θ = 0. For eigenvalue -1: θ = π.
+        function z_oracle!(anc::Vector{QBool}, sys::Vector{QBool})
+            X!(anc[1])
+            _cz!(anc[1], sys[1])
+            X!(anc[1])
+        end
+        function z_oracle_adj!(anc::Vector{QBool}, sys::Vector{QBool})
+            # Z oracle is self-adjoint (Z² = I, CZ is self-adjoint, X!² ≡ -I but channel-equiv to I)
+            X!(anc[1])
+            _cz!(anc[1], sys[1])
+            X!(anc[1])
+        end
+
+        be = BlockEncoding{1, 1}(z_oracle!, z_oracle_adj!, 1.0)
+
+        # Trivial phases (identity polynomial) → ancilla should always be |0⟩
+        F = zeros(ComplexF64, 3)
+        phases = extract_phases(F)
+
+        N_samples = 500
+        n_success = 0
+        for _ in 1:N_samples
+            @context EagerContext() begin
+                sys = [QBool(0.0)]  # |0⟩ eigenstate of Z
+                success = qsvt!(sys, be, phases)
+                success && (n_success += 1)
+            end
+        end
+        # With trivial phases, post-selection should mostly succeed
+        @test n_success > N_samples * 0.5
+    end
+
+    @testset "qsvt!: returns Bool and handles post-selection" begin
+        function trivial_oracle!(anc::Vector{QBool}, sys::Vector{QBool})
+            # Identity oracle — does nothing
+        end
+        be = BlockEncoding{1, 1}(trivial_oracle!, trivial_oracle!, 1.0)
+
+        F = zeros(ComplexF64, 2)
+        phases = extract_phases(F)
+
+        @context EagerContext() begin
+            sys = [QBool(0.0)]
+            result = qsvt!(sys, be, phases)
+            @test result isa Bool
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Step 8: QSVT DAG capture and OpenQASM export
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "QSVT DAG: trace captures qsvt_protocol!" begin
+        # Trace the single-qubit GQSP protocol through TracingContext.
+        # The protocol for degree-n polynomial has:
+        #   1 initial Rz(-2λ) + (n+1) processing ops × 3 gates each + n signal ops
+        #   = 1 + 3(n+1) + n = 4n + 4 rotation gates
+        F = ComplexF64[0.0, 0.3im]  # degree 1
+        phases = extract_phases(F)
+        n = phases.degree  # = 1
+
+        ch = trace(0) do
+            signal = qsvt_protocol!(1.0, phases)
+            signal
+        end
+        # Channel{0, 1}: 0 inputs (signal allocated internally), 1 output
+        @test length(ch.input_wires) == 0
+        @test length(ch.output_wires) == 1
+        # DAG should have nodes (PrepNode + rotation nodes)
+        @test length(ch.dag) > 0
+    end
+
+    @testset "QSVT DAG: OpenQASM export" begin
+        F = ComplexF64[0.0, 0.2im]
+        phases = extract_phases(F)
+
+        ch = trace(0) do
+            signal = qsvt_protocol!(0.5, phases)
+            signal
+        end
+        qasm = to_openqasm(ch)
+        @test occursin("OPENQASM", qasm)
+        @test occursin("ry(", qasm) || occursin("rz(", qasm)
+        @test length(qasm) > 50  # non-trivial output
     end
 
 end

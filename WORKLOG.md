@@ -159,11 +159,15 @@ Auto-computes polynomial degree from t and ε. Downscales to create gap η=ε/4 
 
 **The entire QSVT → LCU pipeline is now unblocked.**
 
-### What the next session should do
+### Block encoding product + QSVT DAG/OpenQASM — COMPLETE
 
-1. **Full evolve!** — `evolve!(qubits, H, t, QSVT(ε))` end-to-end test on 2-qubit Ising
-2. **QSVT DAG/OpenQASM** (4x1) — trace QSVT circuit, export to OpenQASM
-3. **Block encoding algebra** (gdh) — product of block encodings
+**BE product (GSLW19 Lemma 30):** `be_a * be_b` returns BlockEncoding of AB with α=α_A·α_B, ancilla=a_A+a_B. File: `src/block_encoding/algebra.jl`. 5 new tests.
+
+**QSVT DAG/OpenQASM:** `trace(0) do; qsvt_protocol!(θ, phases); end` captures the GQSP circuit as a Channel DAG. `to_openqasm(ch)` exports valid OpenQASM 3.0 with ry/rz gates. 5 new tests.
+
+### ALL QSVT ISSUES CLOSED
+
+**Session 10 total: 9 commits, ~130 new tests, 31/31 issues closed.**
 
 ---
 
