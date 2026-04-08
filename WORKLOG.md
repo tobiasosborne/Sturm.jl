@@ -18,59 +18,106 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 - Also downloaded: Motlagh GQSP (2308.01501), Alexis et al. NLFA (2407.05634), Ni-Ying fast RHW (2410.06409), Yamamoto-Yoshioka (2402.03016), Ni et al. fast inverse NLFT (2505.12615), Sünderhauf generalized QSVT (2312.00723)
 - Updated `qsp_qsvt/survey.md`: MOTLAGH-24 marked ⚠ DEPRECATED, BERNTSON-SUNDERHAUF-25 and LANEVE-25 marked ⚠ CANONICAL, all superseded-by chains updated, implementation roadmap rewritten
 
-### Block Encoding Phase 1 (in progress)
+### Block Encoding Phase 1 — COMPLETE (48 tests)
 
-**Created 14 beads issues** for the full Tier 0 plan (block encoding + QSVT). BD dependency system broken (missing table from prior DB wipe), but issues themselves are solid.
+**Created 18 beads issues** for the full Tier 0 plan (block encoding + QSVT). BD dependency system broken (missing wisp_dependencies table from prior DB wipe). Dependencies documented in issue descriptions only.
 
 **Files created:**
 ```
 src/block_encoding/
-    types.jl      # BlockEncoding{N,A} struct — DONE, tested
-    prepare.jl    # PREPARE oracle (rotation tree) — DONE, tested (3 testsets pass)
-    select.jl     # SELECT oracle — IN PROGRESS, has the Session 8 bug
-    lcu.jl        # LCU assembly — IN PROGRESS, blocked on SELECT
+    types.jl      # BlockEncoding{N,A} struct
+    prepare.jl    # PREPARE oracle (binary rotation tree)
+    select.jl     # SELECT oracle (via _pauli_exp!, Toffoli cascade)
+    lcu.jl        # LCU assembly: PREPARE†·SELECT·PREPARE
+src/qsvt/
+    conventions.jl   # QSVTPhases struct, processing operator decomposition
+    polynomials.jl   # Jacobi-Anger Chebyshev approximation, Clenshaw eval
+    phase_factors.jl # Berntson-Sunderhauf completion (Chebyshev→analytic→BS→Chebyshev)
 test/
-    test_block_encoding.jl  # 37 pass, 15 fail
+    test_block_encoding.jl       # 48 tests
+    test_qsvt_conventions.jl     # 24 tests
+    test_qsvt_polynomials.jl     # 215 tests
+    test_qsvt_phase_factors.jl   # 31 tests
 ```
 
-**PREPARE oracle works correctly:**
-- Binary rotation tree on ⌈log₂ L⌉ ancilla qubits
-- Amplitude verification against √(|hⱼ|/λ) — 4/4 pass
-- Statistical sampling N=10000 — 4/4 pass
-- Adjoint roundtrip PREPARE†·PREPARE = I — 4/4 pass
+**PREPARE oracle:** Binary rotation tree on ⌈log₂ L⌉ ancilla qubits. Amplitude verification, statistical N=10000, adjoint roundtrip — all pass.
 
-### Gotcha: SELECT hits the Session 8 bug (controlled-Pauli phase errors)
+**SELECT oracle — the Session 8 bug and its resolution:**
 
-**Root cause:** The four primitives generate SU(2) gates (det=1), NOT standard Paulis (det=-1). Inside `when()`, the phase difference becomes a relative phase:
-- X! = Ry(π), controlled-Ry(π) ≠ controlled-X. Off by -i phase.
-- Z! = Rz(π), controlled-Rz(π) = diag(1,1,-i,i) ≠ CZ = diag(1,1,1,-1). Off by i on |10⟩.
-- `_cz!(a,b)` decomposition (2 CX + 3 Rz) leaves Rz(π/2) local phase on control qubit.
+Three failed approaches before finding the correct one:
+1. ❌ Using X!/Z!/Y! inside when() — controlled-Ry(π) ≠ CX, controlled-Rz(π) ≠ CZ
+2. ❌ Using _cz! for controlled-Z — leaves Rz(π/2) local phase on the ancilla
+3. ❌ Using explicit CNOT + _cz! decompositions — _cz! phase still corrupts ancilla
+4. ✅ **Using `_pauli_exp!` with θ=π/2** — the proven pattern from Session 7
 
-This means: ANY use of X!/Z!/Y! inside `when()` gives wrong controlled-Pauli operations. And even the `_cz!` decomposition leaves phases on the ancilla, which corrupts SELECT (ancilla must remain unmodified by SELECT except for the controlled Pauli on the system).
+The key insight: `exp(-i(π/2)·P) = -iP` (channel-equivalent to P). The `-i` is a uniform global phase across all terms, factoring out of the LCU sum. The `_pauli_exp!` control stack optimization handles everything correctly: basis changes and CNOT staircase run unconditionally, only the Rz pivot is controlled. The ancilla never gets a local phase.
 
-**First attempted fix:** Replace X!/Z!/Y! with proper controlled-Pauli decompositions:
-- Controlled-X = CNOT = `target ⊻= ctrl` (correct, no phase)
-- Controlled-Z = `_cz!(ctrl, target)` (WRONG: leaves Rz(π/2) on ctrl = ancilla)
-- Controlled-Y = Sdg·CNOT·S (correct decomposition verified)
+For multi-qubit ancilla registers: Toffoli cascade (Barenco et al.) reduces all controls to a single workspace qubit, which becomes the sole entry in the control stack. This avoids the EagerContext >1 control limit.
 
-**Second bug discovered:** `_cz!` leaves an Rz(π/2) local phase on the first argument (the control qubit in the CZ). When the control is the ancilla qubit, this phase persists through the unflip (X!) and corrupts the LCU post-selection.
+**Skeptical reviewer (Opus) findings:**
+- C2 (CRITICAL): All-identity terms (e.g., -2.0·II) can't get the -i phase from `_pauli_exp!` because `_pauli_exp!` skips them. No Ry/Rz decomposition of scalar×I exists. **Resolution:** Error loudly (Rule 1). Identity terms are classical energy offsets — subtract before block encoding.
+- W2/W6 (WARNING): Block encoding can't be used inside `when()` — the X! gates in PREPARE's rotation tree and Toffoli cascade would pick up outer controls. Doesn't block QSVT (oracle called directly, not inside when), but matters for future amplitude amplification.
 
-**Status:** Need a CZ decomposition that is phase-clean on the control qubit. Options:
-1. Move the Rz(π/2) from control to target in `_cz!` → need new `_cz_phase_on_target!`
-2. Use the pauli_exp! approach: basis change + CNOT staircase + single controlled-Rz(2θ) on pivot
-3. Rethink SELECT: instead of per-Pauli controlled gates, decompose the full string P_j as a circuit and control the entire circuit on a single qubit via Toffoli cascade
+**LCU assembly:** U = PREPARE†·SELECT·PREPARE, U† = PREPARE·SELECT†·PREPARE†. Tests verify ⟨0|^a U |0⟩^a |ψ⟩ ∝ (H/λ)|ψ⟩ and U·U† = I.
 
-Option 3 is the most correct — it matches how `_pauli_exp!` handles controlled operations (the "P0 controlled-evolve optimization" from Session 7).
+### QSVT Phase 2 — Convention adapter + Polynomials + BS completion
+
+**QSP convention adapter (24 tests):** Processing operator A_k = e^{iφ_k X}·e^{iθ_k Z} decomposed into 3 Sturm primitives: Rz(-2θ+π/2), Ry(-2φ), Rz(-π/2). Verified against matrix definition at 8 test points. Ref: Laneve Theorem 9.
+
+**Jacobi-Anger polynomials (215 tests):** e^{-ixt} = J₀(t)T₀(x) + 2Σ(-i)^k J_k(t)T_k(x). Uses SpecialFunctions.jl for Bessel functions. Clenshaw recurrence for evaluation. Tested: convergence for t=0.5..5.0, boundary values, |P|≤1 constraint. Ref: Martyn et al. 2021 Eq. (29)-(30).
+
+**Berntson-Sünderhauf completion (31 tests):**
+
+Gotcha: **Chebyshev vs analytic polynomial convention.** The Jacobi-Anger coefficients are in the Chebyshev basis (P(x) = Σ c_k T_k(x) for x∈[-1,1]). The BS algorithm expects monomial coefficients P(z) = Σ p_k z^k with |P(z)|≤1 on the unit circle. Chebyshev T_k(x) = (z^k+z^{-k})/2 are Laurent polynomials — evaluating the Chebyshev coefficients as monomial gives |P(z)| up to 1.92 on the circle, violating the BS precondition.
+
+**Fix:** Convert Chebyshev → analytic via Laneve Lemma 1. The Laurent polynomial P_L(z) = c₀ + Σ c_k(z^k+z^{-k})/2 becomes the analytic polynomial P_a(z) = z^d·P_L(z) of degree 2d, with |P_a| = |P_L| ≤ 1 on the circle. After BS computes Q_a, convert back via `analytic_to_chebyshev`. Degree doubles internally (d→2d) but the returned Q has degree d.
+
+Algorithm 2 (downscaling) used for robustness: P_scaled = (1-ε/4)·P gives delta=ε/4 gap, avoiding log(0) singularities.
 
 ### Gotcha: NEVER run two Julia processes simultaneously
-- Background agent spawned `Pkg.test()` while main conversation had another running
+- Background agents (3 separate incidents) spawned `Pkg.test()` concurrently
 - Both hit the same `.julia/compiled/` cache → potential corruption
-- Killed both immediately. Rule: all Julia runs sequential, from main conversation only.
+- Killed immediately each time. **Hard rule:** all Julia runs sequential, from main conversation only. Subagents FORBIDDEN from running Julia. Saved to memory.
+
+### Gotcha: Subagents ignore instructions about Pkg.test()
+- Despite explicit "DO NOT run Pkg.test()" in the prompt, both Opus subagents ran full test suites
+- The full suite takes ~15 minutes (N=24 qubit simulations)
+- **Hard rule:** subagents must not run Julia at all. Test execution happens in main conversation only.
 
 ### Beads DB status
 - DB was wiped by a prior agent. Reinitialized in embedded mode.
 - `bd dep` is broken (missing wisp_dependencies table). Dependencies documented in issue descriptions only.
-- 14 issues created successfully, all open.
+- 18 issues total: 7 closed, 11 open.
+
+### Session 9 final status
+
+**Closed issues (7):** z0b (BE types), di6 (PREPARE), qce (SELECT), suc (LCU), yz8 (BE tests), oik (BS completion), rm8 (Chebyshev conversion research)
+
+**Open issues (11):**
+- a6r (QSP conventions) — DONE, not yet closed (needs commit)
+- 80q (Jacobi-Anger) — DONE, not yet closed
+- 6e3 (Weiss algorithm) — next
+- mxr (RHW factorization) — next
+- 27n (Phase extraction) — next
+- 897 (qsvt! core circuit) — blocked on phase factors
+- x3m (QSVT evolve! integration) — blocked on qsvt! circuit
+- 2ra (QSVT phase factor tests) — blocked on phase factors
+- 4wh (QSVT simulation tests) — blocked on evolve!
+- 4x1 (QSVT DAG tests) — blocked on qsvt!
+- gdh (BE algebra product) — deferred
+
+**New test count this session:** 318 (48 + 24 + 215 + 31)
+
+**New dependencies:** SpecialFunctions.jl (Bessel functions), FFTW.jl (FFT for BS algorithm)
+
+### What the next session should do
+
+1. **Implement Weiss algorithm** (Sturm.jl-6e3) — b → c_hat Fourier coefficients. For Hamiltonian simulation (real P), b = -iP is purely imaginary, simplifying to standard X-constrained QSP.
+2. **Implement RHW factorization** (Sturm.jl-mxr) — c_hat → F_k via Toeplitz system solve. Start with naive O(n³), optimize to Half-Cholesky O(n²) later.
+3. **Implement phase extraction** (Sturm.jl-27n) — F_k → (λ, φ_k, θ_k). For real P, F_k purely imaginary → ψ_k=0, massive simplification.
+4. **Implement qsvt! core circuit** (Sturm.jl-897) — alternating processing operators + oracle calls.
+5. **Implement evolve! integration** (Sturm.jl-x3m) — `evolve!(reg, H, t, QSVT(epsilon=1e-6))`.
+6. **End-to-end test** — QSVT vs exact exp(-iHt) on 2-qubit Ising.
 
 ## 2026-04-08 — Session 8: PDE paper formalization (Childs et al. 2604.05098)
 
