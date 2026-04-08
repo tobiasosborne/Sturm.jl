@@ -23,4 +23,5 @@ using Sturm
     include("test_composite.jl")
     include("test_error_bounds.jl")
     include("test_promotion.jl")
+    include("test_block_encoding.jl")
 end
