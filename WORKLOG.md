@@ -4,6 +4,86 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-09 — Session 13: OAA research + infrastructure + phase computation blocker
+
+### Research round: 3+1 protocol for OAA design
+
+Spawned 2 independent Opus proposer agents with full codebase context + GSLW paper (Cor. 28, Thm. 56, Thm. 58). Both independently concluded:
+
+1. **OAA IS reflection QSVT on V-as-BlockEncoding** — wrap Theorem 56 circuit as `BlockEncoding`, call existing `qsvt_reflect!`. Zero new circuit infrastructure.
+2. **No new types** — reuse `BlockEncoding{N, A+2}`.
+3. **7 V-calls** (not optimal 3) from Chebyshev-to-analytic degree doubling (d=3 → 2d=6 → 7 phases for odd polynomial).
+4. **Refactor `qsvt_combined_reflect!`** into "naked" core (no alloc/measure) + wrapper.
+
+Key design difference: Agent 1 proposed two separate functions for forward/adjoint; Agent 2 proposed single function with `adjoint::Bool` flag. Chose Agent 1's two-function approach (easier to verify quantum circuits independently).
+
+### Implementation: naked circuits + lift + OAA
+
+Implemented (all in `src/qsvt/circuit.jl`):
+- `_qsvt_combined_naked!` — Thm 56 body on pre-allocated qubits
+- `_qsvt_combined_naked_adj!` — adjoint (reversed, negated angles, swapped oracles)
+- `_lift_combined_to_be` — wraps as `BlockEncoding{N, A+2}` with oracle closures
+- `_oaa_phases_half` — -T₃ Chebyshev [0,0,0,-1] → 7 QSVT phases via BS+NLFT, cached
+- `oaa_amplify!` — public function: lift + qsvt_reflect!
+
+Adjoint verified: **200/200 V·V† roundtrip perfect** (all qubits return to |0⟩).
+
+### CRITICAL BUG FOUND: Chebyshev-to-analytic degree doubling collapses T₃ phases
+
+**Root cause diagnosis (verbose grind):**
+
+1. Built synthetic block encoding with singular value exactly 1/2: `Ry(2π/3)` on ancilla gives ⟨0|U|0⟩ = cos(π/3) = 1/2.
+
+2. Tested `qsvt_reflect!` with OAA phases on this BE:
+   - Trivial phase [0.0]: rate = 27% (expected 25% = (1/2)²) ✓
+   - OAA phases (7): rate = 28% — **identical to trivial!** OAA is a no-op.
+
+3. Examined OAA phases: `[0.785, 0, ~0, 0, ~0, 0, 2.356]` — only first and last non-zero. The middle 5 phases are ≈ 0.
+
+4. Traced through the reflection QSVT circuit with these phases:
+   - 7 oracle calls alternate U/U†/U/U†/U/U†/U
+   - With zero Rz between positions 2-6, adjacent U·U† pairs cancel to identity
+   - Effective circuit collapses to: `U · Rz(φ₇) · Rz(φ₁) = U · Rz(π)` (since φ₇ + φ₁ ≈ π)
+   - Rz(π) is effectively `-Z`, giving ⟨0|U·(-Z)|0⟩ = -⟨0|U|0⟩ = -1/2
+   - Rate = |-1/2|² = 1/4 = 25% ✓ — matches observation
+
+5. Confirmed same pattern for ALL test polynomials (0.5·T₃, -(1-δ)·T₃ for δ=0.02..0.3): always ~25%, always P(x) = x.
+
+**Why the phases collapse**: The Chebyshev-to-analytic conversion maps T₃(x) = cos(3θ) → (z⁶ + 1)/2 (degree-6 analytic polynomial with only c₀ and c₆ non-zero). This extreme sparsity means the NLFT sequence is essentially `[0, 0, 0, α, 0, 0, 0]` — the middle entries contribute nothing to the phase factors.
+
+**This is NOT a bug in BS+NLFT** — the pipeline correctly computes phases for the analytic polynomial. The problem is that the degree-doubled analytic representation of T₃ has a fundamentally different structure than what the reflection QSVT needs. The reflection QSVT expects degree-d phases for a degree-d Chebyshev polynomial (GSLW Definition 15 with d oracle calls). The analytic convention gives 2d phases with the polynomial's structure encoded in a higher-dimensional space that collapses in the reflection circuit.
+
+### Gotcha: NEVER run full Pkg.test() in a background agent
+
+The implementer agent launched `Pkg.test()` (10,626 tests, 25 files including CPU-hog tests) as a background process instead of running just `test/test_oaa.jl`. This:
+1. Blocks for 10+ minutes
+2. Risks Julia cache corruption if any parallel Julia process runs
+3. Violates TDD (should test ONE file at a time)
+
+Had to `kill -9` the process. Agent wasted 20 minutes and wrote zero implementation code.
+
+### Gotcha: bash head/tail concatenation can silently destroy code
+
+Used `head -714 file > tmp && tail -n +1102 file >> tmp && mv tmp file` to remove duplicates. This destroyed my newly inserted code because line numbers shifted after my earlier Edit. Always use Edit tool for file modifications, never shell manipulation.
+
+### Session 13 commits
+
+1. `9ffa43f` — feat: OAA infrastructure — naked Thm56 circuits, BE lift, oaa_amplify!
+
+### What the next session should do
+
+1. **RESEARCH: Direct Chebyshev-convention QSVT phases (Sturm.jl-1g7)** — this is a RESEARCH STEP (Rule 8). Need a method to compute 3 QSVT phases for T₃ that work with the reflection QSVT circuit (Definition 15 with 3 oracle calls). Options:
+   - **Layer-stripping / Halász (QSP convention)**: direct Chebyshev QSP phase computation, e.g., from Dong-Meng-Whaley (2021) or Haah (2019). But the memory says BS+NLFT is canonical — need to understand if this specific case warrants an exception.
+   - **Bypass analytic conversion**: modify `qsvt_phases` to accept Chebyshev polynomials WITHOUT the degree-doubling step. Map directly from Chebyshev coefficients to Z-constrained QSVT phases.
+   - **Analytical OAA phases**: For T₃ specifically, the 3 QSVT phases might have a known closed form. Check GSLW proof of Corollary 28 for explicit phase values.
+   - **Use the existing cos/sin pipeline differently**: Instead of OAA, could we modify the error budget in Theorem 56 to get closer to 1 without amplification?
+
+2. **Verify existing tests pass** — the refactoring added new code but didn't modify existing code paths. Run `test/test_qsvt_reflect.jl` to check.
+
+3. **Dead code cleanup** from Session 12 handoff list.
+
+---
+
 ## 2026-04-09 — Session 12: Combined QSVT (GSLW Theorem 56) — cos + i·sin → e^{-iHt/α}/2
 
 ### Research: 3 parallel Opus agents on GSLW Theorem 56
