@@ -450,6 +450,212 @@ function qsvt_phases(cheb_real::Vector{Float64}; epsilon::Float64=1e-10)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Naked (no-alloc) combined QSVT circuit body + adjoint
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    _qsvt_combined_naked!(system, be, phi_even, phi_odd, ancillas, q_re, q_lcu)
+
+The body of the Theorem 56 combined QSVT circuit WITHOUT allocation or
+measurement. Operates on pre-allocated ancillas, q_re, and q_lcu.
+
+Ref: GSLW (2019), arXiv:1806.01838, Theorem 56, Figure 1(c).
+"""
+function _qsvt_combined_naked!(system::Vector{QBool}, be::BlockEncoding,
+                                phi_even::Vector{Float64},
+                                phi_odd::Vector{Float64},
+                                ancillas::Vector{QBool},
+                                q_re::QBool, q_lcu::QBool)
+    n_even = length(phi_even)
+    n_odd = length(phi_odd)
+    anc = ancillas[1]
+
+    use_oracle = true
+    for k in 1:n_even
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+
+        phi_e = phi_even[n_even - k + 1]
+        phi_o = phi_odd[n_odd - k + 1]
+        delta = phi_o - phi_e
+
+        anc ⊻= q_re
+        anc.φ += -2.0 * phi_e
+        anc ⊻= q_re
+
+        anc ⊻= q_re
+        anc.φ += -delta
+        anc ⊻= q_lcu
+        anc.φ += +delta
+        anc ⊻= q_lcu
+        anc ⊻= q_re
+
+        use_oracle = !use_oracle
+    end
+
+    when(q_lcu) do
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+    end
+
+    phi_o_last = phi_odd[1]
+    anc ⊻= q_re
+    anc.φ += -phi_o_last
+    anc ⊻= q_lcu
+    anc.φ += +phi_o_last
+    anc ⊻= q_lcu
+    anc ⊻= q_re
+
+    return nothing
+end
+
+"""
+    _qsvt_combined_naked_adj!(system, be, phi_even, phi_odd, ancillas, q_re, q_lcu)
+
+The ADJOINT of the Theorem 56 combined QSVT circuit body.
+
+Ref: GSLW (2019), arXiv:1806.01838, Theorem 56.
+"""
+function _qsvt_combined_naked_adj!(system::Vector{QBool}, be::BlockEncoding,
+                                    phi_even::Vector{Float64},
+                                    phi_odd::Vector{Float64},
+                                    ancillas::Vector{QBool},
+                                    q_re::QBool, q_lcu::QBool)
+    n_even = length(phi_even)
+    n_odd = length(phi_odd)
+    anc = ancillas[1]
+
+    phi_o_last = phi_odd[1]
+    anc ⊻= q_re
+    anc.φ += -phi_o_last
+    anc ⊻= q_lcu
+    anc.φ += +phi_o_last
+    anc ⊻= q_lcu
+    anc ⊻= q_re
+
+    use_oracle_at_extra = iseven(n_even)
+    when(q_lcu) do
+        if use_oracle_at_extra
+            be.oracle_adj!(ancillas, system)
+        else
+            be.oracle!(ancillas, system)
+        end
+    end
+
+    for k in n_even:-1:1
+        phi_e = phi_even[n_even - k + 1]
+        phi_o = phi_odd[n_odd - k + 1]
+        delta = phi_o - phi_e
+
+        anc ⊻= q_re
+        anc.φ += +delta
+        anc ⊻= q_lcu
+        anc.φ += -delta
+        anc ⊻= q_lcu
+        anc ⊻= q_re
+
+        anc ⊻= q_re
+        anc.φ += +2.0 * phi_e
+        anc ⊻= q_re
+
+        forward_used_oracle = isodd(k)
+        if forward_used_oracle
+            be.oracle_adj!(ancillas, system)
+        else
+            be.oracle!(ancillas, system)
+        end
+    end
+
+    return nothing
+end
+
+"""
+    _lift_combined_to_be(be, phi_even, phi_odd) -> BlockEncoding{N, A+2}
+
+Wrap the Theorem 56 combined QSVT circuit as a BlockEncoding.
+
+Ref: GSLW (2019), arXiv:1806.01838, Theorem 56, Theorem 58.
+"""
+function _lift_combined_to_be(be::BlockEncoding{N, A},
+                               phi_even::Vector{Float64},
+                               phi_odd::Vector{Float64}) where {N, A}
+    n_even = length(phi_even)
+    n_odd = length(phi_odd)
+    n_odd == n_even + 1 || error(
+        "_lift_combined_to_be: need n_odd = n_even + 1, got n_even=$n_even, n_odd=$n_odd")
+
+    new_a = A + 2
+
+    function lifted_oracle!(ancillas::Vector{QBool}, system::Vector{QBool})
+        be_ancs = ancillas[1:A]
+        q_re = ancillas[A + 1]
+        q_lcu = ancillas[A + 2]
+        q_re.θ += π / 2
+        q_lcu.θ += π / 2
+        _qsvt_combined_naked!(system, be, phi_even, phi_odd, be_ancs, q_re, q_lcu)
+        q_lcu.φ += π / 2
+        q_lcu.θ += -π / 2
+        q_re.θ += -π / 2
+        return nothing
+    end
+
+    function lifted_oracle_adj!(ancillas::Vector{QBool}, system::Vector{QBool})
+        be_ancs = ancillas[1:A]
+        q_re = ancillas[A + 1]
+        q_lcu = ancillas[A + 2]
+        q_re.θ += π / 2
+        q_lcu.θ += π / 2
+        q_lcu.φ += -π / 2
+        _qsvt_combined_naked_adj!(system, be, phi_even, phi_odd, be_ancs, q_re, q_lcu)
+        q_lcu.θ += -π / 2
+        q_re.θ += -π / 2
+        return nothing
+    end
+
+    return BlockEncoding{N, new_a}(lifted_oracle!, lifted_oracle_adj!, 2.0)
+end
+
+const _OAA_PHASES_CACHE = Ref{Union{Nothing, Vector{Float64}}}(nothing)
+
+"""
+    _oaa_phases_half() -> Vector{Float64}
+
+Compute Z-constrained QSVT phases for -T_3(x). Cached.
+
+Ref: GSLW (2019), arXiv:1806.01838, Corollary 28.
+"""
+function _oaa_phases_half()
+    if _OAA_PHASES_CACHE[] !== nothing
+        return _OAA_PHASES_CACHE[]
+    end
+    cheb = Float64[0, 0, 0, -1]
+    phases = qsvt_phases(cheb; epsilon=1e-10)
+    _OAA_PHASES_CACHE[] = phases
+    return phases
+end
+
+"""
+    oaa_amplify!(system, be, phi_even, phi_odd) -> Bool
+
+Oblivious amplitude amplification (GSLW Corollary 28).
+
+Ref: GSLW (2019), arXiv:1806.01838, Corollary 28, Theorem 58.
+"""
+function oaa_amplify!(system::Vector{QBool}, be::BlockEncoding,
+                       phi_even::Vector{Float64},
+                       phi_odd::Vector{Float64})
+    lifted = _lift_combined_to_be(be, phi_even, phi_odd)
+    oaa_phi = _oaa_phases_half()
+    return qsvt_reflect!(system, lifted, oaa_phi)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Combined QSVT circuit (GSLW Theorem 56)
 #
 # Combines even (cos) and odd (sin) polynomial transformations into a single
@@ -622,34 +828,24 @@ end
 """
     evolve!(qubits::Vector{QBool}, H::PauliHamiltonian, t::Real, alg::QSVT)
 
-Hamiltonian simulation via QSVT: apply cos(H·t/α) to the system state,
-where α = λ(H) is the block encoding normalization factor.
+Hamiltonian simulation via QSVT: apply e^{-iHt/alpha} to the system state,
+where alpha = lambda(H) is the block encoding normalization factor.
 
-Uses the canonical pipeline:
-1. Jacobi-Anger cos polynomial of degree d (GSLW Lemma 57)
-2. BS completion + NLFT inverse → Z-constrained QSVT phases (Laneve §4.3)
+Uses the full GSLW Theorem 58 pipeline:
+1. Jacobi-Anger cos+sin polynomials of ODD degree d (GSLW Lemma 57)
+2. BS completion + NLFT inverse -> Z-constrained QSVT phases (Laneve S4.3)
 3. LCU block encoding of H (Berry et al. 2015)
-4. Reflection QSVT circuit (GSLW Definition 15)
-5. Post-select ancilla on |0⟩
+4. Combined QSVT circuit (GSLW Theorem 56) -> e^{-iHt/alpha}/2
+5. Oblivious amplitude amplification (GSLW Corollary 28) -> e^{-iHt/alpha}
+6. Post-select all ancilla on |0>
 
-Returns `true` if post-selection succeeded (system is in cos(Ht/α)|ψ⟩,
-unnormalized). Returns `false` if post-selection failed (system state
-is garbage — discard and retry).
-
-**Limitation:** This implements cos(Ht/α), not the full e^{-iHt}. The
-full unitary requires combining cos + i·sin via LCU and oblivious
-amplitude amplification (GSLW Theorem 58). This is a future extension.
-
-# Arguments
-- `qubits`: system qubits (state |ψ⟩ to evolve)
-- `H`: Pauli Hamiltonian
-- `t`: simulation time
-- `alg`: QSVT algorithm parameters (epsilon, optional degree)
+Returns `true` if post-selection succeeded. The degree d must be ODD so
+that the sin polynomial has full degree d, giving n_odd = n_even + 1.
 
 # Ref
-GSLW (2019), arXiv:1806.01838, Theorem 56-58, Lemma 57.
-Laneve (2025), arXiv:2503.03026, §2.1, §4.3.
-Berntson, Sünderhauf (2025), CMP 406:161.
+GSLW (2019), arXiv:1806.01838, Theorem 56-58, Lemma 57, Corollary 28.
+Laneve (2025), arXiv:2503.03026, S2.1, S4.3.
+Berntson, Sunderhauf (2025), CMP 406:161.
 """
 function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian,
                   t::Real, alg::QSVT)
@@ -659,25 +855,27 @@ function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian,
     t_f = Float64(t)
     eps = alg.epsilon
 
-    # ── Step 1: Polynomial degree ──
+    # ── Step 1: Polynomial degree (must be ODD for combined circuit) ──
     if alg.degree !== nothing
         d = alg.degree
+        isodd(d) || error(
+            "evolve!(QSVT): degree must be odd for full e^{-iHt} simulation, got $d")
     else
-        # GSLW Lemma 57: R = ⌊r(e|t|/2, 5ε/3)/2⌋ where r(t,ε) ~ t + ln(1/ε)/...
-        # Heuristic: d ≈ |t| + 1.5·log₁₀(1/ε), round up to even (cos = even poly)
-        d = max(2, ceil(Int, abs(t_f) + 1.5 / log(10) * log(1 / eps)))
-        iseven(d) || (d += 1)  # cos polynomial needs even degree
+        d = max(3, ceil(Int, abs(t_f) + 1.5 / log(10) * log(1 / eps)))
+        iseven(d) && (d += 1)  # ensure odd degree
     end
 
-    # ── Step 2: Jacobi-Anger cos polynomial (real, even parity) ──
+    # ── Step 2: Jacobi-Anger cos+sin polynomials (same degree d) ──
     cos_coeffs = jacobi_anger_cos_coeffs(t_f, d)
+    sin_coeffs = jacobi_anger_sin_coeffs(t_f, d)
 
     # ── Step 3: QSVT phases via BS + NLFT pipeline ──
-    phases = qsvt_phases(cos_coeffs; epsilon=eps)
+    phi_even = qsvt_phases(cos_coeffs; epsilon=eps)
+    phi_odd = qsvt_phases(sin_coeffs; epsilon=eps)
 
     # ── Step 4: LCU block encoding of H ──
     be = block_encode_lcu(H)
 
-    # ── Step 5: Reflection QSVT circuit ──
-    return qsvt_reflect!(qubits, be, phases)
+    # ── Step 5: OAA (Theorem 56 + Corollary 28) ──
+    return oaa_amplify!(qubits, be, phi_even, phi_odd)
 end
