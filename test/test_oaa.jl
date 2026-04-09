@@ -51,10 +51,8 @@ end
     @testset "OAA phases: _oaa_phases_half returns well-formed phases" begin
         phi = _oaa_phases_half()
 
-        # Direct Chebyshev-convention phases: 3 phases for degree-3 polynomial.
-        # (Not 7 — the BS+NLFT analytic convention collapses for T₃.)
-        @test length(phi) == 3
-        @test phi == [-π, -π/2, π/2]
+        # BS+NLFT: Chebyshev degree 3 -> analytic degree 6 -> 7 GQSP phases (odd).
+        @test length(phi) == 7
 
         # Phases should be finite
         @test all(isfinite.(phi))
