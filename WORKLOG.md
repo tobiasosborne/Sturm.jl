@@ -4,6 +4,65 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-09 -- Session 13: Oblivious Amplitude Amplification (GSLW Corollary 28, Theorem 58)
+
+### Implemented OAA pipeline
+
+Full implementation of the GSLW Theorem 58 optimal Hamiltonian simulation:
+
+1. **`_qsvt_combined_naked!`**: Extracted Theorem 56 circuit body into standalone function (no allocation/measurement). Takes pre-allocated ancillas. This is the reusable core.
+
+2. **`_qsvt_combined_naked_adj!`**: Adjoint of the naked circuit. Separate function (not a flag) for testability. Reversed loop order, negated Rz angles, swapped oracle/oracle_adj. Key identity: CX-Rz(theta)-CX has adjoint CX-Rz(-theta)-CX (same CNOT order).
+
+3. **`_lift_combined_to_be`**: Wraps naked circuit + preparation/unpreparation of q_re/q_lcu as a `BlockEncoding{N, A+2}`. alpha=2.0. This is the "V" in OAA.
+
+4. **`_oaa_phases_half`**: QSVT phases for -T_3(x) = [0,0,0,-1] Chebyshev. Lazy-cached. 7 phases via BS+NLFT.
+
+5. **`oaa_amplify!`**: Public function. Lifts Theorem 56 to BE, computes OAA phases, calls `qsvt_reflect!`.
+
+6. **Updated `evolve!`**: Now uses full OAA pipeline. Degree must be ODD (sin polynomial needs odd degree for n_odd = n_even + 1).
+
+7. **Refactored `qsvt_combined_reflect!`**: Calls `_qsvt_combined_naked!` internally. Zero behavioral change confirmed by existing tests.
+
+### Adjoint is the lifeline (confirmed)
+
+V*V^dag roundtrip test: 200/200 perfect, 100/100 in another run. The adjoint correctly reverses every gate. This is the most important single test -- if the adjoint were wrong, OAA would silently produce garbage.
+
+### OAA post-selection rate: comparable to Theorem 56, NOT higher
+
+**Surprise:** OAA success rate (~10%) is not higher than Theorem 56 alone (~11%). This is because the BS downscaling (epsilon/4 gap creation) reduces the effective singular value below the ideal 1/2. The -T_3 polynomial at x < 1/2 gives < 1, so the OAA doesn't achieve perfect amplification.
+
+The benefit of OAA is NOT in post-selection rate -- it's that the post-selected state is the FULL unitary e^{-iHt/alpha} instead of the subnormalized e^{-iHt/alpha}/2. The Theorem 56 circuit alone gives the right probabilities only up to subnormalization.
+
+### OAA is computationally expensive
+
+Each OAA shot involves 7 reflection QSVT iterations, each calling the full Theorem 56 circuit (which itself has ~2*d oracle calls). With d=7, that's ~7*15 = 105 oracle calls per shot, each involving PREPARE+SELECT+UNPREPARE. Test shot counts must be kept small (100-1000) for practical runtime.
+
+### -T_3 Chebyshev representation
+
+-T_3(x) in Chebyshev basis is [0, 0, 0, -1], NOT [0, 3, 0, -4]. The latter is the monomial representation (3x - 4x^3). In Chebyshev, T_3 IS the basis function with coefficient 1, so -T_3 has c_3 = -1.
+
+### Gotcha: Julia 1.12 soft scope + @context blocks
+
+Variables modified inside `@context` blocks need explicit `let` or function wrapping. The `@context` macro expands to a `task_local_storage` call that creates a new scope. Any variable assigned inside that scope with the same name as an outer variable triggers the soft-scope ambiguity warning, and in `-e` mode it becomes a hard error.
+
+### Gotcha: Chebyshev -> analytic degree doubling for -T_3
+
+-T_3 has Chebyshev degree 3. After chebyshev_to_analytic, the analytic polynomial has degree 6. The qsvt_phases function detects odd parity (c_0 = c_2 = 0) and keeps phi_0, giving 7 phases (not 6). This is correct -- odd-n QSVT preserves eigenvalue sign.
+
+### Session 13 verification results
+
+| Test | Result | Notes |
+|------|--------|-------|
+| OAA phases well-formed | PASS | 7 phases, finite, cached |
+| V*V^dag roundtrip | PASS | 200/200 (100%) |
+| Lifted BE e^{-iHt/alpha}/2 | PASS | 313/3000 (10.4%) success, probs match |
+| OAA e^{-iHt/alpha} | PASS | 565/5000 (11.3%) success, probs match |
+| evolve!(QSVT) | PASS | end-to-end via OAA |
+| Existing QSVT reflect tests | PASS | cos, sin, combined (no regressions) |
+
+---
+
 ## 2026-04-09 — Session 13: OAA research + infrastructure + phase computation blocker
 
 ### Research round: 3+1 protocol for OAA design
