@@ -634,110 +634,25 @@ function _oaa_phases_half()
     if _OAA_PHASES_CACHE[] !== nothing
         return _OAA_PHASES_CACHE[]
     end
-    # Direct Chebyshev-convention QSVT phases for -T₃(x) = 3x - 4x³.
-    # 3 phases for 3 oracle calls (degree-3 polynomial).
-    #
-    # Computed by numerical optimization over the 2×2 SU(2) matrix product
-    # of the reflection QSVT circuit (Definition 15). Verified to machine
-    # precision at 11 points in [0,1]. The BS+NLFT pipeline cannot produce
-    # these because its Chebyshev→analytic degree doubling collapses for
-    # Chebyshev basis vectors.
-    #
-    # Ref: GSLW (2019), arXiv:1806.01838, Corollary 8, Corollary 28.
-    phases = [-π, -π/2, π/2]
+    # DO NOT REPLACE THIS WITH HARDCODED PHASES.
+    # The BS+NLFT pipeline IS the canonical phase computation method (Rule 9).
+    # Chebyshev coefficients of -T_3: [0, 0, 0, -1].
+    # qsvt_phases() produces 7 phases (degree 3 -> analytic degree 6, odd polynomial).
+    cheb_neg_t3 = Float64[0, 0, 0, -1]
+    phases = qsvt_phases(cheb_neg_t3; epsilon=1e-10)
     _OAA_PHASES_CACHE[] = phases
     return phases
 end
 
 """
-    _reflect_ancilla_phase!(ancillas, phi)
-
-Apply e^{iφ(2Π-I)} where Π = |0⟩⟨0|^⊗m on the ancilla register.
-
-This is the multi-ancilla generalization of the single-qubit Rz(−2φ) used
-in qsvt_reflect!. For m=1 it reduces to Rz(−2φ) on the ancilla.
-For m>1 it applies a phase e^{2iφ} to the |0...0⟩ component.
-
-Circuit: X-all, multi-controlled-phase(2φ) on |1...1⟩, X-all.
-The multi-controlled phase uses the Toffoli cascade from _multi_controlled_z!
-with the angle generalized from π to 2φ.
-
-Up to global phase e^{-iφ} (unobservable in the channel model).
-
-Ref: GSLW (2019), arXiv:1806.01838, Definition 15, Lemma 19.
-"""
-function _reflect_ancilla_phase!(ancillas::Vector{QBool}, phi::Float64)
-    m = length(ancillas)
-    if m == 1
-        # Single ancilla: e^{iφ(2|0⟩⟨0|-I)} = diag(e^{iφ}, e^{-iφ}) = Rz(-2φ)
-        ancillas[1].φ += -2.0 * phi
-        return nothing
-    end
-
-    # Multi-ancilla: apply phase e^{2iφ} to |0...0⟩ component.
-    # Circuit: X all → phase on |1...1⟩ → X all.
-    # Phase on |1...1⟩ = multi-controlled Rz(2φ) on last qubit, controlled by rest.
-    for q in ancillas; q.θ += π; end  # X all (|0⟩ → |1⟩)
-
-    # Multi-controlled phase(2φ) on |1...1⟩:
-    # For 2 qubits: controlled-phase = _cz! generalized.
-    # For m qubits: Toffoli cascade to compute AND, then phase, then uncompute.
-    if m == 2
-        # Controlled-Rz(2φ): apply Rz(2φ) on target controlled by control
-        # CRz decomposition: Rz(φ) on target, CNOT, Rz(-φ), CNOT, Rz(φ) on control
-        # But we need controlled-PHASE, not controlled-Rz.
-        # Phase on |11⟩: use CZ-like decomposition with angle 2φ instead of π.
-        # CP(2φ) = Rz(φ) on each + CX + Rz(-φ) on target + CX
-        ancillas[2].φ += phi
-        ancillas[2] ⊻= ancillas[1]
-        ancillas[2].φ += -phi
-        ancillas[2] ⊻= ancillas[1]
-        ancillas[1].φ += phi
-    else
-        # General m: Toffoli cascade to compute AND chain into workspace,
-        # apply phase, uncompute. Uses m-2 workspace ancilla.
-        ctx = ancillas[1].ctx
-        work = [QBool(ctx, 0.0) for _ in 1:(m - 2)]
-
-        # Forward cascade: compute AND chain
-        when(ancillas[1]) do; work[1] ⊻= ancillas[2]; end
-        for k in 2:(m - 2)
-            when(work[k - 1]) do; work[k] ⊻= ancillas[k + 1]; end
-        end
-
-        # Apply phase: controlled-phase(2φ) between last work qubit and last ancilla
-        # CP(2φ) decomposition:
-        work[m - 2].φ += phi
-        ancillas[m].φ += phi
-        ancillas[m] ⊻= work[m - 2]
-        ancillas[m].φ += -phi
-        ancillas[m] ⊻= work[m - 2]
-
-        # Backward cascade: uncompute
-        for k in (m - 2):-1:2
-            when(work[k - 1]) do; work[k] ⊻= ancillas[k + 1]; end
-        end
-        when(ancillas[1]) do; work[1] ⊻= ancillas[2]; end
-
-        for w in work; discard!(w); end
-    end
-
-    for q in ancillas; q.θ += π; end  # X all (undo)
-    return nothing
-end
-
-"""
     oaa_amplify!(system, be, phi_even, phi_odd) -> Bool
 
-Oblivious Amplitude Amplification (GSLW Corollary 28, Theorem 58).
+Oblivious amplitude amplification (GSLW Corollary 28, Theorem 58).
 
-Implements the OAA circuit directly with multi-ancilla reflections
-e^{iφ(2Π-I)} between oracle calls, where Π = |0⟩⟨0|^⊗(a+2).
+Lifts the combined QSVT circuit to a BlockEncoding, computes -T_3 QSVT
+phases via BS+NLFT, and applies reflection QSVT with those phases.
 
-Circuit for 3 OAA phases [φ₁, φ₂, φ₃] (time order):
-  V · e^{iφ₃(2Π-I)} · V† · e^{iφ₂(2Π-I)} · V · e^{iφ₁(2Π-I)}
-
-Post-selects all ancilla on |0⟩. Returns true if successful.
+Returns true if post-selection succeeded (system is in e^{-iHt/alpha}|psi>).
 
 Ref: GSLW (2019), arXiv:1806.01838, Corollary 28, Theorem 58.
 """
@@ -745,31 +660,8 @@ function oaa_amplify!(system::Vector{QBool}, be::BlockEncoding,
                        phi_even::Vector{Float64},
                        phi_odd::Vector{Float64})
     lifted = _lift_combined_to_be(be, phi_even, phi_odd)
-    oaa_phases = _oaa_phases_half()
-    n = length(oaa_phases)
-    ctx = system[1].ctx
-
-    # Allocate ancilla for the lifted BE
-    ancillas = [QBool(ctx, 0.0) for _ in 1:lifted.n_ancilla]
-
-    # OAA circuit: alternating V/V† with multi-ancilla reflections
-    use_fwd = true
-    for j in n:-1:1
-        if use_fwd
-            lifted.oracle!(ancillas, system)
-        else
-            lifted.oracle_adj!(ancillas, system)
-        end
-        _reflect_ancilla_phase!(ancillas, oaa_phases[j])
-        use_fwd = !use_fwd
-    end
-
-    # Post-select all ancilla on |0⟩
-    success = true
-    for a in ancillas
-        if Bool(a); success = false; end
-    end
-    return success
+    oaa_phi = _oaa_phases_half()
+    return qsvt_reflect!(system, lifted, oaa_phi)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
