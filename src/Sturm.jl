@@ -122,6 +122,6 @@ export BlockEncoding, block_encode_lcu
 
 # QSVT
 export QSVTPhases, apply_processing_op!
-export qsvt_combined_reflect!
+export qsvt_combined_reflect!, oaa_amplify!
 
 end # module Sturm
