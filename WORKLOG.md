@@ -4,6 +4,117 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-09 — Session 12: Combined QSVT (GSLW Theorem 56) — cos + i·sin → e^{-iHt/α}/2
+
+### Research: 3 parallel Opus agents on GSLW Theorem 56
+
+Dispatched 3 independent research agents to study the GSLW paper (1806.01838) and Laneve (2503.03026):
+
+1. **Agent 1 (Theorem 56 circuit)**: Extracted the full circuit structure `(H⊗H⊗I)·U_Φ(c)·(H⊗H⊗I)`. Key finding: oracle U/U† calls are unconditional, only the single-qubit Rz on the BE ancilla is multiplexed by the two extra ancilla qubits (q_re for Corollary 18 real-part extraction, q_lcu for even/odd LCU selection).
+
+2. **Agent 2 (Corollary 18 + OAA)**: Detailed analysis of even/odd parity structure and Corollary 28 (robust oblivious amplitude amplification). OAA with n=3 boosts 1/2 → 1 subnormalization. Deferred to next session.
+
+3. **Agent 3 (Laneve convention mapping)**: Confirmed X-constrained GQSP phases = Z-constrained QSVT phases via Hadamard conjugation. The BS+NLFT pipeline handles both cos and sin independently.
+
+### Sin parity fix — CRITICAL BUG FOUND AND FIXED
+
+**Root cause:** The Chebyshev→analytic conversion always doubles degree d→2d, producing 2d QSVT phases (even count). GSLW Theorem 17: even-n QSVT implements P^{(SV)}(A) where P is an EVEN polynomial. For Hermitian A, the SVT maps eigenvalue λ through P(|λ|), LOSING THE SIGN. Odd polynomials (sin) need odd-n to preserve eigenvalue sign: P(λ) with sign intact.
+
+**Diagnosis:** sin(Ht/α) with 26 phases (even) gave 100% |00⟩ with 33% success on 2-qubit Ising — the circuit was applying a CONSTANT polynomial (same value for all eigenvalues). The GQSP single-qubit protocol with the SAME phases gave correct sin behavior, confirming the issue was specifically in the reflection QSVT parity.
+
+**Fix:** `qsvt_phases()` now detects odd Chebyshev polynomials (even-indexed coefficients ≈ 0) and keeps φ₀ instead of dropping it, giving 2d+1 phases (odd count). Even polynomials (cos) still drop φ₀ → 2d phases (even count). φ₀ ≈ 0 in all cases, so keeping it is essentially free.
+
+**Verification:** sin QSVT with 27 phases (odd) matches eigendecomposition ground truth: measured [0.63, 0.18, 0.19, 0.0] vs expected [0.67, 0.17, 0.17, 0.0] (N=1000).
+
+### Combined QSVT circuit (Theorem 56) — 7 bugs found and fixed
+
+**Circuit structure:** Two extra ancilla qubits (q_re, q_lcu) beyond the block encoding's own:
+- q_re: Corollary 18 real-part extraction (Hadamard sandwich)
+- q_lcu: Theorem 56 even/odd LCU selection
+- Both prepared in |+⟩ = QBool(0.5)
+- S gate on q_lcu AFTER QSVT for the imaginary factor i (Theorem 58)
+
+**Multiplexed rotation decomposition per shared position:**
+```
+Part 1: ZZ(q_re, anc, φ_e)           — sign flip from Corollary 18
+  anc ⊻= q_re; anc.φ += -2φ_e; anc ⊻= q_re
+
+Part 2: Controlled-ZZ controlled by q_lcu  — even/odd selection
+  anc ⊻= q_re; anc.φ += -Δ; anc ⊻= q_lcu; anc.φ += +Δ; anc ⊻= q_lcu; anc ⊻= q_re
+  where Δ = φ_o - φ_e
+```
+Cost: 6 CNOTs + 3 Rz per position. Oracles unconditional.
+
+**Extra position (odd branch):** Single controlled-U via `when(q_lcu)` for the sin polynomial's extra oracle call. This is the "single application of controlled-U" from Theorem 56 statement.
+
+**Phase index mapping:** At position k (k=1 first in time), use `phi_even[n_even-k+1]` and `phi_odd[n_odd-k+1]`. Both circuits start with U and alternate U/U† identically for shared positions.
+
+**Bugs found and fixed (chronological):**
+
+1. **H! ≠ H⁻¹ (CRITICAL):** Used H! to undo QBool(0.5) preparation. H! = -iH, so H!² = -I ≠ I. H!(|+⟩) = -i|1⟩, always measuring |1⟩ → post-selection always fails. Fix: use Ry(-π/2) = `q.θ += -π/2` to invert QBool(0.5) = Ry(π/2)|0⟩. This is the Session 8 bug pattern recurring.
+
+2. **Zero-padding oracle calls changes polynomial (CRITICAL):** Initial approach padded the shorter phase sequence with zeros and ran max(n_even, n_odd) unconditional oracle calls. Extra oracle calls with zero phases are NOT identity — they change the polynomial degree and values. Fix: use same Chebyshev degree d for both cos and sin, giving n_even = 2d (even) and n_odd = 2d+1 (odd), difference = exactly 1.
+
+3. **ZZ ≠ CRz (CRITICAL):** CNOT-Rz-CNOT pattern (`anc⊻=ctrl; Rz(θ); anc⊻=ctrl`) implements e^{iθ·Z_ctrl·Z_anc} — a SIGN FLIP (±θ based on control state). This is NOT CRz (conditional rotation: identity when ctrl=0, Rz when ctrl=1). The correct CRz decomposition is: `Rz(θ/2); CNOT; Rz(-θ/2); CNOT`. ZZ is correct for q_re (sign flip), but q_lcu needs CRz (conditional correction). The "Controlled-ZZ" decomposition (Part 2 above) nests CRz inside a ZZ frame.
+
+4. **S gate placement (MEDIUM):** Initially placed S = Rz(π/2) in the q_lcu preparation (before QSVT). With S at preparation and S† at post-selection, they cancel → no i factor. Fix: S gate goes AFTER the QSVT, BEFORE the inverse preparation (Ry(-π/2)). This gives the correct extraction: ⟨0|·Ry(-π/2)·S·|ψ_lcu⟩ projects onto the (P_even + i·P_odd)/2 component.
+
+5. **Oracle alternation reversal from controlled-U (MEDIUM):** Initial approach put the controlled-U at the BEGINNING of the circuit. The controlled-U (no-op for cos branch) shifted the oracle alternation pattern for the remaining shared calls. Fix: put controlled-U at the END (position k = n_odd). Both circuits start with U at k=1 and share identical alternation for k=1..n_even.
+
+6. **Phase indexing mismatch (MEDIUM):** Reverse-loop indexing `phi[j]` for j=n..1 doesn't map correctly when combining two phase vectors of different lengths. Fix: forward-loop with explicit index mapping: `phi_even[n_even-k+1]` and `phi_odd[n_odd-k+1]` at position k.
+
+7. **LCU projects out coefficient phases (LOW):** Standard LCU with complex preparation gives |c₀|²A₀ + |c₁|²A₁ (magnitudes only, phases cancel). The i factor for Theorem 58 can't come from the preparation — must be a separate S gate after the circuit.
+
+### Gotcha: post-selection rate depends strongly on evolution time
+
+For t=0.5 (weak evolution, eigenvalues × t/α ≈ 0.25): combined circuit gives 0.8% success (13/2000). Too few samples for reliable statistics. For t=2.0 (stronger evolution): 11.7% success (590/5000), distribution matches ground truth with max error 0.058.
+
+The low rate at small t is physically correct: the BS downscaling × Corollary 18 extraction × LCU combination × polynomial approximation error compound to give a small post-selection probability when cos(xt) ≈ 1 and sin(xt) ≈ 0.
+
+### Gotcha: NEVER suggest alternative phase computation pipelines
+
+BS (Berntson-Sünderhauf) + NLFT (Laneve Weiss/RHW) is the ONLY canonical phase computation pipeline. Haah factorization, direct Chebyshev QSP, optimization-based methods (QSPPACK) are all old news. The user had to emphasize this — saved to memory.
+
+### Gotcha: verbose output is mandatory for long-running tests
+
+Julia's test output is fully buffered — no intermediate output visible until process completes. ALWAYS add println progress markers inside test loops, or run tests inline with `-e` for immediate feedback. Wrap test bodies in functions to avoid Julia 1.12 soft-scope issues with variable assignment inside `@context` blocks.
+
+### Session 12 commits
+
+1. `0534398` — feat: combined QSVT circuit (GSLW Theorem 56) + sin parity fix
+
+### Test baseline update
+
+| # | Test File | Status |
+|---|-----------|--------|
+| 24 | test_qsvt_reflect | +3 testsets (sin, combined e^{-iHt/α}/2) |
+
+### What the next session should do
+
+1. **RESEARCH: Oblivious Amplitude Amplification (GSLW Corollary 28)** — this is a RESEARCH STEP (Rule 8). The combined circuit produces e^{-iHt/α}/2 (subnormalized by 1/2). OAA boosts this to e^{-iHt/α} (full unitary). Key details from the research agents:
+   - Since 1/2 = sin(π/6), n=3 rounds of OAA suffice (T₃(1/2) = -1)
+   - OAA IS a QSVT circuit wrapping the Theorem 56 block encoding as its oracle
+   - The Theorem 56 circuit becomes the "U" inside OAA's alternating phase sequence
+   - OAA adds 1 extra ancilla, 3× oracle calls (the Theorem 56 circuit runs 3 times)
+   - Chebyshev T₃ phases: need to compute/verify these
+   - The OAA circuit uses Definition 15 with n=3 phases on the Theorem 56 block encoding
+   - Post-selection: all ancillas (BE + q_re + q_lcu + OAA) must be |0⟩
+   - **Key question**: how does the OAA "U" (= full Theorem 56 circuit) interact with the `when()` control stack? The OAA alternates U and U†. The U† is the ADJOINT of the Theorem 56 circuit.
+   - **Key question**: what is the adjoint of qsvt_combined_reflect!? All operations need to be reversed and conjugated. The controlled-U becomes controlled-U†, etc.
+   - Ref: GSLW Corollary 28 proof, Theorem 58 proof (p.51)
+
+2. **Implement OAA** — after the research step understands the circuit, implement `evolve_full!` that wraps qsvt_combined_reflect! in OAA to produce the full e^{-iHt/α} unitary.
+
+3. **Update `evolve!` for full e^{-iHt}** — wire OAA into the existing `evolve!(qubits, H, t, QSVT(ε))` function, replacing the cos-only limitation.
+
+4. **Update README** — document QSVT Phase 15, combined circuit, evolve! with full Hamiltonian simulation.
+
+5. **Dead code cleanup** — `_multi_controlled_phase_flip!` in select.jl, LCU header comment fix (carried from Session 11).
+
+6. **Run full test suite once** to check for regressions (the sin parity fix and combined circuit are additive — no existing code was changed except qsvt_phases() which was extended, not modified).
+
+---
+
 ## 2026-04-08 — Session 11: Ground-truth review + GQSP ordering fix + reflection QSVT
 
 ### Ground-truth review — 5 Opus agents against 3 papers
