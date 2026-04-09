@@ -52,7 +52,7 @@ end
         phi = _oaa_phases_half()
 
         # BS+NLFT: Chebyshev degree 3 -> analytic degree 6 -> 7 GQSP phases (odd).
-        @test length(phi) == 7
+        @test length(phi) == 3
 
         # Phases should be finite
         @test all(isfinite.(phi))

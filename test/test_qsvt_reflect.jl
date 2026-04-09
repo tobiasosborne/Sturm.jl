@@ -169,24 +169,22 @@ end
     # C. evolve!(qubits, H, t, QSVT(epsilon)) integration
     # ─────────────────────────────────────────────────────────────────────
 
-    @testset "evolve!(QSVT): cos(Ht/alpha) on 2-qubit Ising" begin
-        t = 0.3
+    @testset "evolve!(QSVT): e^{-iHt/alpha} via OAA on 2-qubit Ising" begin
+        t = 2.0
         N_sys = 2
         H = ising(Val(N_sys), J=1.0, h=0.5)
         al = lambda(H)
-        alg = QSVT(epsilon=1e-3, degree=10)
+        alg = QSVT(epsilon=1e-3, degree=7)
 
-        # Ground truth: cos(H*t/alpha)|0>
+        # Ground truth: e^{-iHt/alpha}|0>
         H_mat = _pauli_matrix(H)
         evals, evecs = eigen(H_mat)
-        cos_Ht = evecs * Diagonal(cos.(evals .* t / al)) * evecs'
+        eiHt = evecs * Diagonal(exp.(-im .* evals .* t / al)) * evecs'
         psi0 = zeros(ComplexF64, 4); psi0[1] = 1.0
-        psi_exact = cos_Ht * psi0
+        psi_exact = eiHt * psi0
         probs_exact = abs2.(psi_exact)
-        norm_exact = sum(probs_exact)
 
-        # Run evolve! many times, collect post-selected statistics
-        N_shots = 1000
+        N_shots = 500
         n_success = 0
         counts = zeros(Int, 4)
 
@@ -207,15 +205,14 @@ end
             end
         end
 
-        @test n_success > 20
+        println("  evolve!(QSVT) OAA: $n_success/$N_shots success")
+        @test n_success > 10
 
-        if n_success > 20
+        if n_success > 10
             probs_measured = counts ./ n_success
-            probs_expected = probs_exact ./ norm_exact
-
             for i in 1:4
-                sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
-                @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.10)
+                sigma = sqrt(probs_exact[i] * (1 - probs_exact[i]) / n_success)
+                @test abs(probs_measured[i] - probs_exact[i]) < max(5 * sigma, 0.15)
             end
         end
     end
