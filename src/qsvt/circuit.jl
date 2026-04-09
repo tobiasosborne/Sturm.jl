@@ -427,10 +427,192 @@ function qsvt_phases(cheb_real::Vector{Float64}; epsilon::Float64=1e-10)
     phi = copy(phases.phi)
     phi[end] += π / 2
 
-    # ── Step 6: Drop φ₀ (absorbed by post-selection) ──
-    # The QSVT circuit (GSLW Definition 15) uses n phases φ₁,...,φₙ.
-    # The QSP phase φ₀ is determined by P(0) = e^{-iφ₀} (Corollary 8).
-    return phi[2:end]
+    # ── Step 6: Determine parity and return phases ──
+    # The Chebyshev→analytic conversion doubles degree d→2d, giving 2d+1
+    # GQSP phases (φ₀,...,φ_{2d}). The reflection QSVT parity (GSLW Theorem 17)
+    # must match the Chebyshev polynomial parity:
+    #   - Even Chebyshev (cos): drop φ₀ → 2d phases (even n) → even polynomial
+    #   - Odd Chebyshev (sin):  keep φ₀ → 2d+1 phases (odd n) → odd polynomial
+    #
+    # With even n, the SVT maps eigenvalue λ through P(|λ|), losing sign.
+    # With odd n, eigenvalue sign is preserved: P(λ) = sign(λ)·|P(|λ|)|.
+    # For Hermitian operators, eigenvalue transformation P(A) requires matching
+    # parity between n and the polynomial.
+    #
+    # Parity detection: check if even-indexed Chebyshev coefficients are ≈ 0
+    # (odd polynomial has c₀ = c₂ = c₄ = ... ≈ 0).
+    is_odd = all(abs(cheb_real[k]) < 1e-12 for k in 1:2:length(cheb_real))
+    if is_odd
+        return phi          # keep φ₀ → 2d+1 phases (odd n)
+    else
+        return phi[2:end]   # drop φ₀ → 2d phases (even n)
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Combined QSVT circuit (GSLW Theorem 56)
+#
+# Combines even (cos) and odd (sin) polynomial transformations into a single
+# circuit implementing (P_even + i·P_odd)/2 = e^{iHt/α}/2.
+#
+# Two extra ancilla qubits beyond the block encoding's own:
+#   q_re:  selects between +Φ and -Φ (real part extraction, Corollary 18)
+#   q_lcu: selects between even and odd phase sets (LCU, Theorem 56)
+#
+# The oracle U and U† are called UNCONDITIONALLY. Only the Rz rotations on
+# the BE ancilla are multiplexed, decomposed as ZZ + ZZZ interactions:
+#
+#   e^{i·(-1)^{q_re}·φ_{q_lcu,j}·Z_anc}
+#   = e^{i·s_j·Z_re·Z_anc} · e^{i·δ_j·Z_re·Z_lcu·Z_anc}
+#
+# where s_j = (φ_even_j + φ_odd_j)/2, δ_j = (φ_even_j - φ_odd_j)/2.
+#
+# ZZ(q_re, anc):  anc⊻=q_re; anc.φ+=-2s; anc⊻=q_re
+# ZZZ(q_re, q_lcu, anc): anc⊻=q_re; anc⊻=q_lcu; anc.φ+=-2δ; anc⊻=q_lcu; anc⊻=q_re
+#
+# Cost per rotation position: 6 CNOTs + 2 Rz. Oracle calls: unconditional.
+#
+# The i factor for combining cos + i·sin is absorbed by preparing q_lcu in
+# (|0⟩ + i|1⟩)/√2 = S·H|0⟩ instead of H|0⟩.
+#
+# Post-select q_re and q_lcu on |0⟩ to extract (P_even + i·P_odd)/2.
+#
+# Ref: GSLW (2019), arXiv:1806.01838, Theorem 56, Corollary 18.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qsvt_combined_reflect!(system::Vector{QBool}, be::BlockEncoding,
+                            phi_even::Vector{Float64},
+                            phi_odd::Vector{Float64}) -> Bool
+
+Combined even+odd QSVT circuit (GSLW Theorem 56).
+
+Applies (P_even(A/α) + i·P_odd(A/α))/2 to the system state, where
+P_even and P_odd are the polynomials encoded by `phi_even` and `phi_odd`.
+
+For Hamiltonian simulation: P_even = cos(xt), P_odd = -sin(xt), giving
+(cos(Ht/α) - i·sin(Ht/α))/2 = e^{-iHt/α}/2, or with the Jacobi-Anger
+sign convention: (cos + i·(-sin))/2 = e^{iHt/α}/2.
+
+Uses 2 extra ancilla qubits (q_re, q_lcu) beyond the block encoding's own.
+Oracle calls are unconditional — only the Rz rotations are multiplexed.
+
+Returns `true` if post-selection succeeded (all ancilla + q_re + q_lcu = |0⟩).
+
+# Arguments
+- `system`: system qubits
+- `be`: block encoding
+- `phi_even`: QSVT phases for the even polynomial (from `qsvt_phases`)
+- `phi_odd`: QSVT phases for the odd polynomial (from `qsvt_phases`)
+
+# Ref
+GSLW (2019), arXiv:1806.01838, Theorem 56, Corollary 18, Eq. (33).
+Laneve (2025), arXiv:2503.03026, §2.1, §4.3.
+"""
+function qsvt_combined_reflect!(system::Vector{QBool}, be::BlockEncoding,
+                                 phi_even::Vector{Float64},
+                                 phi_odd::Vector{Float64})
+    length(system) == be.n_system || error(
+        "qsvt_combined_reflect!: expected $(be.n_system) system qubits, got $(length(system))")
+    n_even = length(phi_even)
+    n_odd = length(phi_odd)
+    n_even >= 1 || error("qsvt_combined_reflect!: need at least 1 even phase")
+    n_odd >= 1 || error("qsvt_combined_reflect!: need at least 1 odd phase")
+    n_odd == n_even + 1 || error(
+        "qsvt_combined_reflect!: need n_odd = n_even + 1, " *
+        "got n_even=$n_even, n_odd=$n_odd. Use the same Chebyshev degree d.")
+    ctx = system[1].ctx
+
+    # ── Allocate qubits ──
+    ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
+    anc = ancillas[1]
+    q_re = QBool(ctx, 0.5)     # |+⟩ for Corollary 18 (real-part extraction)
+    q_lcu = QBool(ctx, 0.5)    # |+⟩ for Theorem 56 (even/odd LCU)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Multiplexed rotation decomposition at each shared position:
+    #
+    # Target: e^{i·(-1)^{q_re}·φ_sel·Z_anc} where φ_sel = φ_e (lcu=0) or φ_o (lcu=1)
+    #
+    # Decompose as:
+    #   Part 1: ZZ(q_re, anc, φ_e)  — sign flip on base angle
+    #     anc⊻=q_re; anc.φ+=-2φ_e; anc⊻=q_re
+    #
+    #   Part 2: Controlled-ZZ(q_re, anc, Δ) controlled by q_lcu
+    #     where Δ = φ_o - φ_e. Implemented as:
+    #     anc⊻=q_re; Rz(-Δ); anc⊻=q_lcu; Rz(+Δ); anc⊻=q_lcu; anc⊻=q_re
+    #
+    # Cost: 6 CNOTs + 3 Rz per position. Oracles unconditional.
+    #
+    # Ref: GSLW (2019), arXiv:1806.01838, Theorem 56, Figure 1(c).
+    # ══════════════════════════════════════════════════════════════════
+
+    # ── Shared positions k=1..n_even: unconditional oracle calls ──
+    use_oracle = true  # U first
+    for k in 1:n_even
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+
+        φ_e = phi_even[n_even - k + 1]
+        φ_o = phi_odd[n_odd - k + 1]
+        Δ = φ_o - φ_e
+
+        # Part 1: ZZ(q_re, anc, φ_e)
+        anc ⊻= q_re
+        anc.φ += -2.0 * φ_e
+        anc ⊻= q_re
+
+        # Part 2: Controlled-ZZ(q_re, anc, Δ) controlled by q_lcu
+        anc ⊻= q_re        # enter ZZ frame
+        anc.φ += -Δ         # CRz first half
+        anc ⊻= q_lcu        # CRz CNOT
+        anc.φ += +Δ         # CRz second half
+        anc ⊻= q_lcu        # CRz CNOT
+        anc ⊻= q_re         # exit ZZ frame
+
+        use_oracle = !use_oracle
+    end
+
+    # ── Extra position: odd branch only (Theorem 56 controlled-U) ──
+    when(q_lcu) do
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+    end
+
+    # Phase for odd branch only: φ_e = 0, φ_o = phi_odd[1], Δ = phi_odd[1]
+    φ_o_last = phi_odd[1]
+    # Part 1: ZZ(q_re, anc, 0) = identity (skip)
+    # Part 2: Controlled-ZZ(q_re, anc, φ_o_last) controlled by q_lcu
+    anc ⊻= q_re
+    anc.φ += -φ_o_last
+    anc ⊻= q_lcu
+    anc.φ += +φ_o_last
+    anc ⊻= q_lcu
+    anc ⊻= q_re
+
+    # ── Post-select ──
+    success = true
+    for a in ancillas
+        if Bool(a); success = false; end
+    end
+
+    # q_lcu: S gate (e^{iπ/2} from Theorem 58) + undo |+⟩
+    # Extracts (P_even + i·P_odd)/2.
+    q_lcu.φ += π / 2    # S gate
+    q_lcu.θ += -π / 2   # Ry(-π/2)
+    if Bool(q_lcu); success = false; end
+
+    # q_re: undo |+⟩
+    q_re.θ += -π / 2
+    if Bool(q_re); success = false; end
+
+    return success
 end
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -8,7 +8,7 @@
 
 using Test, Sturm, FFTW
 using Sturm: jacobi_anger_cos_coeffs, jacobi_anger_sin_coeffs,
-             qsvt_phases, qsvt_reflect!, QSVT,
+             qsvt_phases, qsvt_reflect!, qsvt_combined_reflect!, QSVT,
              block_encode_lcu, ising, lambda, nqubits
 using LinearAlgebra: eigen, Diagonal, kron
 
@@ -216,6 +216,136 @@ end
             for i in 1:4
                 sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
                 @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.10)
+            end
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # D. Reflection QSVT: sin(Ht/alpha)|psi>  (Step 1: sin verification)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "qsvt_reflect!: sin(Ht/alpha) on 2-qubit Ising" begin
+        t = 0.5
+        N_sys = 2
+        H = ising(Val(N_sys), J=1.0, h=0.5)
+        al = lambda(H)
+        d = 13  # odd degree for odd polynomial
+
+        # Ground truth: -sin(H*t/alpha)|0>
+        # jacobi_anger_sin_coeffs gives -sin(xt), so target is -sin(Ht/alpha)|0>
+        H_mat = _pauli_matrix(H)
+        evals, evecs = eigen(H_mat)
+        neg_sin_Ht = evecs * Diagonal(-sin.(evals .* t / al)) * evecs'
+        psi0 = zeros(ComplexF64, 4); psi0[1] = 1.0
+        psi_exact = neg_sin_Ht * psi0
+        probs_exact = abs2.(psi_exact)
+        norm_exact = sum(probs_exact)
+
+        # Compute QSVT phases for sin polynomial
+        sin_c = jacobi_anger_sin_coeffs(t, d)
+        phi = qsvt_phases(sin_c; epsilon=1e-6)
+
+        # Block encode
+        be = block_encode_lcu(H)
+
+        # Run circuit, collect post-selected statistics
+        N_shots = 1000
+        n_success = 0
+        counts = zeros(Int, 4)
+
+        for _ in 1:N_shots
+            ctx = EagerContext()
+            @context ctx begin
+                sys = [QBool(ctx, 0.0) for _ in 1:N_sys]
+                success = qsvt_reflect!(sys, be, phi)
+                if success
+                    n_success += 1
+                    b1 = Bool(sys[1])
+                    b2 = Bool(sys[2])
+                    idx = Int(b1) + 2*Int(b2) + 1
+                    counts[idx] += 1
+                else
+                    for s in sys; discard!(s); end
+                end
+            end
+        end
+
+        @test n_success > 30
+
+        if n_success > 30
+            probs_measured = counts ./ n_success
+            probs_expected = probs_exact ./ norm_exact
+
+            for i in 1:4
+                sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
+                @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.08)
+            end
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # E. Combined QSVT: (cos(Ht/alpha) + i·sin(Ht/alpha))/2 = e^{iHt/alpha}/2
+    #    (Step 2-3: Theorem 56 circuit)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "qsvt_combined_reflect!: e^{-iHt/alpha}/2 on 2-qubit Ising" begin
+        # Use t=2.0 for stronger evolution (better signal-to-noise).
+        # The post-selection probability scales with the polynomial magnitude;
+        # small t gives cos≈1, sin≈0, and the Corollary 18 extraction + LCU
+        # subnormalization yields very low success rates.
+        t = 2.0
+        N_sys = 2
+        d = 13  # same odd degree for both cos and sin (required by Theorem 56)
+        H = ising(Val(N_sys), J=1.0, h=0.5)
+        al = lambda(H)
+
+        # Ground truth: e^{-iHt/alpha}/2 |0>
+        # With Jacobi-Anger: cos(xt) and -sin(xt).
+        # Combined: (cos + i·(-sin))/2 = (cos - i·sin)/2 = e^{-ixt}/2.
+        H_mat = _pauli_matrix(H)
+        evals, evecs = eigen(H_mat)
+        eiHt_half = evecs * Diagonal(exp.(-im .* evals .* t / al) ./ 2) * evecs'
+        psi0 = zeros(ComplexF64, 4); psi0[1] = 1.0
+        psi_exact = eiHt_half * psi0
+        probs_exact = abs2.(psi_exact)
+        norm_exact = sum(probs_exact)
+
+        # Compute QSVT phases: same degree d for both
+        phi_even = qsvt_phases(jacobi_anger_cos_coeffs(t, d); epsilon=1e-4)
+        phi_odd = qsvt_phases(jacobi_anger_sin_coeffs(t, d); epsilon=1e-4)
+
+        be = block_encode_lcu(H)
+
+        N_shots = 5000
+        n_success = 0
+        counts = zeros(Int, 4)
+
+        for _ in 1:N_shots
+            ctx = EagerContext()
+            @context ctx begin
+                sys = [QBool(ctx, 0.0) for _ in 1:N_sys]
+                success = qsvt_combined_reflect!(sys, be, phi_even, phi_odd)
+                if success
+                    n_success += 1
+                    b1 = Bool(sys[1])
+                    b2 = Bool(sys[2])
+                    idx = Int(b1) + 2*Int(b2) + 1
+                    counts[idx] += 1
+                else
+                    for s in sys; discard!(s); end
+                end
+            end
+        end
+
+        @test n_success > 100
+
+        if n_success > 100
+            probs_measured = counts ./ n_success
+            probs_expected = probs_exact ./ norm_exact
+
+            for i in 1:4
+                sigma = sqrt(probs_expected[i] * (1 - probs_expected[i]) / n_success)
+                @test abs(probs_measured[i] - probs_expected[i]) < max(5 * sigma, 0.08)
             end
         end
     end
