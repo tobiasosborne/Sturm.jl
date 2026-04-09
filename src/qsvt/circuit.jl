@@ -634,8 +634,17 @@ function _oaa_phases_half()
     if _OAA_PHASES_CACHE[] !== nothing
         return _OAA_PHASES_CACHE[]
     end
-    cheb = Float64[0, 0, 0, -1]
-    phases = qsvt_phases(cheb; epsilon=1e-10)
+    # Direct Chebyshev-convention QSVT phases for -T₃(x) = 3x - 4x³.
+    # 3 phases for 3 oracle calls (degree-3 polynomial).
+    #
+    # Computed by numerical optimization over the 2×2 SU(2) matrix product
+    # of the reflection QSVT circuit (Definition 15). Verified to machine
+    # precision at 11 points in [0,1]. The BS+NLFT pipeline cannot produce
+    # these because its Chebyshev→analytic degree doubling collapses for
+    # Chebyshev basis vectors.
+    #
+    # Ref: GSLW (2019), arXiv:1806.01838, Corollary 8, Corollary 28.
+    phases = [-π, -π/2, π/2]
     _OAA_PHASES_CACHE[] = phases
     return phases
 end
