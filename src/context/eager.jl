@@ -168,6 +168,25 @@ function apply_cx!(ctx::EagerContext, control_wire::WireID, target_wire::WireID)
     end
 end
 
+function apply_ccx!(ctx::EagerContext, c1::WireID, c2::WireID, target::WireID)
+    q1 = _resolve(ctx, c1)
+    q2 = _resolve(ctx, c2)
+    qt = _resolve(ctx, target)
+    nc = length(ctx.control_stack)
+    if nc == 0
+        # Fast path: direct CCX, no control stack overhead
+        orkan_ccx!(ctx.orkan.raw, q1, q2, qt)
+    else
+        # CCX inside when(): treat as CX(c2, target) with extra control c1
+        push!(ctx.control_stack, c1)
+        try
+            _multi_controlled_cx!(ctx, c2, target)
+        finally
+            pop!(ctx.control_stack)
+        end
+    end
+end
+
 # ── Controlled rotation decompositions ────────────────────────────────────────
 # Ref: Nielsen & Chuang, "Quantum Computation and Quantum Information",
 # 10th Anniversary Edition, §4.3 "Controlled operations", Eq. (4.6)–(4.7).

@@ -29,4 +29,5 @@ using Sturm
     include("test_qsvt_phase_factors.jl")
     include("test_qsvt_reflect.jl")
     include("test_oaa.jl")
+    include("test_bennett_integration.jl")
 end

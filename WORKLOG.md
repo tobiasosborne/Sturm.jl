@@ -4,6 +4,98 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-11 — Session 14: Bennett.jl integration research (no code changes)
+
+### Research: Bennett.jl + Sturm.jl integration feasibility
+
+Comprehensive investigation of integrating Bennett.jl (reversible circuit compiler at `../research-notebook/Bennett.jl/`) into Sturm.jl's `when(q) do f(x) end`.
+
+**4 parallel research agents** surveyed:
+1. Bennett.jl codebase: pipeline, all supported LLVM instructions, gate types, soft-float, pebbling
+2. Sturm.jl `when()` mechanism: control stack, all 3 contexts, the 2-control ceiling, integration points
+3. Bennett.jl Vision PRD and version roadmap (v0.1–v0.9)
+4. Bennett.jl WORKLOG: 2012 lines of session history, all gate counts, all bugs
+
+### Key findings
+
+**Bennett.jl is production-quality for its scope**: 46 test files, 10K+ assertions, all ancillae verified zero. Handles Int8–Int64, all arithmetic, branching, bounded loops, tuples, and full IEEE 754 Float64 (branchless soft-float, bit-exact). SHA-256 round compiles and verifies (17,712 gates, 5,889 wires).
+
+**Gate-to-primitive mapping is exact**: NOT→Ry(π), CNOT→CX, Toffoli→CCX. Orkan already has native `ccx`. No new primitives needed.
+
+**Simulation is impossible for realistic circuits**: Int8 polynomial needs 264 ancilla wires → 272 total qubits → 2^272 amplitudes. EagerContext caps at 30 qubits. Bennett circuits target TracingContext (DAG capture) and future hardware, not statevector simulation.
+
+**The pebbling gap is the real blocker**: Current pebbling achieves 0.5% wire reduction (Bennett-an5). Must be fixed before integration has practical value.
+
+**Sturm's `when()` already provides the control**: No need for Bennett's `controlled()` wrapper. Executing a Bennett circuit inside `when(q)` automatically adds quantum control via the existing control stack — same overhead (NOT→CNOT, CNOT→Toffoli, Toffoli→controlled-Toffoli) but more flexible.
+
+### Breaking changes identified
+
+1. **`apply_ccx!`**: Native Toffoli method bypassing control stack overhead. Performance-critical for circuits with 256K+ Toffolis.
+2. **Batch allocation**: `allocate_batch!(ctx, n)` for hundreds/thousands of ancilla qubits.
+3. **`SubcircuitNode`**: New DAG node type for opaque Bennett circuits. Non-isbits, lives outside HotNode union (same treatment as CasesNode). Keeps DAG compact (1 node vs 717K).
+4. **`apply_reversible!`**: Bridge function mapping Bennett wires to Sturm qubits.
+
+### Decision: defer implementation until Bennett.jl pebbling matures
+
+Full vision plan written to `docs/bennett-integration-v01-vision.md`. No code changes this session — waiting for Bennett-an5 (pebbling) resolution.
+
+### Implementation plan written
+
+Granular red-green TDD plan at `docs/bennett-integration-implementation-plan.md`. 10 commits, ~25 tests, 4 modified files + 1 new source file + 1 new test file. Key steps:
+
+0. Add Bennett.jl (`../Bennett.jl/`, v0.4.0) as dev dependency
+1. `apply_ccx!` on all 3 contexts (direct `orkan_ccx!` for nc=0, Barenco cascade for nc≥1)
+2. `allocate_batch!`/`deallocate_batch!` on AbstractContext
+3. `apply_reversible!` in new `src/bennett/bridge.jl` — gate dispatch, ancilla lifecycle
+4. `SubcircuitNode` in dag.jl (deferred — v0.1 expands gates individually into HotNode DAG)
+5. `build_wire_map` helper
+6. End-to-end test (must find function ≤30 qubits total)
+7. Register in runtests.jl
+8. `apply_oracle!` high-level API
+9. `estimate_oracle_resources`
+10. OpenQASM export verification
+
+### Implementation complete — 74/74 tests pass
+
+**Files created:**
+- `src/bennett/bridge.jl` — `apply_reversible!`, `build_wire_map`, `apply_oracle!`, `estimate_oracle_resources` (~110 lines)
+- `test/test_bennett_integration.jl` — 74 tests across 8 testsets
+
+**Files modified:**
+- `Project.toml` — added Bennett.jl dev dependency
+- `src/context/abstract.jl` — added `apply_ccx!`, `allocate_batch!`, `deallocate_batch!`
+- `src/context/eager.jl` — `apply_ccx!` (direct `orkan_ccx!` for nc=0, Barenco cascade for nc>=1)
+- `src/context/tracing.jl` — `apply_ccx!` (records as CXNode with ncontrols=1)
+- `src/context/density.jl` — `apply_ccx!` (direct `orkan_ccx!`, nc>=1 errors)
+- `src/Sturm.jl` — include `bennett/bridge.jl`, export new API
+- `test/runtests.jl` — include test_bennett_integration.jl
+
+**Timing (test suite):**
+- Circuit compilation: identity 5.8s (JIT warmup), x+1 0.9s, x+3 0.03s
+- apply_ccx! tests: 4.7s (Orkan JIT)
+- End-to-end tests: 4m33s (17 EagerContext runs, dominated by context setup)
+- Total Bennett tests: 4m39s (74 tests)
+
+**Gotcha: `reversible_compile` is expensive on first call (~6s JIT warmup).** Subsequent calls with similar types are fast (0.03-0.9s). Tests should compile circuits once and reuse across test values.
+
+### Critical pre-implementation question — RESOLVED
+
+Smallest Bennett circuits that fit in MAX_QUBITS=30:
+
+| Function | Wires | Gates | Ancillae | Fits? |
+|---|---|---|---|---|
+| identity Int8 | 17 | 10 | 1 | YES |
+| x>>1 Int8 | 25 | 26 | 9 | YES |
+| x*2 Int8 | 25 | 24 | 9 | YES |
+| x+1 Int8 | 26 | 100 | 10 | YES |
+| x+3 Int8 | 26 | 102 | 10 | YES |
+| x&0x0f Int8 | 33 | 34 | 17 | NO (>30) |
+| NOT Int8 | 33 | 58 | 17 | NO (>30) |
+
+**Use `identity`, `x+1`, `x+3`, `x>>1`, `x*2` for EagerContext tests.** Identity (17 wires) is the easiest. Addition (26 wires) exercises Toffoli gates and is the best end-to-end test.
+
+---
+
 ## 2026-04-09 — Session 13: OAA research + implementation + two critical bugs found and fixed
 
 ### Research round: 3+1 protocol for OAA design

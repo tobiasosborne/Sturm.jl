@@ -139,6 +139,17 @@ function apply_cx!(ctx::DensityMatrixContext, control_wire::WireID, target_wire:
     end
 end
 
+function apply_ccx!(ctx::DensityMatrixContext, c1::WireID, c2::WireID, target::WireID)
+    q1 = _resolve(ctx, c1)
+    q2 = _resolve(ctx, c2)
+    qt = _resolve(ctx, target)
+    if isempty(ctx.control_stack)
+        orkan_ccx!(ctx.orkan.raw, q1, q2, qt)
+    else
+        error("Multi-controlled Toffoli (additional when() controls) not yet implemented for DensityMatrixContext")
+    end
+end
+
 # ── Measurement for density matrix ───────────────────────────────────────────
 
 """

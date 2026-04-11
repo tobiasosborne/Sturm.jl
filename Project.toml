@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Tobias Osborne"]
 
 [deps]
+Bennett = "d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"

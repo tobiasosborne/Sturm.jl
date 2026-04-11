@@ -88,6 +88,21 @@ function apply_cx!(ctx::TracingContext, control_wire::WireID, target_wire::WireI
     push!(ctx.dag, CXNode(control_wire, target_wire, c1, c2, nc))
 end
 
+function apply_ccx!(ctx::TracingContext, c1::WireID, c2::WireID, target::WireID)
+    _resolve_tracing(ctx, c1)
+    _resolve_tracing(ctx, c2)
+    _resolve_tracing(ctx, target)
+    # CCX(c1, c2, target) = CX(c2, target) controlled on c1 + stack controls
+    nc_stack, sc1, sc2 = _inline_from_stack(ctx.control_stack)
+    if nc_stack == 0
+        push!(ctx.dag, CXNode(c2, target, c1, _ZERO_WIRE, UInt8(1)))
+    elseif nc_stack == 1
+        push!(ctx.dag, CXNode(c2, target, sc1, c1, UInt8(2)))
+    else
+        error("apply_ccx! inside >1 nested when(): would need 3+ controls, exceeds DAG inline limit")
+    end
+end
+
 # ── Measurement (symbolic) ───────────────────────────────────────────────────
 
 function measure!(ctx::TracingContext, wire::WireID)::Bool
