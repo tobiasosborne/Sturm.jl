@@ -1,8 +1,8 @@
 # Sturm.jl
 
-A Julia quantum programming language where **functions are channels**, the **quantum-classical boundary is a type boundary**, and **QECC is a higher-order function**.
+A Julia quantum programming language where **functions are channels**, the **quantum-classical boundary is a type boundary**, **QECC is a higher-order function**, and **any Julia function is a quantum oracle**.
 
-Sturm is not a circuit construction library. It is a quantum programming DSL with exactly four primitives, a type system that makes measurement implicit, and library functions that make quantum algorithms disappear into higher-order patterns.
+Sturm is not a circuit construction library. It is a quantum programming DSL with exactly four primitives, a type system that makes measurement implicit, library functions that make quantum algorithms disappear into higher-order patterns, and a reversible compiler that turns plain Julia code into quantum circuits automatically.
 
 ## Design Principles
 
@@ -27,6 +27,8 @@ result::Bool = q    # measurement happens here, at the type boundary
 **P7. The abstraction is dimension-agnostic.** The core must not assume d=2 in a way that forecloses qutrits or anyonic systems.
 
 **P8. Quantum promotion follows Julia's numeric tower.** Classical values auto-promote to quantum when combined with quantum values, just as `Int + Float64 -> Float64`. Initial construction is explicit (`QInt{8}(42)` is like `complex(1)`). Mixed operations promote the classical side.
+
+**P9. Any Julia function is a quantum oracle.** Write a plain Julia function `f(x::Int8) = x^2 + 3x + 1`. Call `oracle(f, x)` where `x` is a `QInt`. The function is compiled to a reversible circuit via [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl) (LLVM IR extraction + Bennett's 1973 construction) and executed on the quantum register. Inside `when()`, it becomes a controlled oracle automatically. No manual circuit construction. No gate decomposition. Just write normal code.
 
 ## The Four Primitives
 
@@ -95,6 +97,53 @@ end
 ```
 
 `QInt{8}` carries width in the type. Julia specialises on it. The `+` operator is a reversible ripple-carry circuit built entirely from `xor=` and `when()`.
+
+### Quantum Oracles from Plain Julia (P9)
+
+Write normal Julia code. Get quantum circuits.
+
+```julia
+# Any pure Julia function:
+f(x::Int8) = x^2 + 3x + 1
+
+@context EagerContext() begin
+    x = QInt{2}(2)            # 2-bit quantum register
+    y = oracle(f, x)          # Bennett compiles f, executes on quantum register
+    result = Int(y)            # type boundary = measurement
+    @assert result == 3        # (4+6+1) mod 4 = 3
+    @assert Int(x) == 2        # input preserved (Bennett keeps inputs intact)
+end
+```
+
+Controlled oracles — just wrap in `when()`:
+
+```julia
+@context EagerContext() begin
+    q = QBool(1/2)             # control in superposition
+    x = QInt{2}(2)
+    when(q) do
+        y = oracle(f, x)       # controlled version — automatic
+    end
+end
+```
+
+Pre-compile for reuse across shots (like Enzyme's `gradient`):
+
+```julia
+qf = quantum(f)                # compile once, cache the circuit
+
+@context EagerContext() begin
+    x = QInt{2}(3)
+    y = qf(x)                  # reuses cached circuit — no recompilation
+end
+```
+
+Resource estimation without execution:
+
+```julia
+r = estimate_oracle_resources(f, Int8)
+# => (gates=846, toffoli=352, t_count=2464, qubits=264, t_depth=...)
+```
 
 ### Quantum Promotion (P8)
 
@@ -202,7 +251,7 @@ M = classicalise(H!)
 
 ## Backend
 
-Sturm.jl delegates all linear algebra to [Orkan](https://github.com/tobiasosborne/orkan), a C17 statevector and density matrix simulator with OpenMP parallelism. Julia owns the type system, DSL, compilation, and channel algebra. Orkan owns the state vectors and density matrices.
+Sturm.jl delegates all linear algebra to [Orkan](https://github.com/tobiasosborne/orkan), a C17 statevector and density matrix simulator with OpenMP parallelism. Classical function compilation is handled by [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl), which extracts LLVM IR from plain Julia functions and compiles them to reversible circuits via Bennett's 1973 construction. Julia owns the type system, DSL, compilation, and channel algebra. Orkan owns the state vectors. Bennett.jl owns the classical-to-reversible compilation.
 
 Three backends share the same DSL interface:
 
@@ -223,7 +272,7 @@ julia> ] add https://github.com/tobiasosborne/Sturm.jl
 
 ```bash
 julia --project -e 'using Pkg; Pkg.test()'
-# 10626 tests
+# 10700+ tests (including 108 Bennett integration tests)
 ```
 
 ## Project Status
@@ -242,6 +291,7 @@ All 12 phases of the [implementation plan](docs/PLAN.md) are structurally comple
 | 12 | QECC (Steane [[7,1,3]]) | Complete (encoding circuit needs verification) |
 | 13 | Trotter-Suzuki simulation (evolve!, ising, heisenberg) | Complete |
 | 14 | P8 quantum promotion (mixed-type arithmetic) | Complete |
+| 15 | P9 Bennett.jl integration (`oracle`, `quantum`) | Complete |
 
 See `WORKLOG.md` for detailed session notes and gotchas.
 

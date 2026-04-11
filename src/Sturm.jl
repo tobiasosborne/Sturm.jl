@@ -24,6 +24,9 @@ include("channel/openqasm.jl")
 # Quantum control (must come before gates, passes, and library)
 include("control/when.jl")
 
+# Bennett.jl reversible circuit integration
+include("bennett/bridge.jl")
+
 # Convenience gates (built from primitives)
 include("gates.jl")
 
@@ -123,5 +126,9 @@ export BlockEncoding, block_encode_lcu
 # QSVT
 export QSVTPhases, apply_processing_op!
 export qsvt_combined_reflect!, oaa_amplify!
+
+# Bennett integration
+export apply_reversible!, apply_oracle!, build_wire_map, estimate_oracle_resources
+export oracle, quantum, QuantumOracle
 
 end # module Sturm
