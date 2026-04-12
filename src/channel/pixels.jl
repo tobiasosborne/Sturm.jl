@@ -123,20 +123,29 @@ _resolve_scheme(s::PixelScheme) = s
 # ── to_pixels ────────────────────────────────────────────────────────────────
 
 """
-    to_pixels(ch::Channel; scheme=:birren_dark, column_width=3) -> Matrix{RGB{N0f8}}
+    to_pixels(ch::Channel; scheme=:birren_dark, column_width=3, gaps=true) -> Matrix{RGB{N0f8}}
 
-Render `ch` as a pixel-art circuit. Returns a `Matrix{RGB{N0f8}}` of size
-`n_wires × (column_width * n_cols)` (plus classical-bit rows below, if any).
+Render `ch` as a pixel-art circuit.
 
-Each wire is 1 pixel tall. Each scheduled column is `column_width` pixels wide
-(default 3: `shadow | gate-centre | shadow`). The gate centre pixel encodes
-the operation type by colour (see `PixelScheme`); the flanking shadow pixels
-give the centre a visual halo independent of the wire colour.
+Each wire is 1 pixel tall. By default (`gaps=true`), a 1-pixel-tall bg row
+separates every adjacent pair of wires — giving the image its signature
+striped appearance and room for multi-qubit gates' vertical connectors to
+run between rows. Set `gaps=false` for maximum density.
+
+Each scheduled column is `column_width` pixels wide (default 3:
+`shadow | gate-centre | shadow`).
+
+Grid geometry (with gaps, 0-indexed wire k, 1-indexed grid row):
+- Quantum wire k → grid row `2k + 1`
+- Gap between wires k and k+1 → grid row `2k + 2`
+- Classical bit j → grid row `2(W + j) + 1`
+- Total height → `2(W + B) - 1`
 
 ASAP-scheduled columns from `_draw_schedule` determine horizontal gate
-positions — the same packing the ASCII drawer uses.
+positions — identical to the ASCII drawer's layout.
 """
-function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3)
+function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3,
+                    gaps::Bool=true)
     column_width < 3 && error("column_width must be >= 3 (shadow|gate|shadow)")
     isodd(column_width) || error("column_width must be odd (centre pixel is the gate)")
 
@@ -152,46 +161,54 @@ function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3)
 
     W = length(wires)
     B = length(bit_rows)
-    H = W + B                               # 1 pixel per wire, 1 per classical bit
-    Wd = column_width * max(n_cols, 1)      # total width
+    stride = gaps ? 2 : 1
+    # Total rows: (W+B) wire rows + (W+B-1) gap rows when gaps=true
+    H = (W + B) == 0 ? 0 : stride * (W + B) - (gaps ? 1 : 0)
+    Wd = column_width * max(n_cols, 1)
 
     img = fill(sch.bg, H, Wd)
 
-    # Paint default quantum wires across the full width
-    for i in 1:W
+    # Grid-row helper: 0-indexed wire k ∈ [0, W+B-1] → 1-indexed grid row.
+    # Quantum wires first, classical bits after.
+    # Classical wire row lookup: bit j → wire-index slot (W + j).
+    _grid_row = (k_zero_based::Int) -> stride * k_zero_based + 1
+
+    # Paint default quantum wires on their wire rows only (gap rows stay bg).
+    for i in 0:W-1
+        r = _grid_row(i)
         for c in 1:Wd
-            img[i, c] = sch.q_wire
+            img[r, c] = sch.q_wire
         end
     end
 
-    # Classical wires start blank; they get painted from each Observe's column.
-
-    # Absolute bit-row index: classical wires are rows W+1 .. W+B.
+    # Absolute bit-row index: bit j ∈ [0, B-1] at wire-slot (W + j).
     bit_row_abs = Dict{UInt32,Int}()
     for (rid, bidx) in bit_rows
-        bit_row_abs[rid] = W + 1 + bidx
+        bit_row_abs[rid] = _grid_row(W + bidx)
     end
 
-    # Phase 4: paint classical wires from the Observe column rightward
+    # Paint classical wires from each Observe column rightward.
     _paint_classical_wires_px!(img, ch.dag, schedule, bit_row_abs, column_width, sch)
 
-    # Phase 5: paint each scheduled node
+    # Paint each scheduled node.
+    stride_int = stride
     for (i, node) in enumerate(ch.dag)
         col = schedule[i]
-        _paint_node_px!(img, node, col, column_width, row_of, bit_row_abs, sch, W)
+        _paint_node_px!(img, node, col, column_width, row_of, bit_row_abs,
+                        sch, W, stride_int)
     end
 
     return img
 end
 
 """
-    to_png(ch::Channel, path::AbstractString; scheme=:birren_dark, column_width=3)
+    to_png(ch::Channel, path::AbstractString; scheme=:birren_dark, column_width=3, gaps=true)
 
 Render `ch` as a PNG file at `path`. Thin wrapper around `to_pixels` + PNGFiles.save.
 """
 function to_png(ch::Channel, path::AbstractString;
-                 scheme=:birren_dark, column_width::Int=3)
-    img = to_pixels(ch; scheme=scheme, column_width=column_width)
+                 scheme=:birren_dark, column_width::Int=3, gaps::Bool=true)
+    img = to_pixels(ch; scheme=scheme, column_width=column_width, gaps=gaps)
     PNGFiles.save(path, img)
     return path
 end
@@ -216,53 +233,60 @@ end
 
 # ── Per-node painter ─────────────────────────────────────────────────────────
 
-"""Paint a DAG node into its 3-px column slot.
+"""Paint a DAG node into its column slot.
 
 Column geometry: for scheduled column index `col` (0-based) and width `col_w`,
-the pixel range is `[col*col_w + 1 .. (col+1)*col_w]`. The centre pixel is
+pixel range is `[col*col_w + 1 .. (col+1)*col_w]`; centre pixel is
 `col*col_w + col_w÷2 + 1`. Left/right shadow pixels flank the centre.
+
+Row geometry (`stride` parameter): 0-indexed wire k → grid row `stride*k + 1`
+(1-indexed). With `stride=2` (default, `gaps=true`), rows `2k+2` are blank
+gap rows used by vertical connectors.
 """
 function _paint_node_px! end
 
-function _paint_node_px!(img, node::RyNode, col, col_w, row_of, bit_row_abs, sch, W)
-    row = row_of[node.wire] + 1    # 1-indexed
+@inline _grow(k::Int, stride::Int) = stride * k + 1
+
+function _paint_node_px!(img, node::RyNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.gate)
+    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.gate, stride)
 end
 
-function _paint_node_px!(img, node::RzNode, col, col_w, row_of, bit_row_abs, sch, W)
-    row = row_of[node.wire] + 1
+function _paint_node_px!(img, node::RzNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.gate)
+    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.gate, stride)
 end
 
-function _paint_node_px!(img, node::PrepNode, col, col_w, row_of, bit_row_abs, sch, W)
-    row = row_of[node.wire] + 1
+function _paint_node_px!(img, node::PrepNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.prep)
+    _paint_singleton_px!(img, node, row, x_c, col_w, row_of, sch, W, sch.prep, stride)
 end
 
-function _paint_node_px!(img, node::CXNode, col, col_w, row_of, bit_row_abs, sch, W)
+function _paint_node_px!(img, node::CXNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    tgt_row = row_of[node.target] + 1
-    ctrl_row = row_of[node.control] + 1
-    extra_ctrl_rows = Int[row_of[w] + 1 for w in get_controls(node)]
+    tgt_row = _grow(row_of[node.target], stride)
+    ctrl_row = _grow(row_of[node.control], stride)
+    extra_ctrl_rows = Int[_grow(row_of[w], stride) for w in get_controls(node)]
     all_ctrl_rows = vcat(ctrl_row, extra_ctrl_rows)
 
     all_rows = sort(vcat(all_ctrl_rows, tgt_row))
     rmin, rmax = first(all_rows), last(all_rows)
 
-    # Shadow the full 3-px column on every row from rmin..rmax
+    # Shadow every row from rmin..rmax (every pixel of the column)
     for r in rmin:rmax
         _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
     end
 
-    # Paint centre pixels:
+    # Participating wire-row centre pixels
     for r in all_ctrl_rows
         img[r, x_c] = sch.control
     end
     img[tgt_row, x_c] = sch.target
-    # Uninvolved interior rows get the connector colour
+    # Non-participating interior rows (both uninvolved wires AND gap rows)
+    # get the connector colour at the centre pixel.
     involved = Set{Int}(all_ctrl_rows); push!(involved, tgt_row)
     for r in (rmin+1):(rmax-1)
         r in involved && continue
@@ -270,13 +294,11 @@ function _paint_node_px!(img, node::CXNode, col, col_w, row_of, bit_row_abs, sch
     end
 end
 
-function _paint_node_px!(img, node::ObserveNode, col, col_w, row_of, bit_row_abs, sch, W)
-    row = row_of[node.wire] + 1
+function _paint_node_px!(img, node::ObserveNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    # Measurement cell on the quantum wire
     _paint_shadow_cell_px!(img, row, x_c, col_w, sch)
     img[row, x_c] = sch.measurement
-    # Drain from quantum wire down to classical bit row
     if haskey(bit_row_abs, node.result_id)
         br = bit_row_abs[node.result_id]
         for r in (row+1):br
@@ -286,30 +308,31 @@ function _paint_node_px!(img, node::ObserveNode, col, col_w, row_of, bit_row_abs
     end
 end
 
-function _paint_node_px!(img, node::DiscardNode, col, col_w, row_of, bit_row_abs, sch, W)
-    row = row_of[node.wire] + 1
+function _paint_node_px!(img, node::DiscardNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
     _paint_shadow_cell_px!(img, row, x_c, col_w, sch)
     img[row, x_c] = sch.discard
 end
 
-function _paint_node_px!(img, node::CasesNode, col, col_w, row_of, bit_row_abs, sch, W)
-    # v1: placeholder block — render a magenta stripe spanning all wires in
-    # the super-column.
+function _paint_node_px!(img, node::CasesNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
+    # v1 placeholder — magenta stripe across the quantum wire section.
     x_c = col * col_w + col_w ÷ 2 + 1
-    for r in 1:W
+    last_row = _grow(W - 1, stride)
+    for r in 1:last_row
         _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
-        img[r, x_c] = sch.measurement  # magenta-ish surrogate for v1
+        img[r, x_c] = sch.measurement
     end
 end
 
-"""Paint a single-qubit gate (including when()-controls): shadow on the full
-row-range, centre pixel = `centre_colour` on target, control dot on each
-extra-control row, connector on interior uninvolved rows."""
+"""Paint a single-qubit gate (including when()-controls). The target row is
+given absolute (1-indexed, stride-aware). Extra controls resolved via
+`row_of` + `stride`. Shadow on every row in [rmin, rmax]; connector centre
+pixel in uninvolved interior rows (both wire and gap rows)."""
 function _paint_singleton_px!(img, node, target_row::Int, x_c::Int, col_w::Int,
                                row_of, sch::PixelScheme, W::Int,
-                               centre_colour::RGB{N0f8})
-    extra_ctrl_rows = Int[row_of[w] + 1 for w in get_controls(node)]
+                               centre_colour::RGB{N0f8}, stride::Int)
+    extra_ctrl_rows = Int[_grow(row_of[w], stride) for w in get_controls(node)]
 
     if isempty(extra_ctrl_rows)
         _paint_shadow_cell_px!(img, target_row, x_c, col_w, sch)
@@ -320,17 +343,13 @@ function _paint_singleton_px!(img, node, target_row::Int, x_c::Int, col_w::Int,
     all_rows = sort(vcat(extra_ctrl_rows, target_row))
     rmin, rmax = first(all_rows), last(all_rows)
 
-    # Shadow every participating row's 3-px column
     for r in rmin:rmax
         _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
     end
-    # Controls
     for r in extra_ctrl_rows
         img[r, x_c] = sch.control
     end
-    # Target
     img[target_row, x_c] = centre_colour
-    # Connector in uninvolved interior rows
     involved = Set{Int}(extra_ctrl_rows); push!(involved, target_row)
     for r in (rmin+1):(rmax-1)
         r in involved && continue
