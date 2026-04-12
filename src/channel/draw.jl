@@ -28,11 +28,13 @@ Keyword arguments:
 
 See also: `Base.show(::IO, ::MIME"text/plain", ::Channel)` which wraps this.
 """
-function to_ascii(ch::Channel; unicode::Bool=true, color::Bool=false)
+function to_ascii(ch::Channel; unicode::Bool=true, color::Bool=false,
+                   compact::Bool=false)
     isempty(ch.dag) && isempty(ch.input_wires) && isempty(ch.output_wires) && return ""
 
     row_of, wires = _draw_collect_wires(ch)
-    schedule, n_cols = _draw_schedule(ch.dag, row_of)
+    schedule, n_cols = compact ? _draw_schedule_compact(ch.dag, row_of) :
+                                   _draw_schedule(ch.dag, row_of)
     col_widths = _draw_col_widths(ch.dag, schedule, n_cols)
     col_offsets = _draw_col_offsets(col_widths)
 
@@ -361,24 +363,39 @@ end
 
 """Paint `│` in gap rows and `┼` in interior wire rows between `rmin` and `rmax`
 at character column `x`. Rows listed in `skip_rows` already hold glyphs (gate
-label, control dot, target dot) and are not overwritten — the vertical line
-simply connects through them."""
+label, control dot, target dot) and are not overwritten.
+
+In compact mode a co-scheduled single-qubit gate may already occupy an
+interior wire cell — the wire char `─` is replaced with `┼`, but ANY other
+character (gate label, control/target) is preserved (gate wins)."""
 function _paint_vertical!(grid, styles, rmin::Int, rmax::Int, x::Int, unicode::Bool;
                            skip_rows=())
     rmin == rmax && return
     vbar = unicode ? '│' : '|'
     cross = unicode ? '┼' : '+'
+    wire = unicode ? '─' : '-'
+    cwire = unicode ? '═' : '='
     # Gap rows between adjacent wires: grid row 2k+2 for k in [rmin, rmax-1]
     for k in rmin:rmax-1
-        grid[2k + 2, x] = vbar
-        styles[2k + 2, x] = _STYLE_CX
+        r = 2k + 2
+        # Gap rows are blank by default — paint unless something has already
+        # painted here (e.g. another vertical from a co-scheduled node).
+        if grid[r, x] == ' ' || grid[r, x] == vbar
+            grid[r, x] = vbar
+            styles[r, x] = _STYLE_CX
+        end
     end
-    # Interior wire rows: grid row 2k+1 for k in (rmin, rmax), skipping rows
-    # that already contain gate glyphs.
+    # Interior wire rows: grid row 2k+1 for k in (rmin, rmax). Skip involved
+    # rows; on uninvolved rows, upgrade `─`/`═` to `┼` but preserve gate chars.
     for k in (rmin+1):(rmax-1)
         k in skip_rows && continue
-        grid[2k + 1, x] = cross
-        styles[2k + 1, x] = _STYLE_CX
+        r = 2k + 1
+        cur = grid[r, x]
+        if cur == wire || cur == cwire
+            grid[r, x] = cross
+            styles[r, x] = _STYLE_CX
+        end
+        # else: leave it (gate char wins)
     end
 end
 
@@ -625,5 +642,6 @@ Respects IOContext keys:
 function Base.show(io::IO, ::MIME"text/plain", ch::Channel)
     color = get(io, :color, false)::Bool
     unicode = get(io, :unicode, true)::Bool
-    print(io, to_ascii(ch; unicode=unicode, color=color))
+    compact = get(io, :compact, false)::Bool
+    print(io, to_ascii(ch; unicode=unicode, color=color, compact=compact))
 end
