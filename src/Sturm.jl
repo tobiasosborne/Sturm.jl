@@ -20,6 +20,7 @@ include("channel/channel.jl")
 include("channel/trace.jl")
 include("channel/compose.jl")
 include("channel/openqasm.jl")
+include("channel/draw.jl")
 
 # Quantum control (must come before gates, passes, and library)
 include("control/when.jl")
@@ -94,7 +95,7 @@ export superpose!, interfere!, fourier_sample, phase_estimate
 export find, amplify, phase_flip!
 
 # Channel / tracing
-export Channel, trace, to_openqasm, ⊗, n_inputs, n_outputs
+export Channel, trace, to_openqasm, to_ascii, ⊗, n_inputs, n_outputs
 export ClassicalRef
 
 # Optimisation passes

@@ -4,6 +4,102 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-12 — Session 16: ASCII circuit drawer (Sturm.jl-11a)
+
+### Delivered
+
+`to_ascii(ch::Channel; unicode=true, color=false) -> String` and `Base.show(::IO, ::MIME"text/plain", ::Channel)` in `src/channel/draw.jl` (~630 lines, ~50 tests). Terminal-first Unicode circuit rendering with an ASCII fallback and opt-in ANSI color.
+
+Design synthesised from three parallel research agents (prior art, visual conventions, algorithmic core). Winning algorithm: Stim-style ASAP packing with span-based conflict detection, Cirq-style `│`-passthrough rendering (no boxes for multi-qubit gates), pattern-matched gate labels (`Z`, `S`, `T`, `X`) with pretty π-fraction formatting.
+
+### Five-phase pipeline
+
+1. **Collect wires** — first-appearance order, inputs fixed at top.
+2. **Schedule columns** — ASAP with *Level-B* occupation: each node reserves the contiguous row range `[min_row..max_row]` across all its wires (own target/control + up to 2 when-controls).
+3. **Compute column widths** — variable per-column, `max(glyph_width) + 2`.
+4. **Rasterise** — *Level-A* drawing: endpoint glyphs on participating rows, `│` in gap rows, `┼` crossing interior wires. Because Phase 2 reserved contiguous ranges, interior cells are guaranteed free → no compositing against gate glyphs.
+5. **Emit** — `String` with left-margin labels (`q0:`, `c0:`), rectangular padding.
+
+The separation of *Level-B scheduling* from *Level-A drawing* is load-bearing: the scheduler over-reserves so the renderer can crosswire without running into gates.
+
+### Gotchas
+
+- **Julia strings are byte-indexed, not char-indexed.** `label[i]` crashes on multi-byte chars like `π` (2 UTF-8 bytes). Fix: `collect(label)` for char-by-char iteration. Same for `length()` — returns char count on `String`, byte count would need `ncodeunits`. Column widths must use char count.
+- **`_wires_of` collision.** I named a helper `_wires_of(node)` returning a tuple; `src/passes/gate_cancel.jl:268` already defines `_wires_of(node)` returning a `Set{WireID}`. Different semantics, method overwriting error at precompile. Renamed mine to `_draw_touches`. Lesson: grep for helper names across the whole `src/` tree before adding.
+- **Paint-order matters for overlapping glyphs.** Initial version painted `●` control dots then `_paint_vertical!` drew `┼` on interior wire rows — clobbering the control dots when a when()-control was a middle wire (e.g., Toffoli with ctrl1, ctrl2, target). Fix: `_paint_vertical!` takes a `skip_rows` set of already-painted rows.
+- **Classical-wire crossing character depends on cell state, not just row.** `╫` (double-through-single) crosses an active quantum wire; `╬` (double-through-double) crosses an active classical wire; `║` crosses a gap or inactive row. An earlier-measured qubit's drain passing through a LATER bit row (c0 before q0 is measured) must use `║` because the classical wire hasn't started yet. Fix: check `grid[r, x]` current content at paint time.
+- **ASAP reorders visual sequence vs DAG sequence.** In teleportation, `Bool(msg)` comes first in the DAG but its Observe node may be SCHEDULED LATER than `Bool(alice)` because the q1 wire became free earlier. This means the classical bit labels (c0, c1) match DAG order, not visual order. Users might expect visual order — this is worth documenting. Not a bug, a design choice.
+- **Grid row layout:** 2W-1 quantum rows (wire, gap, wire, gap, ..., wire), then 1 separator if bits exist, then B bit rows. Absolute row index of bit `bidx` = `n_q_rows + 2 + bidx` (not `+1` — off-by-one caught by the teleportation output showing c0's `╩` on the separator row).
+
+### Visual conventions adopted (literature consensus)
+
+| Element | Unicode | ASCII |
+|---|---|---|
+| Quantum wire | `─` | `-` |
+| Classical wire | `═` | `=` |
+| Vertical connector (gap) | `│` | `\|` |
+| Wire crossed by vertical | `┼` | `+` |
+| Control | `●` | `@` |
+| CNOT target | `⊕` | `X` |
+| Measurement box | `┤M├` | `[M]` |
+| Drain vs quantum wire | `╫` | `+` |
+| Drain vs classical wire | `╬` | `#` |
+| Drain landing | `╩` | `^` |
+| Drain (gap) | `║` | `:` |
+| Discard | `▷` | `\|` |
+
+### Pattern matching (display-only)
+
+Single-op named gates recognised at display time:
+
+| DAG node | Label |
+|---|---|
+| `RzNode(π)` | `Z` |
+| `RzNode(π/2)` | `S` |
+| `RzNode(-π/2)` | `S†` |
+| `RzNode(π/4)` | `T` |
+| `RzNode(-π/4)` | `T†` |
+| `RyNode(π)` | `X` |
+
+**Not** recognised: H (= RzNode(π) + RyNode(π/2) — 2 nodes, would need multi-node pattern match). Y (= RzNode(π) + RyNode(π) — same). Kept conservative per CLAUDE.md Rule 9 (skepticism). Pattern matching is a v1.1 refinement.
+
+### Color scheme (opt-in via `IOContext(io, :color => true)`)
+
+Minimal, semantic:
+- `:green` gate labels
+- `:yellow` CNOT control/target and when()-control dots
+- `:red` measurement box, drain, landing
+- `:magenta` discard, CasesNode
+- `:cyan` preparation labels
+- `:light_black` classical wires (deemphasised)
+
+Zero dependencies — uses `Base.printstyled`.
+
+### What's NOT in v1
+
+- **CasesNode full recursive render.** v1 emits a `c#N?` placeholder. v2 would recursively render true/false sub-DAGs in a side-by-side boxed super-column.
+- **Horizontal wrapping.** Circuits wider than the terminal just overflow. v2 would paginate with repeated labels.
+- **Multi-node pattern match** (H, Y, Rx/Rxx families).
+- **Transposed rendering** (time vertical).
+
+### Files
+
+- `src/channel/draw.jl` (new) — all 5 phases + pattern matching + color.
+- `src/Sturm.jl` — include + export `to_ascii`.
+- `test/test_draw.jl` (new) — 50 tests across 14 testsets: empty, Bell, GHZ-3, non-adjacent CNOT, when-controls, measurement, discard, angle formatting, gate label recognition, rectangularity invariant, ASCII fallback, `Base.show` dispatch, Steane encoder smoke, `to_openqasm` regression.
+- `test/runtests.jl` — registered test_draw.jl.
+
+### Result
+
+50/50 draw tests pass. No regressions on test_channel (43), test_passes (49), test_bell (2002), test_when (507), test_teleportation (1002). Steane encoder renders correctly at 7 wires × 17 gates.
+
+### Close-out
+
+- `Sturm.jl-11a` resolved.
+- Next ready: `Sturm.jl-19h` (TrajectoryContext), `Sturm.jl-79j` (ZX pass), `Sturm.jl-2lp`/`pce` (Bennett multi-arg + comparator).
+
+---
+
 ## 2026-04-12 — Session 15: Steane [[7,1,3]] encoder rewrite (Sturm.jl-ewv)
 
 ### The bug
