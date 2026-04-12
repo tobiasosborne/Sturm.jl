@@ -173,4 +173,59 @@ using Sturm
             end
         end
     end
+
+    # ── find(f, T, Val(W)) — Grover from a plain Julia predicate (Bennett) ──
+
+    @testset "find(f, Int8, Val(3)): single target via Bennett predicate" begin
+        # Predicate: Int8(x == 5) — LSB is the accept bit.
+        # For N=8, M=1, 2 Grover iters, theoretical success ≈ sin²(5·arcsin(√(1/8)))² ≈ 94.5%.
+        accepts_5(x::Int8) = Int8(x == 5 ? 1 : 0)
+        N = 30
+        successes = 0
+        for _ in 1:N
+            @context EagerContext() begin
+                r = find(accepts_5, Int8, Val(3))
+                if r == 5
+                    successes += 1
+                end
+            end
+        end
+        # 94.5% ± 2σ ≈ 94.5% ± 8% at N=30 → require ≥ 25/30.
+        @test successes >= 25
+    end
+
+    @testset "find(f, Int8, Val(2)): predicate over 4-item space" begin
+        # Find x where x == 2 in a 2-qubit register.
+        # N=4, M=1, 1 iter: sin²(3·arcsin(√(1/4))) = sin²(3·π/6) = sin²(π/2) = 1.
+        accepts_2(x::Int8) = Int8(x == 2 ? 1 : 0)
+        N = 20
+        successes = 0
+        for _ in 1:N
+            @context EagerContext() begin
+                r = find(accepts_2, Int8, Val(2))
+                if r == 2
+                    successes += 1
+                end
+            end
+        end
+        # Theoretical 100% — allow a tiny margin for numerical noise.
+        @test successes >= 19
+    end
+
+    @testset "find(f, Int8, Val(3)): different target" begin
+        # Second single-target predicate to confirm the Bennett-compiled
+        # oracle is genuinely driven by the predicate (not hard-coded).
+        accepts_3(x::Int8) = Int8(x == 3 ? 1 : 0)
+        N = 30
+        successes = 0
+        for _ in 1:N
+            @context EagerContext() begin
+                r = find(accepts_3, Int8, Val(3))
+                if r == 3
+                    successes += 1
+                end
+            end
+        end
+        @test successes >= 25
+    end
 end

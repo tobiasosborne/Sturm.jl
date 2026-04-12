@@ -4,6 +4,260 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-12 — Session 15: Steane [[7,1,3]] encoder rewrite (Sturm.jl-ewv)
+
+### The bug
+
+`src/qecc/steane.jl` claimed to encode the Steane code but produced an invalid 16-term superposition for `|0⟩_L` instead of the canonical 8-term codeword `|C⟩` (Steane 1996 eq. 6). Root cause:
+
+- **4 H-gates instead of 3.** Old code put `H!` on q4, q5, q6, q7. The Steane [[7,1,3]] encoder needs H on exactly 3 "pivot" qubits — columns of the stabilizer generator matrix G_s that have exactly one 1. Applying H to 4 qubits doubled the superposition dimension from 8 to 16, producing states outside the codespace.
+- **Wrong CNOT targets.** Old CNOT network didn't match any valid stabilizer fan-out of G_s. E.g. `q[3] ⊻= q[4]` (line 78) didn't correspond to any generator.
+- **Data qubit at q1 conflicts with pivot structure.** With Sturm's declared stabilizers {X₁X₃X₅X₇, X₂X₃X₆X₇, X₄X₅X₆X₇}, the pivot columns are {1, 2, 4}. Putting data at q1 (a pivot) means q1 can't be an H-seed — forcing a broken workaround.
+
+### Ground-truth reference
+
+Steane 1996 (arXiv:quant-ph/9601029v3), Figure 3. Data qubit at position 3 (initial state |00Q0000⟩). Two initial CNOTs q3→q5, q3→q6 (per text p.18: transforms the |1⟩-branch ancilla start from |0000000⟩ to |0010110⟩ ∉ |C⟩, ensuring |1⟩_L → |¬C⟩). H on {q1, q2, q4} (the G_s pivots). Then row fan-outs: q1→{q3,q5,q7}, q2→{q3,q6,q7}, q4→{q5,q6,q7}. Total: 3 H + 11 CNOT = 14 gates.
+
+### The fix
+
+Rewrote `encode!(::Steane, ::QBool)` to implement Steane 1996 Fig 3 exactly. Data qubit placed internally at `q[3]`. Decoder is the exact reverse sequence (CNOT and H self-inverse; `H!² = -I` gives unphysical phase on ancillas, discarded).
+
+Output tuple convention changed: previously `q[1]` was "the data qubit"; now no index is special post-encoding (the information is transversally entangled). Only `decode!` needs to know — it returns `q[3]`. Tests access tuples by iteration, so no API breakage.
+
+### New tests (test_qecc.jl)
+
+Added three tests that actually validate the codewords (previously only roundtrip was checked, which passes for ANY self-inverse encoder/decoder pair, broken or not):
+
+1. **Canonical |C⟩ test**: encode |0⟩_L, measure all 7 qubits, verify bit string ∈ {8 codewords of |C⟩}. Over 500 shots, verify all 8 codewords appear (diversity check).
+2. **Canonical |¬C⟩ test**: same for |1⟩_L and |C⟩ ⊕ 1111111.
+3. **X_L = X₁...X₇ test**: encode |0⟩_L, apply transversal X, decode — expect |1⟩_L.
+
+Result: **1154/1154 pass** in 1.4s. Canonical codewords match Steane 1996 eq. 6 exactly.
+
+### Gotchas
+
+- **Sturm's H! is Ry(π/2)·Rz(π).** Applied to |0⟩ gives `-i|+⟩`, i.e. |+⟩ up to unphysical global phase. In the Steane encoder H! acts on ancillas outside any `when()` block, so global phase is invisible. Would matter if used inside controlled gates — don't.
+- **Pivot columns come from the stabilizer matrix, not the Hamming parity-check matrix.** Easy to confuse: [7,4,3] Hamming has parity bits at {1,2,4}, but Sturm's Steane stabilizer generators G_s have pivots at {1,2,4} for a different reason (each column of G_s has exactly one 1). The positions coincide by convention but the reasoning is independent.
+- **Roundtrip tests are almost useless for verifying an encoder.** Any self-inverse composition `f∘f⁻¹ = id` passes roundtrip regardless of whether `f` is correct. Always add state-level assertions (measure in the computational basis and compare to the expected codeword set, or apply known logical operators and check the result).
+- **Linear-resource transfer pattern.** `encode!` marks the INPUT QBool as consumed and returns fresh wrappers pointing at the same wires. This is how Julia-level linearity is transferred across the function boundary while the underlying wire stays live.
+
+### Files
+
+- `src/qecc/steane.jl` — full rewrite (~130 lines, comprehensive docstrings with equation references)
+- `test/test_qecc.jl` — added 3 new testsets, kept existing 4
+
+### Close-out
+
+- `Sturm.jl-ewv` resolved.
+- `Sturm.jl-nyc` (encode(ch::Channel, code) higher-order QECC) now unblocked — next target.
+
+---
+
+## 2026-04-12 — Session 15 (continued): Higher-order QECC — `encode(Channel, code)` (Sturm.jl-nyc)
+
+### P6 delivered (v0.1 scope)
+
+PRD §8.5 reference program:
+```julia
+ch = trace(teleport!)
+ch_enc = encode(ch, Steane())      # higher-order QECC
+qasm = to_openqasm(ch_enc)
+```
+
+Implemented `encode(ch::Channel{In,Out}, code::AbstractCode) -> Channel{In,Out}` in `src/qecc/channel_encode.jl`. The function traces a new channel that encodes each logical input, replays the original DAG transversally (Clifford gates only), and decodes each logical output.
+
+### v0.1 scope restrictions (all produce clear error messages)
+
+- **Clifford gates only** — rotation angles must be multiples of π/2. Non-Clifford (T, arbitrary Rz/Ry) rejected. Reason: transversal Rz(θ)^7 ≠ Rz_L(θ); non-Clifford logicals require magic-state distillation.
+- **Pure unitary** — no PrepNode (mid-circuit preparation), ObserveNode (measurement), DiscardNode, or CasesNode (classical branching) in the DAG. Reason: handling measurement requires syndrome extraction (Sturm.jl-971) which is a separate construction.
+- **No nested when-controls** — nodes must have `ncontrols == 0`. Reason: controlled transversal logicals for CSS codes need additional machinery.
+
+PRD §8.5 uses `teleport!` which has measurement, so §8.5 itself is not yet runnable. But the HIGHER-ORDER INTERFACE (`Channel → Channel`) is delivered for the Clifford-unitary subset — which is the part that demonstrates P6.
+
+### Implementation notes
+
+- Uses `trace(In) do logical_inputs...` to build the encoded Channel in a fresh context. Inside: call `encode!(code, q)` on each input, populate a wire_map `Dict{WireID → Tuple{WireID...}}`, iterate the original DAG, dispatch on node type to emit transversal gates, then call `decode!(code, block)` on each output block.
+- Works for any `AbstractCode` whose `encode!` returns `NTuple{N, QBool}` (block size N inferred from the tuple length). Not hardcoded to Steane; other CSS codes would work identically.
+- Transversal CNOT: pairwise CX between corresponding physical wires in the two blocks. Valid for CSS codes.
+
+### Tests (test_qecc.jl, new testsets)
+
+1. **Channel{1,1} type preserved**: `encode(trace(1 in/1 out), Steane()) → Channel{1,1}`.
+2. **DAG structure for logical X**: expect 47 nodes = 17 (encoder) + 7 (transversal RyNodes) + 17 (decoder) + 6 (DiscardNodes). Verified exactly.
+3. **Discard/Observe accounting**: exactly 6 DiscardNodes (ancilla cleanup), zero ObserveNodes.
+4. **Transversal Z**: 13 RzNode(π) total = 3 from encoder H's + 7 transversal + 3 from decoder H's.
+5. **Transversal CNOT on 2-block channel**: 51 CXNodes total = 22 from encode + 7 transversal + 22 from decode.
+6. **Reject T gate**: `@test_throws` on `q.φ += π/4`.
+7. **Reject nested when-controls**: `@test_throws` on `when(a) do b.θ += π end`.
+
+Smoke test: `to_openqasm(ch_enc)` for the X-gate channel produces valid OpenQASM 3.0 (992 chars, 7 qubits, correct cx/rz/ry structure).
+
+All 1173 tests in test_qecc.jl pass (up from 1154 after ewv; +19 new asserts).
+
+### Gotchas
+
+- **PrepNode is unused in practice.** `QBool(ctx, p::Real)` calls `apply_ry!` directly rather than emitting a `PrepNode`. Allocated ancillas default to |0⟩ implicitly in the trace semantics. My v0.1 encode() rejects PrepNodes for safety, but it's actually a dead branch.
+- **H!² gives unphysical -1 per qubit.** For 3 ancillas in encoder + 3 in decoder = 6 H!² applications, the cumulative phase is (-1)^6 = +1. No observable artifact.
+- **`encode!` transfers linear ownership via fresh rewrap.** Calling `encode!` from inside a new trace() block works because the input `logical` QBool's `consumed=false` flag is checked before and flipped after — all gates flow through normally. The returned 7-tuple has fresh `consumed=false` wrappers pointing at the same wires, ready for further operations.
+
+### Close-out
+
+- `Sturm.jl-nyc` resolved (v0.1 scope — Clifford unitary).
+- Files: `src/qecc/channel_encode.jl` (new), `src/Sturm.jl` (include + export), `test/test_qecc.jl` (+7 testsets).
+- Reference program PRD §8.5 partially delivered (Clifford unitary portion). Full `encode(trace(teleport!), Steane())` requires Sturm.jl-971 (syndrome extraction for measurement handling).
+- Next: `Sturm.jl-qie` (`find(f)` Grover-from-predicate).
+
+---
+
+## 2026-04-12 — Session 15 (continued): Grover from plain Julia predicate (Sturm.jl-qie)
+
+### P5 delivered via `find(f, T, Val(W))`
+
+PRD P5 ("no gates, no qubits"): quantum algorithms should be library functions that accept domain logic as plain Julia. Bennett integration was the enabling tech; `find(f, T, Val(W))` is the first flagship library function to consume it.
+
+Added new method in `src/library/patterns.jl`:
+```julia
+find(f::Function, ::Type{T}, ::Val{W}; n_marked::Int=1) where {T, W}
+```
+
+User writes a plain Julia predicate `f :: T → T` where the LSB of `f(x)` is the accept bit. Bennett compiles it; `find` builds a phase oracle via the compute–Z–uncompute pattern:
+
+1. Allocate `n_out = length(circuit.output_wires)` output wires at |0⟩
+2. `apply_reversible!` computes `output = f(x)`
+3. `apply_rz!(output[1], π)` phase-flips states where LSB=1
+4. `apply_reversible!` again XORs f(x) back, returning output to |0⟩
+5. Deallocate output wires (cleanly at |0⟩)
+6. Standard Grover diffusion `_hadamard_all! ∘ _diffusion! ∘ _hadamard_all!`
+
+Two oracle calls per iteration. Bennett's internal ancillas are managed by `apply_reversible!` (allocated, gates applied, deallocated) each call.
+
+### Disambiguation
+
+The existing `find(oracle!::Function, ::Val{W})` takes a PHASE oracle on QInt. Both signatures are `::Function`; Julia can't dispatch on the function's argument types. Added `::Type{T}` as a disambiguating positional argument. Users call `find(f, Int8, Val(3))` to opt into the Bennett path. This is idiomatic (parallels e.g. `parse(Int, "42")`).
+
+### Tests (test_grover.jl, new testsets)
+
+- `find(accepts_5, Int8, Val(3))`: 25+/30 succeed (theoretical 94.5%)
+- `find(accepts_2, Int8, Val(2))`: 19+/20 succeed (theoretical 100%)
+- `find(accepts_3, Int8, Val(3))`: 25+/30 succeed (different target, confirms oracle-driven)
+
+All 284 Grover tests pass.
+
+### Bennett upstream bugs found and fixed (Tobias)
+
+This work surfaced two related Bennett.jl bugs during development:
+
+1. **`IRCast` narrowing typo** (`src/Bennett.jl:75`): accessed nonexistent `inst.src_width` field with wrong constructor argument order. Triggered by any predicate with an integer cast (e.g. `x == Int(5)` which implicitly casts `Int` literal).
+2. **`lower_and!` BoundsError on i1 operands** (`src/Bennett.jl:72-74`): narrowing replaced `width=1` with `width=W` for i1 values (icmp results, LLVM `and i1` from `&&`). When `lower_and!` looped `1:W` over a 1-wire operand, over-indexed.
+
+Both fixed upstream with the same pattern: `width > 1 ? W : 1` guard, matching the existing `IRPhi` pattern. The class of bugs ("narrowing forgets i1 is logical width, not numeric") is now systematically closed across all `_narrow_inst` methods that carry width fields.
+
+### Gotchas
+
+- **Sturm EagerContext 30-qubit cap is the REAL limit for predicate tests**, not Bennett. `x > 5` at `bit_width=3` compiles fine but needs ~32 qubits (comparison lowers to subtract-with-carry, adding ancillas). `x * x` similar. For EagerContext-level testing, stick to `==` and bitwise predicates that keep ancilla count down.
+- **Bennett `i1 is logical width, not numeric width`** (Tobias's phrasing). When narrowing IR to bit_width=W, 1-bit values (icmp, `&&` results) must be preserved as 1-bit. Any future `_narrow_inst` or related pass must enforce this invariant.
+- **Compound Boolean predicates need `&&` / `||` lowering.** Previously crashed; now works (Bennett 1d7af3e). Still hit Sturm's qubit cap for non-trivial cases — the circuits are correct but too big for EagerContext.
+- **Bug report discipline (new memory):** don't prescribe a one-line fix unless you've actually run the fixed code. My original IRCast report asserted "this is THE fix"; Tobias tested it and it crashed with a different error. Look for sibling functions that already handle the relevant edge case (here: `IRPhi`'s `width > 1 ? W : 1` was the tell I missed).
+
+### Close-out
+
+- `Sturm.jl-qie` resolved. `find(f, T, Val(W))` works for equality and bitwise predicates that stay under the 30-qubit EagerContext cap.
+- Files: `src/library/patterns.jl` (+50 lines new method), `test/test_grover.jl` (+3 testsets).
+- Upstream: Bennett.jl commits resolving IRCast + `_narrow_inst` i1 handling.
+- Next: `Sturm.jl-2lp` (QInt `<` and `==` correctness via Bennett) + `Sturm.jl-pce` (multi-arg oracle for 2-input Bennett predicates).
+
+---
+
+## 2026-04-12 — Session 15 (end): v0.2 direction research + handoff
+
+After finishing ewv/nyc/qie, Tobias asked for research on two visionary directions:
+
+1. **Visualization** for output DAGs/circuits
+2. **Simulation beyond Orkan** — tensor networks and Monte Carlo methods
+
+Rationale from Tobias (quoted): "Sturm.jl is a programming language for FUTURE devices. Orkan is great, but is only really intended for small poc test. Sturm.jl should always target circuit outputs, either quantum circuit rep., DAG or openqasm (or whatever other hardware IR comes along)."
+
+Three parallel Sonnet research agents executed. Full reports are in the conversation history; the strategic read and filed beads are below.
+
+### Strategic read (four-backend matrix + viz layer)
+
+| Regime | Backend | Bead |
+|---|---|---|
+| Exact, any gate, ≤30 qubits | Orkan (EagerContext) — existing | — |
+| Exact with noise, ≤30 qubits via trajectories | TrajectoryContext (MCWF) | `Sturm.jl-19h` P1 |
+| Shallow / 1D-structured, 100–500 qubits, controlled truncation | MPS via ITensorMPS.jl | `Sturm.jl-tcw` P1 |
+| Clifford + bounded-T oracle circuits, 40–64 qubits | StabilizerRankContext (Bravyi-Browne 2019) | `Sturm.jl-q7c` P2 |
+| Symbolic, unbounded | TracingContext — existing | — |
+
+Cross-cutting visualization layer:
+
+| Layer | Package | Bead |
+|---|---|---|
+| ASCII (REPL, CI) | in-house | `Sturm.jl-11a` P1 |
+| LaTeX / Quantikz (papers) | `Quantikz.jl` | `Sturm.jl-e5q` P2 |
+| ZX-calculus (viz + opt unified) | `ZXCalculus.jl` | `Sturm.jl-79j` P1 |
+| Catlab wiring (channel-level, deferred) | `Catlab.jl` | `Sturm.jl-its` P3 (deferred) |
+
+Plus: `Sturm.jl-7e2` P2 — `run!(ch::Channel, ctx)` DAG replay helper, needed for the MPS validation experiment and any cross-context testing. Refresh of the existing `Sturm.jl-c34`; reviewer should check if c34 supersedes.
+
+### Key strategic alignments
+
+- **StabilizerRank + Bennett are natural partners.** Bennett compiles to NOT/CNOT/Toffoli = Clifford + bounded T. StabilizerRank targets exactly that class at 40–64 qubits. A Bennett-compiled SHA-256 round (17K gates from the Session 14 WORKLOG) at 50 qubits has no home today; stabilizer rank opens that regime.
+- **ZX + Sturm DAG are natural partners.** Sturm's DAG IS structurally close to a string diagram. `ZXCalculus.jl` provides rendering AND rewriting from the same representation — visualization and Clifford-simplification optimization are the same pass. Directly realizes PRD §2.4's compact closed category framework. Aligns with the 16 ZX papers in `docs/literature/zx_calculus/`.
+- **TrajectoryContext doubles DensityMatrix's usable qubit count** (15 → 30) by using trajectory sampling instead of holding ρ explicitly. Simplest new backend; highest-ROI first-add.
+- **MPS partial-trace on entangled qubits is biased** — `deallocate!` on an entangled qubit in a pure-state MPS must sample-then-collapse, introducing bias in subsequent statistics. Not a blocker for the testbed goal but must be documented. Honest solution: wait for a future `TensorNetworkMixedContext` built on MPOs for exact mixed-state semantics.
+
+### Key blockers and risks to surface for the next agent
+
+1. **Bennett edge cases still appearing.** Session 15 discovered and Tobias fixed TWO related Bennett bugs (IRCast narrowing typo, `_narrow_inst` i1 handling). Pattern: "i1 is logical width, not numeric width." Any future Bennett user of new LLVM opcodes may hit more of these. Reproduction template: `f(x::Int8) = Int8((some_compound_boolean) ? 1 : 0); reversible_compile(f, Int8; bit_width=W<8)`. See `feedback_fix_proposals.md` memory for bug-reporting discipline.
+2. **Sturm EagerContext 30-qubit cap is the real testing bottleneck.** Bennett compiles `x > 5` and `x * x` correctly but they exceed 30 qubits at bit_width=3. Not a Bennett/Sturm bug, a simulator-scope limit. The TensorNetworkContext (`Sturm.jl-tcw`) is the primary mitigation.
+3. **MPS has three structural blockers** (documented in `Sturm.jl-tcw` description): SWAP overhead on non-1D connectivity, partial-trace semantics mismatch, CasesNode branch divergence. First experiment (M1: unitary-only brickwork benchmark at n∈{10,15,20,25}) is the gating check — if it doesn't hit >0.999 fidelity at maxdim=64, something is wrong with the integration and the rest of M2 is premature.
+4. **StabilizerRank does not handle continuous rotations.** Incompatible with `src/simulation/` (Trotter, qDrift, QSVT). Position as a SPECIALIST context for oracle circuits, not a general simulator. A future Clifford+T compilation pass (Solovay-Kitaev / Ross-Selinger) would extend its reach but is substantial separate work — not filed yet.
+
+### Current queue after this session (P1 only, unblocked)
+
+- `Sturm.jl-d99` P0 — Choi phase polynomials research (strategic, independent of v0.2)
+- `Sturm.jl-11a` P1 — ASCII viz (zero deps, unblocks developer UX)
+- `Sturm.jl-79j` P1 — ZX pass (viz + opt unified)
+- `Sturm.jl-19h` P1 — TrajectoryContext (noisy simulation at 30q)
+- `Sturm.jl-tcw` P1 — MPS TN context (large-qubit testbed, gated on M1 validation)
+- `Sturm.jl-qie` closed but successor `Sturm.jl-pce` P1 and `Sturm.jl-2lp` P1 are now unblocked by Bennett fix
+- `Sturm.jl-i49` P1 — Toffoli cascade consolidation (refactor, 6→1)
+- `Sturm.jl-26s` P1 — QBool.ctx type stability (perf)
+- `Sturm.jl-dt7` P1 — PassManager infrastructure
+- `Sturm.jl-d5r` P1 — P7 stress test (QTrit prototype)
+
+### Handoff recommendations (for next agent / session)
+
+**If continuing "get stuff done" mode:**
+1. `Sturm.jl-11a` ASCII viz — smallest thing that makes every following session more pleasant. Do this first.
+2. `Sturm.jl-19h` TrajectoryContext — natural extension of EagerContext. Unblocks noisy-circuit testing.
+3. `Sturm.jl-2lp` + `Sturm.jl-pce` — comparator correctness via Bennett multi-arg oracle. Clean finish of the original "recommended order."
+4. `Sturm.jl-79j` ZX pass — start with QASM-bridge strategy (step 1 in the bead) for fastest landing, direct DAG path second.
+
+**If pursuing "vision work":**
+1. `Sturm.jl-tcw` M1 only — the MPS validation experiment. One agent session, gives a go/no-go on whether ITensorMPS integration is viable.
+2. `Sturm.jl-d99` Choi phase polynomials research — high strategic payoff, independent.
+
+**Do NOT** (without explicit Tobias approval):
+- Spawn background implementation agents (see Session 13 rogue overwrite gotcha).
+- Edit Bennett.jl — it's a sibling project with its own WORKLOG and tests. Report bugs; don't patch.
+- Make core changes (types/, context/abstract.jl, primitives/, Orkan FFI) without the 3+1 agent protocol from CLAUDE.md rule 2.
+- Quote time estimates (see `feedback_no_time_estimates.md`).
+
+### Session 15 deliverable summary
+
+- **Closed**: `Sturm.jl-ewv` (Steane encoder rewritten per Steane 1996 Fig 3), `Sturm.jl-nyc` (higher-order `encode(Channel, code)` for Clifford unitaries), `Sturm.jl-qie` (Grover from plain Julia predicate via Bennett).
+- **Filed (new direction)**: 8 beads covering visualization (4) and simulation backends (4). Priority-1 items unblocked; direction documented above.
+- **Upstream**: 2 Bennett.jl bugs (IRCast narrowing typo, `_narrow_inst` i1 handling) reported and fixed.
+- **Memory updated**: 2 new feedback memories (`ground_truth_first`, `fix_proposals`, `no_time_estimates`).
+- **Tests**: 1173 QECC tests pass (up from 1154 before ewv). 284 Grover tests pass (up from 281). No regressions flagged.
+- **Files changed**: `src/qecc/steane.jl` rewrite, `src/qecc/channel_encode.jl` new, `src/library/patterns.jl` +new method, `src/Sturm.jl` include/export, `test/test_qecc.jl` expanded, `test/test_grover.jl` expanded.
+
+---
+
+---
+
 ## 2026-04-11 — Session 14: Bennett.jl integration research (no code changes)
 
 ### Research: Bennett.jl + Sturm.jl integration feasibility

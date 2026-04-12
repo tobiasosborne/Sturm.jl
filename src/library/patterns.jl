@@ -392,3 +392,95 @@ Ref: Grover (1996). Special case of `amplify` where A = A† = H^⊗W.
 function find(oracle!::Function, ::Val{W}; n_marked::Int=1) where {W}
     amplify(oracle!, _hadamard_all!, _hadamard_all!, Val(W); n_marked=n_marked)
 end
+
+# ── find with a classical predicate (Bennett.jl) ─────────────────────────────
+#
+# Grover search driven by a plain Julia predicate. The library compiles the
+# predicate to a reversible circuit (Bennett.jl) and uses it as a phase oracle
+# via the standard value-to-phase conversion:
+#
+#   1. Compute  y = f(x)  (Bennett oracle into fresh |0⟩ output ancillas)
+#   2. Apply Z to the LSB of y — phase-flips states where f(x) has LSB=1
+#   3. Uncompute y by running the oracle again (XORs f(x) back, giving |0⟩)
+#   4. Discard the output ancillas (now in |0⟩)
+#
+# The user's predicate must have signature `f(x::T) :: T` for some integer
+# type T (e.g. Int8). Convention: the LSB of f(x) is the "accept bit"; non-zero
+# means accept. Thus a Bool-valued predicate should be written
+#
+#   f(x::Int8) = (x > 5 && x % 2 == 1) ? Int8(1) : Int8(0)
+#
+# Ref: Grover (1996). Standard phase-oracle-from-value-oracle construction
+# (Nielsen & Chuang §6.1.1).
+
+"""
+    find(f::Function, ::Type{T}, ::Val{W}; n_marked::Int=1) -> Int
+
+Grover search driven by a plain Julia predicate. Compiles `f` to a reversible
+circuit via Bennett.jl and uses it as a phase oracle.
+
+`f :: T -> T` is a pure Julia function on an integer type `T` (e.g. `Int8`).
+The LSB of `f(x)` is interpreted as the "accept bit": non-zero means the state
+is marked. `W` is the number of qubits in the search register; it must equal
+or be less than the bit-width of `T`.
+
+# Example
+```julia
+# Find x where 2x+1 ≡ 0 (mod 8), i.e. nonexistent (odd * 2 + 1 != 0) — but
+# as a demonstration that accepts x == 5:
+accepts_5(x::Int8) = Int8(x == 5 ? 1 : 0)
+result = find(accepts_5, Int8, Val(3))
+@assert result == 5
+```
+
+# Notes
+- Each Grover iteration calls the oracle circuit twice (compute + uncompute).
+- Ancillas allocated by Bennett's construction are handled automatically.
+- For predicates that can be hand-written as phase oracles, the other method
+  `find(oracle!, Val(W))` is typically more gate-efficient.
+"""
+function find(f::Function, ::Type{T}, ::Val{W}; n_marked::Int=1) where {T, W}
+    ctx = current_context()
+
+    # Compile the predicate once — reuse the circuit across all iterations.
+    circuit = reversible_compile(f, T; bit_width=W)
+    n_out = length(circuit.output_wires)
+    n_out >= 1 || error("find: predicate must return at least 1 output bit, got $n_out")
+
+    iters = _optimal_iterations(1 << W, n_marked)
+
+    x = QInt{W}(ctx, 0)
+    _hadamard_all!(x)
+
+    for _ in 1:iters
+        # Allocate output wires for Bennett (start at |0⟩)
+        output_wires = WireID[allocate!(ctx) for _ in 1:n_out]
+        input_wires = WireID[x.wires[i] for i in 1:W]
+        wm = build_wire_map(circuit, input_wires, output_wires)
+
+        # Compute: output = f(x)
+        apply_reversible!(ctx, circuit, wm)
+
+        # Phase flip on the LSB of the output.
+        # Rz(π) applies diag(-i, i): relative phase e^{iπ} = -1 between |0⟩ and |1⟩.
+        # Global phase -i is unphysical; only the relative -1 matters.
+        apply_rz!(ctx, output_wires[1], π)
+
+        # Uncompute: running the same circuit XORs f(x) back into output,
+        # returning output to |0⟩. Bennett's compute-copy-uncompute structure
+        # means the input wires are preserved through both calls.
+        apply_reversible!(ctx, circuit, wm)
+
+        # Output wires now hold |0⟩ — deallocate cleanly.
+        for w in output_wires
+            deallocate!(ctx, w)
+        end
+
+        # Grover diffusion: A⁻¹ · S₀ · A  with A = H^⊗W.
+        _hadamard_all!(x)
+        _diffusion!(x)
+        _hadamard_all!(x)
+    end
+
+    return Int(x)
+end

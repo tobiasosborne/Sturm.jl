@@ -1,25 +1,32 @@
 # Steane [[7,1,3]] code: encodes 1 logical qubit into 7 physical qubits.
 # Can correct any single-qubit error (distance 3).
 #
-# Ref: Steane, "Error Correcting Codes in Quantum Theory",
-# Phys. Rev. Lett. 77, 793 (1996). See docs/physics/steane_1996.pdf.
+# Ref: Steane, "Multiple Particle Interference and Quantum Error Correction",
+# arXiv:quant-ph/9601029v3, 1996. See docs/physics/steane_1996.pdf.
+# Encoder: Figure 3, §3.3. Generator matrix G_s: equation (5).
+# Target codeword state: |C⟩ = |G_s⟩ from equation (6) with all φ_j = 0.
 #
-# Encoding circuit uses the stabilizer generators of the code.
-# The Steane code is a CSS code based on the classical [7,4,3] Hamming code.
+# The code is a CSS code based on the classical [7,4,3] Hamming code, with
+# stabilizers given by the rows of G_s as both X-type and Z-type operators.
 #
-# Stabilizer generators (X-type):
-#   g1 = X₁X₃X₅X₇
-#   g2 = X₂X₃X₆X₇
-#   g3 = X₄X₅X₆X₇
+# Stabilizer generators (X-type, from rows of G_s eq. 5):
+#   g1 = X₁X₃X₅X₇    (row 3 of G_s: positions where row 3 has 1)
+#   g2 = X₂X₃X₆X₇    (row 2 of G_s)
+#   g3 = X₄X₅X₆X₇    (row 1 of G_s)
 #
-# Stabilizer generators (Z-type):
+# Stabilizer generators (Z-type, same positions):
 #   g4 = Z₁Z₃Z₅Z₇
 #   g5 = Z₂Z₃Z₆Z₇
 #   g6 = Z₄Z₅Z₆Z₇
 #
-# Logical operators:
+# Logical operators (transversal):
 #   X_L = X₁X₂X₃X₄X₅X₆X₇
 #   Z_L = Z₁Z₂Z₃Z₄Z₅Z₆Z₇
+#
+# Codewords (|C⟩ = logical |0⟩_L, orbit of |0000000⟩ under stabilizer group):
+#   |0000000⟩, |1010101⟩, |0110011⟩, |1100110⟩,
+#   |0001111⟩, |1011010⟩, |0111100⟩, |1101001⟩
+# and |¬C⟩ = logical |1⟩_L = |C⟩ ⊕ |1111111⟩.
 
 """
     Steane <: AbstractCode
@@ -32,60 +39,64 @@ struct Steane <: AbstractCode end
     encode!(::Steane, logical::QBool) -> NTuple{7, QBool}
 
 Encode a logical qubit into 7 physical qubits using the Steane code.
+Maps α|0⟩ + β|1⟩ → α|C⟩ + β|¬C⟩ where |C⟩ is the [[7,1,3]] codeword
+state (Steane 1996 eq. 6 with φ_j = 0).
 
-The logical qubit state α|0⟩ + β|1⟩ is mapped to:
-  α|0₇⟩_L + β|1₇⟩_L
+Implements Steane 1996 Figure 3 exactly. The logical qubit is placed
+internally at physical position 3 (matching the paper's |00Q0000⟩
+initial state). Post-encoding, all 7 qubits are transversally entangled;
+no single output index is the "logical qubit" — the information is
+spread across all seven.
 
-where |0₇⟩_L and |1₇⟩_L are the 7-qubit codewords.
-
-Encoding circuit (from stabilizer generators):
-  1. Place logical qubit on physical qubit 1
-  2. Prepare ancillas 2-7 in |0⟩
-  3. Apply CNOT network to entangle according to Hamming parity checks
+The input `logical` is consumed; 7 fresh `QBool` wrappers are returned.
 """
 function encode!(::Steane, logical::QBool)
     check_live!(logical)
     ctx = logical.ctx
 
-    # Physical qubits: q1 = logical, q2-q7 = fresh ancillas in |0⟩
+    # Physical qubits: q[3] = logical input, q[1,2,4,5,6,7] = fresh ancillas |0⟩
+    # Initial state: |00Q0000⟩ per Steane 1996 Fig 3.
     q = Vector{QBool}(undef, 7)
-    q[1] = logical
-
-    for i in 2:7
-        wire = allocate!(ctx)
-        q[i] = QBool(wire, ctx, false)
+    for i in 1:7
+        if i == 3
+            q[i] = logical
+        else
+            wire = allocate!(ctx)
+            q[i] = QBool(wire, ctx, false)
+        end
     end
 
-    # Step 1: Prepare |+⟩ on ancilla qubits 4, 5, 6, 7
-    # (These will spread the X stabilizers)
+    # Step 1: Two CNOTs from data qubit q[3] — per Steane 1996 page 18.
+    # Transforms |1⟩_Q ancilla-start from |0010000⟩ to |0010110⟩ ∉ |C⟩,
+    # ensuring logical |1⟩ encodes to |¬C⟩ after the generator fan-out.
+    q[5] ⊻= q[3]
+    q[6] ⊻= q[3]
+
+    # Step 2: Hadamard on the three "pivot" positions of G_s (eq. 5).
+    # Columns 1, 2, 4 of G_s each have exactly one `1` (rows 3, 2, 1 resp.).
+    # These seed the equal-weight superposition over the code.
+    H!(q[1])
+    H!(q[2])
     H!(q[4])
-    H!(q[5])
-    H!(q[6])
-    H!(q[7])
 
-    # Step 2: CNOT network for X-type stabilizers
-    # g3 = X₄X₅X₆X₇: q4 controls q5, q6 (already in superposition via H)
-    # The encoding uses CNOTs from the H'd ancillas to create the code space
+    # Step 3: CNOT fan-out per row of G_s — each pivot qubit broadcasts to
+    # the other positions in its stabilizer's support.
+    # q[1] broadcasts g1 = X₁X₃X₅X₇ to targets {3, 5, 7}.
+    q[3] ⊻= q[1]
+    q[5] ⊻= q[1]
+    q[7] ⊻= q[1]
 
-    # Hamming parity matrix for [7,4,3]:
-    # bit 1: checks 1,3,5,7 (parity of positions with bit 0 set)
-    # bit 2: checks 2,3,6,7 (parity of positions with bit 1 set)
-    # bit 3: checks 4,5,6,7 (parity of positions with bit 2 set)
+    # q[2] broadcasts g2 = X₂X₃X₆X₇ to targets {3, 6, 7}.
+    q[3] ⊻= q[2]
+    q[6] ⊻= q[2]
+    q[7] ⊻= q[2]
 
-    # CNOT from q4 → q1, q2, q3 (spread X stabilizer g3 pattern)
-    q[1] ⊻= q[4]
-    q[2] ⊻= q[5]
-    q[3] ⊻= q[4]
-    q[3] ⊻= q[5]
+    # q[4] broadcasts g3 = X₄X₅X₆X₇ to targets {5, 6, 7}.
+    q[5] ⊻= q[4]
+    q[6] ⊻= q[4]
+    q[7] ⊻= q[4]
 
-    # Additional CNOTs for the full code
-    q[1] ⊻= q[6]
-    q[2] ⊻= q[6]
-    q[1] ⊻= q[7]
-    q[2] ⊻= q[7]
-    q[3] ⊻= q[7]
-
-    # Create fresh QBool wrappers for the output (logical is absorbed)
+    # Transfer ownership: mark input QBool consumed; rewrap all wires fresh.
     logical.consumed = true
     out = ntuple(i -> QBool(q[i].wire, ctx, false), 7)
     return out
@@ -94,35 +105,37 @@ end
 """
     decode!(::Steane, physical::NTuple{7, QBool}) -> QBool
 
-Decode the Steane code: extract logical qubit from 7 physical qubits.
-For v0.1: inverse of encoding circuit (no error correction syndrome).
-Full syndrome extraction and correction deferred.
+Decode the Steane code: extract the logical qubit by inverting the encoder.
+For v0.1: pure circuit inverse (no syndrome extraction, no correction).
+Full error correction via syndrome measurement is deferred to Sturm.jl-971.
+
+Returns the logical qubit (recovered at internal position 3). The six
+ancilla qubits are discarded (return to |0⟩ in the error-free case).
 """
 function decode!(::Steane, physical::NTuple{7, QBool})
     q = collect(physical)
-    ctx = q[1].ctx
 
-    # Inverse of encoding: reverse CNOT order
-    q[3] ⊻= q[7]
-    q[2] ⊻= q[7]
-    q[1] ⊻= q[7]
-    q[2] ⊻= q[6]
-    q[1] ⊻= q[6]
-    q[3] ⊻= q[5]
-    q[3] ⊻= q[4]
-    q[2] ⊻= q[5]
-    q[1] ⊻= q[4]
+    # Reverse-order inverse of the encoder. CNOT and H are self-inverse
+    # (up to an unphysical global phase from H!² = -I on each ancilla).
 
-    # Undo H on ancillas
+    # Undo Step 3: CNOT fan-outs in reverse.
+    q[7] ⊻= q[4]; q[6] ⊻= q[4]; q[5] ⊻= q[4]
+    q[7] ⊻= q[2]; q[6] ⊻= q[2]; q[3] ⊻= q[2]
+    q[7] ⊻= q[1]; q[5] ⊻= q[1]; q[3] ⊻= q[1]
+
+    # Undo Step 2: Hadamard (self-inverse).
     H!(q[4])
-    H!(q[5])
-    H!(q[6])
-    H!(q[7])
+    H!(q[2])
+    H!(q[1])
 
-    # Discard ancillas (should be |0⟩ if no errors)
-    for i in 2:7
+    # Undo Step 1: initial CNOTs from q[3].
+    q[6] ⊻= q[3]
+    q[5] ⊻= q[3]
+
+    # Discard the six ancilla qubits (positions 1, 2, 4, 5, 6, 7).
+    for i in (1, 2, 4, 5, 6, 7)
         discard!(q[i])
     end
 
-    return q[1]  # logical qubit recovered
+    return q[3]  # logical qubit recovered at position 3
 end
