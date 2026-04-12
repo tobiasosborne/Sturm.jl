@@ -42,6 +42,7 @@ include("noise/classicalise.jl")
 # QECC
 include("qecc/abstract.jl")
 include("qecc/steane.jl")
+include("qecc/channel_encode.jl")
 
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
@@ -103,7 +104,7 @@ export gate_cancel, defer_measurements, optimise
 export depolarise!, dephase!, amplitude_damp!, classicalise
 
 # QECC
-export AbstractCode, Steane, encode!, decode!
+export AbstractCode, Steane, encode!, decode!, encode
 
 # Simulation
 export PauliOp, pauli_I, pauli_X, pauli_Y, pauli_Z
