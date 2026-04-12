@@ -204,6 +204,27 @@ using Sturm
         @test length(split(s, '\n')) >= 7  # at least one line per wire
     end
 
+    @testset "compact mode packs parallel gates" begin
+        # CR(q0→q2) with H on q1: span mode serialises them; compact packs them.
+        ctx = TracingContext()
+        wires = [Sturm.allocate!(ctx) for _ in 1:3]
+        qs = [Sturm.QBool(w, ctx, false) for w in wires]
+        task_local_storage(:sturm_context, ctx) do
+            when(qs[1]) do; qs[3].φ += π/2; end
+            H!(qs[2])
+        end
+        ch = Sturm.Channel{3,3}(ctx.dag, Tuple(wires), Tuple(wires))
+        s_span    = to_ascii(ch)
+        s_compact = to_ascii(ch; compact=true)
+        # Compact must be strictly narrower than span on this circuit
+        w_span    = length(first(split(s_span, '\n')))
+        w_compact = length(first(split(s_compact, '\n')))
+        @test w_compact < w_span
+        # Gate-wins: q1's H labels (Z, Ry(π/2)) survive intact in compact output
+        @test occursin("Ry(π/2)", s_compact)
+        @test occursin("Z", s_compact)
+    end
+
     @testset "to_openqasm still works after draw is loaded" begin
         # Regression: loading draw.jl mustn't break the existing exporter
         ch = trace(2) do a, b
