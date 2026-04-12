@@ -4,6 +4,75 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-12 — Session 16 (continued): Pixel-art PNG renderer (Sturm.jl-cxx)
+
+### Delivered
+
+`to_pixels(ch; scheme, column_width) -> Matrix{RGB{N0f8}}` and `to_png(ch, path)` in `src/channel/pixels.jl`. Target use: 1000-wire circuits where ASCII and LaTeX both fail. 1 pixel per wire; 3 pixels per column (shadow | gate | shadow). Control = wire colour; target = complement. Birren industrial palette (`docs/birren-colour-schemes.md` / `../generalrelativity/`).
+
+Reuses the ASAP scheduler from `draw.jl` — same `_draw_collect_wires` and `_draw_schedule` — so the ASCII and PNG renderers produce identical column layouts. The only variations are (i) fixed column width, (ii) raw pixel buffer instead of Unicode characters.
+
+### Scale
+
+- Bell: 2×9 px, 208-byte PNG
+- GHZ-8: 8×81 px, 359 bytes
+- Steane encoder (7×17 nodes): 7×99 px, 472 bytes
+- Teleportation (5 rows, measurement + 2 bits): 5×54 px, 302 bytes
+- **1000-wire GHZ: 1000×3003 px, 30 KB PNG, 0.07s render time**
+
+At 1000 wires the cascade is visible as a thin diagonal line of gate pixels against the seafoam wire field — exactly the structure the user wanted for browsing massive circuits at zoom.
+
+### Palette (Birren dark)
+
+| Role | Hex | Rationale |
+|---|---|---|
+| bg / shadow | `#1E2226` | Graphite background; shadow = bg for clean hole-in-wire effect |
+| quantum wire | `#82B896` | Seafoam — primary reading target |
+| classical wire | `#D4785A` | Orange — caution / data channel |
+| control dot | = q_wire | Per spec: blends with wire, visible via flanking shadow |
+| target dot | complement(q_wire) | RGB inverse of wire colour |
+| rotation gate (Ry/Rz) | `#E2C46C` | Yellow — mild caution |
+| prep | `#6A9EC0` | Blue — informational |
+| measurement | `#C4392F` | Red — type boundary (emergency stop) |
+| discard | `#8C8C84` | Gray — structural recede |
+| connector | = gate | Vertical line through uninvolved wires |
+
+Also ships a `birren_light_scheme()` for dark-on-light output (beige bg, dark green wires).
+
+### Dependencies added
+
+- `PNGFiles` — canonical lightweight Julia PNG writer
+- `ColorTypes`, `FixedPointNumbers` — transitive from PNGFiles, added explicit
+
+Modest violation of "only Orkan as dep" — but PNG encoding requires DEFLATE (ziggurat) which is non-trivial to roll from scratch. PNGFiles is leaf-package-clean (no Images.jl).
+
+### Gotchas
+
+- **Varargs in `trace(f, n_in)` can't do `qs[i] ⊻= qs[i-1]`.** The captured `qs` is an NTuple (immutable); assignment `qs[i] = ...` fails. Stress test had to manually build a `TracingContext`, `allocate!` each wire, wrap as QBool, and run the body in `task_local_storage`. File a follow-up bead for a `trace_vector` helper.
+- **Classical wire must start AFTER the full Observe column**, not from its centre. If the wire painter writes `c_wire` at `(br, x_c..end)` and the drain then paints `shadow` at `(br, x_c ± 1)`, the right-shadow at `(br, x_c+1)` clobbers the wire. Fix: classical wire starts at `(col+1)*col_w + 1` — one pixel past the Observe's right shadow.
+- **Control = wire colour means control is visually invisible on its own wire.** The shadow pixels flanking it frame the 3-px gate column, making the control visible via absence (a 3-px hole in the wire with a matching-colour centre pixel). This is the user's explicit spec. Good for dense diagrams.
+- **PNGFiles loads as `RGB{N0f8}` but packages its own ColorTypes version.** Julia conflict resolution should handle this; adding ColorTypes as a direct dep was needed so `using ColorTypes` in our module works.
+
+### Files
+
+- `src/channel/pixels.jl` (new, ~230 lines) — Birren schemes + to_pixels + to_png + per-node painters.
+- `src/Sturm.jl` — include + export `to_pixels`, `to_png`, `PixelScheme`, `birren_dark_scheme`, `birren_light_scheme`.
+- `test/test_pixels.jl` (new) — 56 tests: palette values, complement invariant, dimensions, colour placement, PNG roundtrip, column_width validation, scale at 100 wires, classical wire extension, scheme pass-through.
+- `test/runtests.jl` — registered.
+- `Project.toml` — added PNGFiles, ColorTypes, FixedPointNumbers.
+- `examples/` — showcase PNGs committed (bell, ghz8, steane_encode, teleport, ghz1000, bell_light).
+
+### Result
+
+56/56 pixel tests pass. 50/50 ASCII tests still pass. No regressions.
+
+### Close-out
+
+- `Sturm.jl-cxx` resolved.
+- Follow-ups: per-wire custom colours (rainbow circuits for large systems), transposed rendering, legend/annotation overlay.
+
+---
+
 ## 2026-04-12 — Session 16: ASCII circuit drawer (Sturm.jl-11a)
 
 ### Delivered
