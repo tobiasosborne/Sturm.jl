@@ -136,7 +136,7 @@ _resolve_scheme(s::PixelScheme) = s
 # ── to_pixels ────────────────────────────────────────────────────────────────
 
 """
-    to_pixels(ch::Channel; scheme=:birren_dark, column_width=3, gaps=true) -> Matrix{RGB{N0f8}}
+    to_pixels(ch::Channel; scheme=:birren_dark, column_width=3, gaps=true, compact=true) -> Matrix{RGB{N0f8}}
 
 Render `ch` as a pixel-art circuit.
 
@@ -148,17 +148,25 @@ run between rows. Set `gaps=false` for maximum density.
 Each scheduled column is `column_width` pixels wide (default 3:
 `shadow | gate-centre | shadow`).
 
+**`compact` controls scheduling density**:
+- `compact=true` (default): Level-A packing. A gate reserves only the rows
+  it actually touches (control, target, when()-controls). Parallel gates on
+  disjoint wires share columns. QFT becomes O(n) depth instead of O(n²).
+  Vertical connectors may pass through wire rows that hold another gate in
+  the same column — the gate pixel wins; the connector is painted only on
+  cells that are still default.
+- `compact=false`: Level-B packing (matches the ASCII drawer). A multi-qubit
+  gate reserves the full row range between its endpoints. No visual overlap,
+  but sparse circuits with long-range gates become very wide.
+
 Grid geometry (with gaps, 0-indexed wire k, 1-indexed grid row):
 - Quantum wire k → grid row `2k + 1`
 - Gap between wires k and k+1 → grid row `2k + 2`
 - Classical bit j → grid row `2(W + j) + 1`
 - Total height → `2(W + B) - 1`
-
-ASAP-scheduled columns from `_draw_schedule` determine horizontal gate
-positions — identical to the ASCII drawer's layout.
 """
 function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3,
-                    gaps::Bool=true)
+                    gaps::Bool=true, compact::Bool=true)
     column_width < 3 && error("column_width must be >= 3 (shadow|gate|shadow)")
     isodd(column_width) || error("column_width must be odd (centre pixel is the gate)")
 
@@ -169,7 +177,8 @@ function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3,
     end
 
     row_of, wires = _draw_collect_wires(ch)
-    schedule, n_cols = _draw_schedule(ch.dag, row_of)
+    schedule, n_cols = compact ? _draw_schedule_compact(ch.dag, row_of) :
+                                   _draw_schedule(ch.dag, row_of)
     bit_rows = _collect_bit_rows(ch.dag)
 
     W = length(wires)
@@ -215,15 +224,54 @@ function to_pixels(ch::Channel; scheme=:birren_dark, column_width::Int=3,
 end
 
 """
-    to_png(ch::Channel, path::AbstractString; scheme=:birren_dark, column_width=3, gaps=true)
+    to_png(ch::Channel, path::AbstractString; scheme=:birren_dark, column_width=3, gaps=true, compact=true)
 
 Render `ch` as a PNG file at `path`. Thin wrapper around `to_pixels` + PNGFiles.save.
 """
 function to_png(ch::Channel, path::AbstractString;
-                 scheme=:birren_dark, column_width::Int=3, gaps::Bool=true)
-    img = to_pixels(ch; scheme=scheme, column_width=column_width, gaps=gaps)
+                 scheme=:birren_dark, column_width::Int=3, gaps::Bool=true,
+                 compact::Bool=true)
+    img = to_pixels(ch; scheme=scheme, column_width=column_width,
+                    gaps=gaps, compact=compact)
     PNGFiles.save(path, img)
     return path
+end
+
+# ── Level-A (compact) scheduler ─────────────────────────────────────────────
+
+"""ASAP schedule with Level-A occupation: each node reserves only the rows
+it actually touches (target, control, when()-controls). Parallel gates on
+disjoint wires share columns. Interior wire rows spanned by a vertical
+connector are NOT blocked — the renderer handles potential overlap by
+favouring whatever was painted first (single-qubit gates win over
+connectors in centre pixels).
+"""
+function _draw_schedule_compact(dag::AbstractVector, row_of::Dict{WireID,Int})
+    W = maximum(values(row_of); init=-1) + 1
+    next_free = zeros(Int, max(W, 0))
+    schedule = Vector{Int}(undef, length(dag))
+    for (i, node) in enumerate(dag)
+        touched_rows = Int[]
+        for w in _draw_touches(node)
+            if haskey(row_of, w)
+                push!(touched_rows, row_of[w])
+            end
+        end
+        if isempty(touched_rows)
+            schedule[i] = 0
+            continue
+        end
+        col = 0
+        for r in touched_rows
+            col = max(col, next_free[r+1])
+        end
+        schedule[i] = col
+        for r in touched_rows
+            next_free[r+1] = col + 1
+        end
+    end
+    n_cols = isempty(schedule) ? 0 : maximum(next_free)
+    return schedule, n_cols
 end
 
 # ── Classical-wire painter ───────────────────────────────────────────────────
@@ -268,17 +316,30 @@ function _paint_node_px! end
 
 """Paint the flanking pixels (left/right of `x_c`) as shadow, IF and only
 if `r` is an uninvolved wire row. Involved wire rows keep their wire colour;
-gap rows keep bg."""
+gap rows keep bg. In compact (Level-A) mode, skip if the wire cell is no
+longer default (has been claimed by another gate in this same column)."""
 @inline function _maybe_shadow_flanks!(img, r::Int, x_c::Int, col_w::Int,
                                         stride::Int, involved::Set{Int},
                                         sch::PixelScheme)
-    # Only wire rows, and only if NOT in the involved set
     _is_wire_row(r, stride) || return
     r in involved && return
+    # Don't shadow a row that's been claimed by another gate (compact mode)
+    img[r, x_c] == sch.connector || return
     half = col_w ÷ 2
     for dx in -half:half
         dx == 0 && continue
         img[r, x_c + dx] = sch.shadow
+    end
+end
+
+"""Paint a connector pixel at `(r, x_c)` ONLY if the cell is still default
+(wire or bg). In compact mode, another gate may have already claimed the
+cell — that gate wins, the connector breaks visibly."""
+@inline function _paint_connector_centre!(img, r::Int, x_c::Int,
+                                           stride::Int, sch::PixelScheme)
+    cur = img[r, x_c]
+    if cur == sch.q_wire || cur == sch.bg
+        img[r, x_c] = sch.connector
     end
 end
 
@@ -311,16 +372,17 @@ function _paint_node_px!(img, node::CXNode, col, col_w, row_of, bit_row_abs, sch
     rmin, rmax = first(all_rows), last(all_rows)
     involved = Set{Int}(all_ctrl_rows); push!(involved, tgt_row)
 
-    # Paint centre pixels
+    # Paint centre pixels (endpoints win — always paint)
     for r in all_ctrl_rows
         img[r, x_c] = sch.control
     end
     img[tgt_row, x_c] = sch.target
-    # Interior rows (between rmin and rmax, exclusive of endpoints):
-    # connector in the middle, shadow on flanks iff uninvolved wire row.
+    # Interior rows (between rmin and rmax, exclusive of endpoints).
+    # Connector centre only paints on cells that are still default (so a
+    # co-scheduled single-qubit gate in compact mode wins at its own row).
     for r in (rmin+1):(rmax-1)
         if !(r in involved)
-            img[r, x_c] = sch.connector
+            _paint_connector_centre!(img, r, x_c, stride, sch)
         end
         _maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)
     end
@@ -385,7 +447,7 @@ function _paint_singleton_px!(img, node, target_row::Int, x_c::Int, col_w::Int,
     img[target_row, x_c] = centre_colour
     for r in (rmin+1):(rmax-1)
         if !(r in involved)
-            img[r, x_c] = sch.connector
+            _paint_connector_centre!(img, r, x_c, stride, sch)
         end
         _maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)
     end
