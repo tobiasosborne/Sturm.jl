@@ -19,17 +19,17 @@ using ColorTypes: RGB, N0f8
         # 2 wires with gap: H = 2*2-1 = 3 rows. 3 columns × 3 px = 9 px wide.
         @test size(img) == (3, 9)
 
-        # Col 0 gate pixel (Rz on q0) at row 1, col 2
+        # Col 0, single-qubit gate (Rz on q0): centre at (1, 2).
+        # Flanks stay WIRE colour — the gate is on its own wire; no overpass.
         @test img[1, 2] == sch.gate
-        @test img[1, 1] == sch.bg       # left shadow
-        @test img[1, 3] == sch.bg       # right shadow
-        # Row 2 is the GAP row — bg everywhere except the CNOT column where
-        # the vertical connector passes through it.
+        @test img[1, 1] == sch.q_wire
+        @test img[1, 3] == sch.q_wire
+        # Row 2 is the GAP row. At col 8 (CNOT centre), the connector passes
+        # through the gap. Flanks of the gap row stay bg (no wire to shadow).
         @test img[2, 1] == sch.bg
-        @test img[2, 2] == sch.bg
-        @test img[2, 4] == sch.bg
-        # col 8 is the CNOT centre — connector punches through the gap
         @test img[2, 8] == sch.connector
+        @test img[2, 7] == sch.bg
+        @test img[2, 9] == sch.bg
         # q1 wire at row 3 continues unchanged through col 0
         @test img[3, 1] == sch.q_wire
         @test img[3, 2] == sch.q_wire
@@ -39,9 +39,15 @@ using ColorTypes: RGB, N0f8
         @test img[1, 8] == sch.control      # seafoam
         @test img[2, 8] == sch.connector    # vertical line through the gap
         @test img[3, 8] == sch.target       # complement
+
+        # Control / target rows have NO shadow flanks — wire continues.
+        @test img[1, 7] == sch.q_wire
+        @test img[1, 9] == sch.q_wire
+        @test img[3, 7] == sch.q_wire
+        @test img[3, 9] == sch.q_wire
     end
 
-    @testset "non-adjacent CNOT: connector fills interior (with gaps)" begin
+    @testset "non-adjacent CNOT: overpass shadow on uninvolved wires only" begin
         ch = trace(5) do a, b, c, d, e
             e ⊻= a; (a, b, c, d, e)
         end
@@ -49,21 +55,34 @@ using ColorTypes: RGB, N0f8
         sch = birren_dark_scheme()
 
         # 5 wires × 1 column × 3 px = 9 rows × 3 cols.
-        # Wires at 1, 3, 5, 7, 9. Gaps at 2, 4, 6, 8.
+        # Wires at rows 1, 3, 5, 7, 9. Gaps at 2, 4, 6, 8.
         @test size(img) == (9, 3)
+        # Centre pixels
         @test img[1, 2] == sch.control    # q0 control
         @test img[2, 2] == sch.connector  # gap 0–1
-        @test img[3, 2] == sch.connector  # q1 interior
+        @test img[3, 2] == sch.connector  # q1 interior (uninvolved)
         @test img[4, 2] == sch.connector  # gap 1–2
         @test img[5, 2] == sch.connector  # q2 interior
         @test img[6, 2] == sch.connector  # gap 2–3
         @test img[7, 2] == sch.connector  # q3 interior
         @test img[8, 2] == sch.connector  # gap 3–4
         @test img[9, 2] == sch.target     # q4 target
-        # Shadows at col 1 and col 3 on every row
-        for r in 1:9
+
+        # Shadow flanks ONLY on uninvolved wire rows (3, 5, 7).
+        # Control row (1), target row (9), and gap rows (2,4,6,8) get no shadow.
+        for r in (3, 5, 7)
             @test img[r, 1] == sch.shadow
             @test img[r, 3] == sch.shadow
+        end
+        # Control / target rows: wire colour continues, no shadow
+        @test img[1, 1] == sch.q_wire
+        @test img[1, 3] == sch.q_wire
+        @test img[9, 1] == sch.q_wire
+        @test img[9, 3] == sch.q_wire
+        # Gap rows: bg continues, no shadow
+        for r in (2, 4, 6, 8)
+            @test img[r, 1] == sch.bg
+            @test img[r, 3] == sch.bg
         end
     end
 

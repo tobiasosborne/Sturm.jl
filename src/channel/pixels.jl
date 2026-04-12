@@ -44,6 +44,17 @@ function _complement(c::RGB{N0f8})
     RGB{N0f8}(reinterpret(N0f8, r), reinterpret(N0f8, g), reinterpret(N0f8, b))
 end
 
+"""Blend two colours: `α*a + (1-α)*b`. Used to darken a wire colour toward
+the background for overpass shadow pixels."""
+function _blend(a::RGB{N0f8}, b::RGB{N0f8}, α::Float64)
+    ai = reinterpret.(UInt8, (a.r, a.g, a.b))
+    bi = reinterpret.(UInt8, (b.r, b.g, b.b))
+    r = round(UInt8, α * ai[1] + (1-α) * bi[1])
+    g = round(UInt8, α * ai[2] + (1-α) * bi[2])
+    bl = round(UInt8, α * ai[3] + (1-α) * bi[3])
+    RGB{N0f8}(reinterpret(N0f8, r), reinterpret(N0f8, g), reinterpret(N0f8, bl))
+end
+
 """
     PixelScheme
 
@@ -81,8 +92,10 @@ Reference: Birren 1963 *Color for Interiors*; Mathews 2025 "Why So Many
 Control Rooms Were Seafoam Green"."""
 function birren_dark_scheme()
     bg       = _hex("#1E2226")
-    shadow   = bg                      # clean hole in the wire
     q_wire   = _hex("#82B896")         # seafoam — primary reading target
+    # Overpass shadow: darkened wire colour (50% toward bg). Applied only on
+    # uninvolved wire rows flanking a multi-qubit gate's vertical connector.
+    shadow   = _blend(q_wire, bg, 0.5)
     c_wire   = _hex("#D4785A")         # orange — caution / data channel
     control  = q_wire                  # per spec: control = wire colour
     target   = _complement(q_wire)     # per spec: target = complement of wire
@@ -98,8 +111,8 @@ end
 """Birren industrial light palette — for dark-on-light circuit rendering."""
 function birren_light_scheme()
     bg       = _hex("#F4F1E8")         # beige — Birren for sunless rooms
-    shadow   = bg
     q_wire   = _hex("#3D7A55")         # safety green
+    shadow   = _blend(q_wire, bg, 0.5) # darkened wire for overpass flanks
     c_wire   = _hex("#B55A38")         # muted orange
     control  = q_wire
     target   = _complement(q_wire)
@@ -237,7 +250,12 @@ end
 
 Column geometry: for scheduled column index `col` (0-based) and width `col_w`,
 pixel range is `[col*col_w + 1 .. (col+1)*col_w]`; centre pixel is
-`col*col_w + col_w÷2 + 1`. Left/right shadow pixels flank the centre.
+`col*col_w + col_w÷2 + 1`. The centre pixel holds the active colour (gate,
+control, target, connector). Flanking pixels only darken into `sch.shadow`
+on *uninvolved* wire rows (the "overpass" case where a vertical connector
+crosses an unrelated wire). On involved wire rows (control, target,
+single-qubit gate) the wire colour is unchanged — no flank shadow. On gap
+rows the background stays bg — no flank shadow.
 
 Row geometry (`stride` parameter): 0-indexed wire k → grid row `stride*k + 1`
 (1-indexed). With `stride=2` (default, `gaps=true`), rows `2k+2` are blank
@@ -246,6 +264,23 @@ gap rows used by vertical connectors.
 function _paint_node_px! end
 
 @inline _grow(k::Int, stride::Int) = stride * k + 1
+@inline _is_wire_row(r::Int, stride::Int) = (r - 1) % stride == 0
+
+"""Paint the flanking pixels (left/right of `x_c`) as shadow, IF and only
+if `r` is an uninvolved wire row. Involved wire rows keep their wire colour;
+gap rows keep bg."""
+@inline function _maybe_shadow_flanks!(img, r::Int, x_c::Int, col_w::Int,
+                                        stride::Int, involved::Set{Int},
+                                        sch::PixelScheme)
+    # Only wire rows, and only if NOT in the involved set
+    _is_wire_row(r, stride) || return
+    r in involved && return
+    half = col_w ÷ 2
+    for dx in -half:half
+        dx == 0 && continue
+        img[r, x_c + dx] = sch.shadow
+    end
+end
 
 function _paint_node_px!(img, node::RyNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
     row = _grow(row_of[node.wire], stride)
@@ -274,36 +309,37 @@ function _paint_node_px!(img, node::CXNode, col, col_w, row_of, bit_row_abs, sch
 
     all_rows = sort(vcat(all_ctrl_rows, tgt_row))
     rmin, rmax = first(all_rows), last(all_rows)
+    involved = Set{Int}(all_ctrl_rows); push!(involved, tgt_row)
 
-    # Shadow every row from rmin..rmax (every pixel of the column)
-    for r in rmin:rmax
-        _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
-    end
-
-    # Participating wire-row centre pixels
+    # Paint centre pixels
     for r in all_ctrl_rows
         img[r, x_c] = sch.control
     end
     img[tgt_row, x_c] = sch.target
-    # Non-participating interior rows (both uninvolved wires AND gap rows)
-    # get the connector colour at the centre pixel.
-    involved = Set{Int}(all_ctrl_rows); push!(involved, tgt_row)
+    # Interior rows (between rmin and rmax, exclusive of endpoints):
+    # connector in the middle, shadow on flanks iff uninvolved wire row.
     for r in (rmin+1):(rmax-1)
-        r in involved && continue
-        img[r, x_c] = sch.connector
+        if !(r in involved)
+            img[r, x_c] = sch.connector
+        end
+        _maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)
     end
 end
 
 function _paint_node_px!(img, node::ObserveNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
     row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    _paint_shadow_cell_px!(img, row, x_c, col_w, sch)
+    # Centre pixel at the quantum wire row: measurement. Flanks unchanged
+    # (wire colour) — the measured wire is "involved", no shadow.
     img[row, x_c] = sch.measurement
+    # Drain through to classical bit row
     if haskey(bit_row_abs, node.result_id)
         br = bit_row_abs[node.result_id]
+        # `row` (quantum wire) and `br` (classical wire) are both involved.
+        involved = Set{Int}((row, br))
         for r in (row+1):br
-            _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
             img[r, x_c] = sch.measurement
+            _maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)
         end
     end
 end
@@ -311,7 +347,6 @@ end
 function _paint_node_px!(img, node::DiscardNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
     row = _grow(row_of[node.wire], stride)
     x_c = col * col_w + col_w ÷ 2 + 1
-    _paint_shadow_cell_px!(img, row, x_c, col_w, sch)
     img[row, x_c] = sch.discard
 end
 
@@ -320,49 +355,39 @@ function _paint_node_px!(img, node::CasesNode, col, col_w, row_of, bit_row_abs, 
     x_c = col * col_w + col_w ÷ 2 + 1
     last_row = _grow(W - 1, stride)
     for r in 1:last_row
-        _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
         img[r, x_c] = sch.measurement
     end
 end
 
-"""Paint a single-qubit gate (including when()-controls). The target row is
-given absolute (1-indexed, stride-aware). Extra controls resolved via
-`row_of` + `stride`. Shadow on every row in [rmin, rmax]; connector centre
-pixel in uninvolved interior rows (both wire and gap rows)."""
+"""Paint a single-qubit gate (possibly with when()-controls). The target row
+holds `centre_colour`; extra control rows hold `sch.control`. Interior
+non-participating rows get the connector at the centre, with shadow flanks
+only on uninvolved WIRE rows (never on involved rows, never on gap rows)."""
 function _paint_singleton_px!(img, node, target_row::Int, x_c::Int, col_w::Int,
                                row_of, sch::PixelScheme, W::Int,
                                centre_colour::RGB{N0f8}, stride::Int)
     extra_ctrl_rows = Int[_grow(row_of[w], stride) for w in get_controls(node)]
 
     if isempty(extra_ctrl_rows)
-        _paint_shadow_cell_px!(img, target_row, x_c, col_w, sch)
+        # Single-qubit gate, no controls: just paint the centre pixel.
+        # Flanks stay wire colour (wire uninterrupted around the gate).
         img[target_row, x_c] = centre_colour
         return
     end
 
     all_rows = sort(vcat(extra_ctrl_rows, target_row))
     rmin, rmax = first(all_rows), last(all_rows)
+    involved = Set{Int}(extra_ctrl_rows); push!(involved, target_row)
 
-    for r in rmin:rmax
-        _paint_shadow_cell_px!(img, r, x_c, col_w, sch)
-    end
     for r in extra_ctrl_rows
         img[r, x_c] = sch.control
     end
     img[target_row, x_c] = centre_colour
-    involved = Set{Int}(extra_ctrl_rows); push!(involved, target_row)
     for r in (rmin+1):(rmax-1)
-        r in involved && continue
-        img[r, x_c] = sch.connector
+        if !(r in involved)
+            img[r, x_c] = sch.connector
+        end
+        _maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)
     end
 end
 
-"""Paint the shadow halo: all pixels in the column except the centre."""
-@inline function _paint_shadow_cell_px!(img, row::Int, x_c::Int, col_w::Int, sch::PixelScheme)
-    half = col_w ÷ 2
-    for dx in -half:half
-        if dx != 0
-            img[row, x_c + dx] = sch.shadow
-        end
-    end
-end
