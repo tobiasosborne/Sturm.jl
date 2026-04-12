@@ -4,6 +4,116 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-12 — Session 16 (end): vis polish, compact scheduling, Bennett assessment
+
+Half-day of refinements after the initial ASCII + PNG renderers landed.
+
+### Gap rows between adjacent wires (pixel renderer)
+
+Initial render made 1000-wire cascades look like a solid seafoam block because every row was a wire. Added `gaps::Bool=true` (default): a 1-pixel bg row separates every pair of adjacent wires. Grid layout with gaps: quantum wire k at row `2k+1`, gap between wires at `2k+2`, classical bit j at row `2(W+j)+1`, total height `2(W+B)-1`. `gaps=false` restores dense layout.
+
+Multi-qubit gate verticals now run cleanly through the gap rows (connector colour fills the middle pixel of the gap; flanks stay bg).
+
+### Shadow refactor: darkened-wire tone, uninvolved wires only
+
+First version used `shadow = bg` on every flanking pixel of a gate column. Result: gate looked like a hole cut through the wire — qubit "vanished" at the gate. Second bug: shadow was applied everywhere in `[rmin, rmax]` for a multi-qubit gate, including the rows of the control and target themselves.
+
+Rewrote per user's original spec: "overpass lines have a shadow pixel each side, actual gate is one pixel wide". Shadow now means "darkened wire tone" (50% blend of wire → bg) and is applied **only** on uninvolved wire rows — the wires that a multi-qubit connector crosses. Control, target, single-qubit-gate rows keep full wire colour across their column. Gap rows stay bg (no wire to shadow).
+
+New helper `_maybe_shadow_flanks!(img, r, x_c, col_w, stride, involved, sch)` handles the rule uniformly: check `is_wire_row(r, stride)`, check `r ∉ involved`, then paint shadow on `x_c ± k` for `k=1..col_w÷2`.
+
+### Compact (Level-A) scheduling for the pixel renderer — QFT at O(n) depth
+
+The span-based (Level-B) scheduler reserved `[min_row..max_row]` for every multi-qubit gate, serialising any operation on intermediate wires. Measured on QFT:
+
+| n | span (Level-B) | compact (Level-A) | ratio |
+|---|---|---|---|
+| 4 | 20 | 14 | 1.4× |
+| 16 | 176 | 50 | 3.5× |
+| 32 | 608 | 98 | 6.2× |
+| 256 | 33 536 | 770 | **43.6×** |
+
+Span was O(n²), compact is 3n−2, matching the textbook QFT depth bound. User spotted "QFT should be log depth" — they meant "much shorter than this n² thing". Compact is the right answer (log depth requires AQFT / parallel construction).
+
+Implementation: new `_draw_schedule_compact` reserves only the rows actually touched (own target/control + when-controls). Added `compact::Bool=true` (default) kwarg to `to_pixels`/`to_png`. Set `compact=false` for the old strict-no-overlap layout.
+
+Conflict resolution at the renderer: in compact mode a vertical connector may cross a wire row that already holds another gate in the same column. Gate wins — `_paint_connector_centre!` only paints if the cell is still `sch.q_wire` or `sch.bg`. The connector breaks visibly at that row; endpoints and gap-row connector pixels still mark its path.
+
+### Compact mode for the ASCII drawer (with gate-wins at crossings)
+
+Same Level-A scheduling added to `to_ascii(ch; compact=true)` and piped through `IOContext(io, :compact => true)`. For ASCII, default stays `compact=false` because multi-char gate labels (`Ry(π/2)`) don't composite with `│` the way pixels can — the clean default avoids surprising label mangling.
+
+In compact ASCII, `_paint_vertical!` now checks cell state before overwriting: `─`/`═` → `┼` OK; any other char (gate label, control dot, target dot) preserved. Gap rows get `│` unless already painted.
+
+QFT-8 ASCII: 336 → 196 chars wide (42% narrower). Modest vs pixels' 6× at same n — because variable column widths mean wide gate labels still demand their columns.
+
+### QFT renders as showcase
+
+Added `examples/qft16.png`, `qft32.png`, `qft64.png`, `qft256.png`. The characteristic double-triangle structure (forward QFT cascade + bit-reversal SWAPs) is crisp. At n=256: 511×2310 PNG (887 KB) rendered in 1.6s — down from 100 608 wide / 14 MB in span mode.
+
+### `trace(f, n_in)` varargs limitation documented
+
+`trace(f, N)` calls `f(qs...)` with an immutable NTuple. `qs[i] ⊻= qs[i-1]` errors on `setindex!` for `N > 0`. Workaround used in stress tests: construct `TracingContext` manually, `allocate!` + wrap as `QBool`, run body in `task_local_storage`. Filed as a trace-helper follow-up — not urgent.
+
+### Beads cleanup
+
+- Closed `Sturm.jl-7e2` (superseded by `c34`; both were "run(ch::Channel) replay DAG")
+- Closed `Sturm.jl-9mg` (duplicate of `3gh`; both were wire_counter race)
+- `bd stale` reported clean
+
+Filed 4 new beads surfaced by the Bennett assessment below: `ns6` (test mutable-state oracle), `hin` (test QROM dispatch), `lsc` (plumb preprocess/memssa kwargs), `b2t` (QFloat now actionable).
+
+### Bennett.jl v0.4 downstream assessment (no code changes required)
+
+Bennett's public repo at `../Bennett.jl` has shipped huge internal updates since our April 12 integration — and the API surface Sturm uses is unchanged. 108/108 Bennett integration tests still pass.
+
+**New capabilities auto-inherited via Sturm's `reversible_compile` passthrough**:
+
+| Strategy | Trigger | Cost |
+|---|---|---|
+| Shadow | static-idx stores/loads | 3W CNOT / W CNOT |
+| MUX EXCH | dynamic-idx stores/loads | 7k–14k gates |
+| QROM (Babbush-Gidney 2018) | read-only const tables | 4(L−1) Toffoli, W-independent |
+| Feistel hash (Luby-Rackoff 1988) | bijective key hash | 8W Toffoli |
+
+Plus full `alloca`/`store`/`load`, `Ref` scalar mutation, mutable arrays, NTuple flattening, MemorySSA opt-in, LLVM pass-pipeline control, explicit `controlled(circuit)` wrapper, `register_callee!` inlining.
+
+Probed through Sturm's `oracle(f, x)` path:
+- Baseline `x+1` at bit_width=4: 48 gates, verifies
+- 4-entry `UInt8` constant-table lookup: 118 gates, verifies (QROM auto-dispatched; MUX fallback would be ~7500)
+- `Ref` scalar mutation: 46 gates at bit_width=4, verifies
+- `oracle(x→x+1, QInt{4}(5))` through Sturm: returns 6, input preserved
+
+**Priority shifts from this**:
+- `Sturm.jl-c99` (QFloat) P3 → new `b2t` P2 — Bennett's branchless soft-float is complete and bit-exact with hardware
+- `Sturm.jl-pce` (Bennett v0.1 polish) strengthened — QROM-aware resource estimation, DM context, multi-arg oracle
+- `Sturm.jl-2lp` (Bennett comparator) unblocked by the `_narrow_inst` i1 fixes we helped find in session 15
+
+**Risk watch**: gate counts for oracle functions with mutable state will shift downward as Bennett picks cheaper strategies. No Sturm tests currently assert exact counts on mutable-state oracles, so no immediate breakage.
+
+### Commits this session-end
+
+- `f34d42b` pixels: gap rows
+- `52f4be1` pixels: overpass shadow on uninvolved wires only + QFT showcase
+- `2bbe2b8` pixels: compact Level-A scheduling default, QFT at O(n) depth
+- `36a2680` draw: compact mode for ASCII with gate-wins conflict resolution
+
+### Tests
+
+- 74/74 `test_pixels.jl` pass
+- 53/53 `test_draw.jl` pass (+3 new, one for compact)
+- 108/108 `test_bennett_integration.jl` pass (no regressions from Bennett v0.4)
+- 43/43 `test_channel.jl`, 2002/2002 `test_bell.jl`, 1002/1002 `test_teleportation.jl`, 1173/1173 `test_qecc.jl` all pass
+
+### Files touched
+
+- `src/channel/draw.jl` — `compact` kwarg, `_draw_schedule_compact`, `_paint_vertical!` gate-wins logic
+- `src/channel/pixels.jl` — gap rows, shadow refactor, compact scheduler + painter, `_blend` for darkened wire
+- `test/test_draw.jl`, `test/test_pixels.jl` — updated expectations, added compact tests
+- `examples/*.png` — regenerated + added `qft{16,32,64,256}.png`
+
+---
+
 ## 2026-04-12 — Session 16 (continued): Pixel-art PNG renderer (Sturm.jl-cxx)
 
 ### Delivered

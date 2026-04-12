@@ -237,6 +237,33 @@ parallel = h_gate tensor h_gate  # parallel: H on two independent qubits
 end
 ```
 
+### Visualization
+
+Two complementary renderers are built in, both reading straight from the `Channel` DAG:
+
+**Terminal (`to_ascii` / `Base.show`)** — Unicode box-drawing with opt-in ANSI colour. At the REPL just evaluate a `Channel`:
+
+```julia
+julia> ch = trace(2) do a, b; H!(a); b ⊻= a; (a, b); end
+q0: ─Z──Ry(π/2)──●─
+                 │
+q1: ─────────────⊕─
+```
+
+Set `IOContext(io, :color => true)` to colour gates green, controls/targets yellow, measurement red; `:unicode => false` for pure ASCII; `:compact => true` for dense Level-A packing (QFT-8 goes from 336 to 196 chars).
+
+**Pixel-art PNG (`to_png`)** — 1 pixel per wire, 3 pixels per column, colours from the [Birren industrial safety palette](https://en.wikipedia.org/wiki/Faber_Birren). Scales to thousand-wire circuits where terminals and LaTeX give up.
+
+```julia
+to_png(ch, "bell.png")                                   # seafoam wires, red measurement
+to_png(ch, "bell.png"; scheme=:birren_light)             # dark-on-beige
+to_png(qft_256, "qft256.png"; column_width=3)            # 511×2310 px, 887 KB
+```
+
+A `to_png` on a 1000-wire GHZ cascade finishes in ~70 ms and writes a 42 KB PNG. Control pixel colour matches the wire by default; target uses its RGB complement; overpass connectors show a darkened-wire "shadow" flanking the vertical line only on uninvolved wires. The default `compact=true` uses Level-A ASAP scheduling, so QFT renders at textbook O(n) depth.
+
+See `examples/` for `bell.png`, `ghz8.png`, `steane_encode.png`, `teleport.png`, `qft{16,32,64,256}.png`, `ghz1000.png`.
+
 ### Classicalise: Higher-Order Type Boundary
 
 Just as `Bool(q)` decoheres a quantum state, `classicalise(f)` decoheres a quantum channel into a classical stochastic map:
@@ -252,6 +279,17 @@ M = classicalise(H!)
 ## Backend
 
 Sturm.jl delegates all linear algebra to [Orkan](https://github.com/tobiasosborne/orkan), a C17 statevector and density matrix simulator with OpenMP parallelism. Classical function compilation is handled by [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl), which extracts LLVM IR from plain Julia functions and compiles them to reversible circuits via Bennett's 1973 construction. Julia owns the type system, DSL, compilation, and channel algebra. Orkan owns the state vectors. Bennett.jl owns the classical-to-reversible compilation.
+
+Bennett.jl v0.4 auto-dispatches four memory strategies per allocation site — Sturm oracles inherit them transparently:
+
+| Strategy | When it fires | Cost | Reference |
+|----------|--------------|------|-----------|
+| Shadow | static index | 3W CNOT / W CNOT per op | Enzyme-adapted (Moses & Churavy 2020) |
+| MUX EXCH | dynamic index | 7k–14k gates | — |
+| QROM | read-only constant tables | 4(L−1) Toffoli, W-independent | Babbush-Gidney 2018 |
+| Feistel hash | bijective key hash | 8W Toffoli | Luby-Rackoff 1988 |
+
+Any pure Julia function handed to `oracle(f, x)` picks the cheapest correct lowering for every `store`/`load` — so a 4-entry `UInt8` table lookup compiles to 118 gates via QROM instead of ~7 500 via MUX fallback. Mutable state (`Ref`, mutable arrays, `NTuple`) and full IEEE 754 `Float64` (branchless soft-float) also compile without source changes.
 
 Three backends share the same DSL interface:
 
@@ -272,7 +310,7 @@ julia> ] add https://github.com/tobiasosborne/Sturm.jl
 
 ```bash
 julia --project -e 'using Pkg; Pkg.test()'
-# 10700+ tests (including 108 Bennett integration tests)
+# 10800+ tests (108 Bennett integration, 74 pixel renderer, 53 ASCII drawer)
 ```
 
 ## Project Status
@@ -292,6 +330,7 @@ All 12 phases of the [implementation plan](docs/PLAN.md) are structurally comple
 | 13 | Trotter-Suzuki simulation (evolve!, ising, heisenberg) | Complete |
 | 14 | P8 quantum promotion (mixed-type arithmetic) | Complete |
 | 15 | P9 Bennett.jl integration (`oracle`, `quantum`) | Complete |
+| 16 | Visualization (`to_ascii`, `to_png`, Birren palette) | Complete |
 
 See `WORKLOG.md` for detailed session notes and gotchas.
 
