@@ -49,12 +49,13 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 13. **NO DUPLICATED PRIMITIVES — USE THE DSL.** Before implementing ANY quantum subroutine, check what `src/gates.jl` and `src/library/patterns.jl` already provide. If it exists, import it. If it doesn't, add it once in the right place.
 
-14. **THE EIGHT DESIGN PRINCIPLES ARE AXIOMS.** P1-P8 from the PRD (SS1) are non-negotiable. If an implementation choice violates any principle, the implementation is wrong. In particular:
+14. **THE NINE DESIGN PRINCIPLES ARE AXIOMS.** P1-P9 from the PRD (§1) are non-negotiable. If an implementation choice violates any principle, the implementation is wrong. In particular:
     - P1: Functions are channels. No separate "channel" wrapper the programmer must use.
-    - P2: No `measure()` function. Type boundary only.
+    - P2: No `measure()` function. The quantum→classical boundary is a **cast** — exactly like `Float64 → Int64`, with implied information loss. Only explicit casts: `Bool(q)`, `Int(qi)`. Implicit assignment to a classical annotation without an explicit cast expression (`x::Bool = q`) MUST emit a compiler warning — same discipline as implicit float-to-int truncation.
     - P5: No gates, no qubits in user-facing code. Registers and primitives.
-    - P7: Nothing in the core may assume d=2 in a way that forecloses higher d.
+    - P7: Dimension-agnostic across the **entire** Hilbert spectrum — finite qudits, **anyons** (fusion categories), AND **infinite-dimensional** systems (Gaussian CV / quantum optics at minimum; arbitrary infinite-d, Fock space, bosonic codes ideally). Adding any of these must NOT require changes to the channel algebra, tracing, `when()`, the P2 cast rules, or the P8 promotion rules. v0.1 is d=2 only, but no design decision may foreclose higher finite, topological, OR infinite d.
     - P8: Classical values auto-promote to quantum in mixed operations (`QInt{8}(42) + 17`). No `promote_rule`; direct method overloads. Context extracted from quantum operand.
+    - P9: `f(q)` on a classical Julia function `f` with a quantum argument MUST dispatch automatically to `oracle(f, q)` via a compile-time generated fallback on `Quantum` argument types (`hasmethod(f, classical_types)` check → Bennett.jl lift, cached on `(f, argtypes)`). `quantum(f)` is the explicit pre-compile handle; the implicit `f(q)` path is the primary UX and must not be disabled. User overloads on quantum types win by dispatch specificity. Fallback is scoped to Sturm-owned `<:Quantum` types to avoid method piracy.
 
 ## Global Phase and Universality
 
