@@ -429,7 +429,7 @@ end
             y1 = qf(x1)
             @test Int(y1) == 1
         end
-        @test haskey(qf.cache, 2)    # cached for bit_width=2
+        @test haskey(qf.cache, (2, ()))    # cached for bit_width=2, no-kwargs key
         @context EagerContext() begin
             x2 = QInt{2}(3)
             y2 = qf(x2)
@@ -449,8 +449,8 @@ end
             y3 = qf(x3)
             @test Int(y3) == 7
         end
-        @test haskey(qf.cache, 2)
-        @test haskey(qf.cache, 3)
+        @test haskey(qf.cache, (2, ()))
+        @test haskey(qf.cache, (3, ()))
     end
 
     @testset "inside when()" begin

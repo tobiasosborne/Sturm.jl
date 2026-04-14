@@ -4,6 +4,91 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 20: Multi-path arithmetic Phase 1 — `Sturm.jl-v51`
+
+First bead of the Session-18 multi-path plan. Delivered RED-GREEN, test by test:
+bug found, cache-key fixed, docstrings cleaned, regression suite green.
+
+### The bug (RED)
+
+`QuantumOracle.cache::Dict{Int, ReversibleCircuit}` at `src/bennett/bridge.jl:198` keyed on `W` alone; the callable at line 217-219 did `get!(qo.cache, W) do ... reversible_compile(...; kw...) end`. Consequence: after `qf(x; mul=:shift_add)` (14 Toffoli at W=2), a follow-up `qf(x; mul=:qcla_tree)` (36 Toffoli) **silently reused the shift_add circuit** — the strategy kwarg was dropped. First time the second strategy ran it paid ~1m45s of compile for a result that was thrown away.
+
+First RED test caught it exactly:
+
+```
+toffoli_counts == [14, 36]   Evaluated: [14] == [14, 36]
+length(cached_circuits) == 2 Evaluated: length([...]) == 2     (got 1)
+```
+
+### The fix (GREEN)
+
+Cache key now canonicalises `(W, sorted_kwargs)`:
+
+```julia
+function _oracle_cache_key(W::Int, kw)
+    isempty(kw) && return (W, ())
+    kv = sort!(collect(pairs(kw)); by=first)
+    return (W, Tuple(kv))
+end
+```
+
+Cache type widened to `Dict{Any, ReversibleCircuit}` — the key is either `(W, ())` or `(W, NTuple{N,Pair{Symbol,Any}})`, not a single scalar.
+
+### Tests (test/test_multi_path_arithmetic.jl, 8 asserts)
+
+1. **Cache collision** — RED-first. `quantum(x -> x*x)` at W=2 with `mul=:shift_add` then `mul=:qcla_tree` must produce two cached circuits with Toffoli counts `[14, 36]`.
+2. **Pass-through correctness** — regression lock. `oracle(q -> q+Int8(1), x; add=:qcla)` on W=3 returns correct `(x+1) mod 8`, preserves input, and `estimate_oracle_resources(...; add=:ripple)` vs `add=:qcla` shows 8 vs 10 Toffoli.
+3. **Cache hit on identical kwargs** — two calls with `add=:ripple` produce a cache of size 1.
+4. **Kwarg-order invariance** — `(add=:qcla, optimize=true)` and `(optimize=true, add=:qcla)` share a cache entry thanks to the `sort!(...; by=first)` canonicalisation.
+
+All 8 GREEN after the fix. Full `test_bennett_integration.jl` 108/108 GREEN after updating three `haskey(qf.cache, 2)` asserts to the new key shape `(2, ())`.
+
+### Picking a test fixture that fits
+
+Initial attempt used `x*x` at W=4 — gave clear Toffoli separation (68 vs 268) but both circuits exceed MAX_QUBITS (61 / 124 wires, cap is 30). Dropped to W=2: 19 vs 29 wires, 14 vs 36 Toffoli — fits inside MAX_QUBITS and still gives a clean distinguishing signal. Compile cost ~1m45s per strategy.
+
+For the `oracle()`-level pass-through test, `x + Int8(1)` at W=3 compiles in ~0.2s per strategy — fast enough to run three strategies in one testset.
+
+### Gotchas worth keeping
+
+- **MAX_QUBITS = 30 is a hard wall on test design.** Any Bennett circuit whose `n_wires` exceeds 30 cannot execute on `EagerContext` no matter how much capacity you pass — the constructor rejects at `src/context/eager.jl:21`. Always probe `circuit.n_wires` before picking a fixture, not just gate counts.
+- **`qcla_tree` is MORE expensive than `shift_add` at tiny W.** At W=4: 268 vs 68 Toffoli; at W=2: 36 vs 14. Sun-Borissov's O(log²W) depth advantage only kicks in at large W — the constant factor is big. This is expected (`qcla_tree` optimises Toffoli-depth, not count); the test just uses the Toffoli-count gap as a distinguishing signal.
+- **The cache-type widening is a user-visible change.** Tests that did `@test haskey(qf.cache, 2)` now need `@test haskey(qf.cache, (2, ()))`. The three lines in `test_bennett_integration.jl` were the only callers. Surfaced via the regression run, not static analysis.
+- **`Base.Pairs` sorting.** `sort!(collect(pairs(kw)); by=first)` works because `Pair{Symbol, Any}` has a well-defined `first` accessor. `collect(kw)` alone would also work today but is less explicit; `pairs(kw)` makes the intent obvious.
+
+### Docstrings refreshed
+
+- `apply_oracle!` — notes kwargs forward to `reversible_compile`, gives `add=`/`mul=` examples.
+- `estimate_oracle_resources` — shows a two-strategy cost comparison pattern.
+- `oracle(f, x::QInt{W}; kw...)` — lists the Bennett strategy taxonomy explicitly (`add ∈ {:ripple, :cuccaro, :qcla, :auto}`, `mul ∈ {:shift_add, :karatsuba, :qcla_tree, :auto}`) and gives the Sun-Borissov example.
+- `QuantumOracle` — cache key now `(W, sorted_kwargs)` is called out, with an explanation of why two strategies no longer collide.
+
+### What Phase 1 delivers
+
+The user-facing headline from Session 18's plan is now live: **`oracle(f, x; mul=:qcla_tree)` compiles `f` through Bennett's Sun-Borissov polylog multiplier today, with no Sturm changes required.** All Bennett kwargs (`add`, `mul`, `optimize`, `compact_calls`, `max_loop_iterations`) flow through `oracle`, `apply_oracle!`, and `estimate_oracle_resources`. Phase 1 was ~30 lines of production code + 90 lines of test; the plan was right about ROI-per-line.
+
+### Files touched
+
+- `src/bennett/bridge.jl` — cache-key helper + type widening + four docstring refreshes.
+- `test/test_multi_path_arithmetic.jl` (new) — 4 testsets, 8 asserts.
+- `test/test_bennett_integration.jl` — 3 `haskey` asserts migrated to new key shape.
+- `test/runtests.jl` — include the new file.
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-v51` — opened, claimed, delivered, closing on commit. (Re-creation of the Session-18 `mjk` bead, which didn't survive the dolt-push block.)
+- Next up from the plan: Phase 2 (`xfk` / strategy registry + `@strategy` macro).
+
+### Test counts
+
+- `test_multi_path_arithmetic.jl`: 8/8
+- `test_bennett_integration.jl`: 108/108 after migrating three asserts
+
+Full suite not run this session ("too slow on this device", per Session 19 flag). Files touched are scoped to bennett/bridge.jl + its direct test, so the blast radius is contained.
+
+---
+
 ## 2026-04-14 — Session 19 (addendum): P4 corollary — `if q` never auto-lifts to `when(q)`
 
 Late in the session Tobias raised a separate but structurally identical question: should `if x::QBool` produce a controlled unitary (i.e. auto-lift to `when(q) do … end`)? His instinct was no, and the reason he named — "what if `f(x)` has `if` statements in it, and then you write `if (f(q))` with `q` quantum" — is the Bennett/P9 interaction that would create a three-way type lie.
