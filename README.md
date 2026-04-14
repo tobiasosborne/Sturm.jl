@@ -21,7 +21,7 @@ Because the cast loses information irreversibly, the compiler emits a **warning 
 
 **P3. Operations are operations.** No language-level distinction between unitaries, noise, preparation, or measurement. They are all channels.
 
-**P4. Quantum control is lexical scope.** `when(q) do ... end` = quantum control. `if x ... end` = classical branch. The distinction is enforced by types.
+**P4. Quantum control is lexical scope.** `when(q) do ... end` = quantum control. `if x ... end` = classical branch. The distinction is enforced by types — `if q::QBool` never auto-lifts to `when(q)` (see *if vs when* below for the three reasons).
 
 **P5. No gates, no qubits.** The programmer works with registers (`QBool`, `QInt{W}`) and four primitives. Named gates (H, CNOT) are library functions. If your program reads like a circuit diagram, it is wrong.
 
@@ -195,6 +195,39 @@ Classical values auto-promote when combined with quantum values — same as Juli
     @assert result == 59
 end
 ```
+
+### `if` vs `when` (P4)
+
+`if` is classical. `when` is quantum. The two are distinct channels — not sugar for each other. `if q::QBool` never auto-lifts to coherent control:
+
+```julia
+@context EagerContext() begin
+    q = QBool(1/2)                # quantum bit in superposition
+    t = QBool(0)
+
+    # ── Coherent quantum control: the only way to get controlled-X ─────────
+    when(q) do
+        t.θ += π                   # q=|0⟩ branch: t unchanged
+    end                             # q=|1⟩ branch: t flipped; q and t remain entangled
+
+    # ── Post-measurement classical branch: q collapses, entanglement is gone
+    s = QBool(1/2)
+    u = QBool(0)
+    if Bool(s)                     # explicit measurement cast — P2
+        u.θ += π                   # classical `if`: branch on the measured bit
+    end                             # s is now a classical outcome; no superposition
+end
+```
+
+`if q` without `Bool(...)` emits the P2 implicit-cast warning and then behaves as `if Bool(q)` — measurement, then classical branch. It does NOT silently become `when(q)`.
+
+**Why not auto-lift `if q` to `when(q)`?** Three reasons:
+
+1. **Two distinct channels, one syntax would be a type lie.** `when(q)` entangles target with control across both branches. `if Bool(q)` measures, destroys superposition, branches on the outcome. A user who writes `if q ...` without thinking about which one they want should not silently get either — they should get the P2 warning, same discipline as implicit float-to-int truncation.
+
+2. **It breaks composition with `oracle(f, q)`.** If `f(x::Int) = (x > 0) ? x+1 : x-1` contains an `if`, Bennett compiles that `if` as an **in-circuit reversible branch** (Toffoli-guarded writes) when you call `oracle(f, q)`. That is a third distinct semantics. Auto-lifting `if q` would mean the exact same `if` in user source means three different things — classical branch, post-measurement branch, or reversible branch — depending on whether the enclosing function is called classically, cast-then-branched, or lifted as an oracle. The user cannot tell from the source which is happening.
+
+3. **It's not Julia-idiomatic.** Julia's `if x` is defined on `x::Bool`. Types that want a boolean reading define `Base.Bool(::T)`, and `if x` becomes `if Bool(x)`. For `QBool`, `Bool(q)` is measurement — P2. `if q` with no overload already does the honest thing. The ForwardDiff.jl analogue is exact: `if x > 0` on a `Dual` also measures-then-branches (strips the dual); autodiff-safe code uses `ifelse` or similar branchless primitives. Sturm's `when` is the branchless-coherent primitive; `if` is the measure-then-branch one. Both have their place; one syntactic form may not mean both.
 
 ### Deutsch-Jozsa in One Line
 

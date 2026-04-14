@@ -4,6 +4,30 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 19 (addendum): P4 corollary — `if q` never auto-lifts to `when(q)`
+
+Late in the session Tobias raised a separate but structurally identical question: should `if x::QBool` produce a controlled unitary (i.e. auto-lift to `when(q) do … end`)? His instinct was no, and the reason he named — "what if `f(x)` has `if` statements in it, and then you write `if (f(q))` with `q` quantum" — is the Bennett/P9 interaction that would create a three-way type lie.
+
+We agreed on the rule and added it as a P4 corollary across PRD, CLAUDE.md, and the README. The rule: **`if` is classical, `when` is quantum; `if q` never silently becomes `when(q)`.** Three reasons (all landed in README as an explicit example block "`if` vs `when` (P4)"):
+
+1. **Two distinct channels, one syntax would be a type lie.** `when(q) do body end` entangles target with control across both branches; `if Bool(q) body end` measures, destroys superposition, branches on the outcome. Silent promotion collapses semantically distinct channels.
+2. **It breaks composition with `oracle(f, q)`.** Inside a function body passed to Bennett, `if` compiles as an **in-circuit reversible branch** (Toffoli-guarded writes). With auto-lift enabled, the identical `if` in user source would mean three different things (classical branch / post-measurement branch / reversible branch) depending on call context. That is exactly the P9 catch-all-on-Function mistake in a different syntactic form.
+3. **Not Julia-idiomatic.** Julia's `if x` is defined on `x::Bool`. `QBool → Bool` is measurement (P2). `if q` already does the honest thing — measure, then branch — and emits the P2 implicit-cast warning unless the user writes `if Bool(q)`. ForwardDiff's `Dual` has the same behaviour: `if x > 0` on a `Dual` strips the dual; autodiff-safe code uses `ifelse`. Sturm's `when` IS the branchless-coherent primitive.
+
+### Changes
+
+- **CLAUDE.md rule 14** — P4 bullet added between P2 and P5 stating the rule + the three reasons in compressed form, with explicit reference to the P9 / `oracle` / Bennett-`if` interaction.
+- **Sturm-PRD.md §1 P4** — corollary paragraph appended after the existing P4 line, with the ForwardDiff.Dual analogue spelled out ("`if x > 0` on a `Dual` strips the dual; Sturm's `when` is the direct analogue of `ifelse`/branchless-coherent primitives").
+- **README.md** — new section `### if vs when (P4)` between "Quantum Promotion (P8)" and "Deutsch-Jozsa in One Line". Includes a side-by-side example of coherent `when(q)` vs measure-then-branch `if Bool(q)` plus the three numbered reasons.
+- **WORKLOG.md** — this addendum.
+- P4 bullet in the README design-principles list touches the words "— `if q::QBool` never auto-lifts to `when(q)` (see *if vs when* below for the three reasons)" as a forward pointer.
+
+### The principle the session crystallised
+
+P9 (Session 19 reframe) and P4 (this addendum) are the same rule applied at two different Julia constructs — `(f::Function)(q)` and `if q`. Both are Julia syntax forms whose meaning is fixed by existing Julia semantics (method dispatch / `Bool` conversion). Auto-lifting either of them into a quantum construct (`oracle(f, q)` / `when(q)`) would make the meaning of plain Julia syntax depend on the types of its arguments in a way the source does not disclose — the same type lie in two disguises. Sturm uses explicit handles (`oracle`, `@quantum_lift`, `when`) instead, respecting Julia's type contract. When the right answer is classical (measurement, then branch), `Bool(q)` makes it explicit; when the right answer is quantum (coherent control), `when(q)` makes it explicit. Neither steals the meaning of `if` or `f(·)`.
+
+---
+
 ## 2026-04-14 — Session 19: P9 hits a Julia wall, axiom reframed — `Sturm.jl-k3m`
 
 Started the implementation of P9 auto-dispatch (bead `k3m`). 3+1 protocol run in full: 1 Explore subagent for Phase A (codebase mechanics), 2 Opus proposers in parallel for Phase B (independent designs). Both proposers landed on the same core skeleton: `abstract type Quantum end`, `(f::Function)(q::Quantum)` catch-all, plain method + `hasmethod` at call time, separate auto-cache. Phase C started red-green TDD. Tests went RED as expected. Implementation ran into a Julia language-level wall, and after Tobias's one-line analogy we realised the axiom itself — not the implementation — was wrong.
