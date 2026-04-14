@@ -4,6 +4,117 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 18: Bennett.jl v0.5 assessment + multi-path arithmetic compilation plan
+
+Two threads in this session. Tobias pushed Bennett.jl forward substantially since April 12; in parallel he asked for a plan to treat arithmetic compilation as a menu of state-of-the-art circuit families. Investigation plus written plan; no code changes to Sturm.jl.
+
+### Bennett.jl delta since April 12 (`../Bennett.jl`)
+
+Two parallel workstreams landed since our April 12 v0.4 assessment.
+
+**Memory strategies — all 4 shipped April 12.** Universal dispatcher `_pick_alloca_strategy()` in `lower.jl` picks per allocation site.
+- `shadow_memory.jl` — static-index stores/loads via CNOT-only protocol, 3W per store / W per load, zero Toffoli. **297× smaller than MUX EXCH at W=8.**
+- `qrom.jl` — Babbush-Gidney constant-table dispatch, 4(L−1) Toffoli, W-independent. **134× smaller than MUX tree at L=4, W=8.**
+- `feistel.jl` — 4-round Feistel bijective hash, 8W Toffoli. **148× smaller than Okasaki 3-node at W=32.**
+- `memssa.jl` — LLVM MemorySSA parser for memory-pattern analysis (not yet wired into lowering decisions).
+
+**Advanced arithmetic strategies — shipped April 13–14, still engineering.** Public kwargs on `reversible_compile(f, T; add=, mul=, …)`.
+- `qcla.jl` — Draper carry-lookahead adder, O(log W) Toffoli-depth, out-of-place.
+- `mul_qcla_tree.jl` — **Sun-Borissov 2026 polylog-depth multiplier** (arxiv 2604.09847, published April 14 2026). O(log²W) Toffoli-depth AND T-depth, O(W²) gates, O(W) ancillae. Self-reversing.
+- `partial_products.jl`, `parallel_adder_tree.jl`, `fast_copy.jl` — the three submodules Sun-Borissov's algorithm requires.
+- Strategy kwargs: `add ∈ {:ripple, :cuccaro, :qcla, :auto}`, `mul ∈ {:shift_add, :karatsuba, :qcla_tree, :auto}`.
+
+**Key architectural additions.**
+- `self_reversing::Bool` flag on `LoweringResult`. When set, `bennett()` skips the outer forward+copy+uncompute wrap. Sun-Borissov's multiplier and Cuccaro adder return clean ancillae by construction; double-wrapping is wasteful.
+- Canonical cost exports: `toffoli_depth(c)`, `t_depth(c; decomp=:ammr|:nc_7t)`.
+- Soft-float `soft_fdiv` subnormal bug fixed April 14 (Bennett-r6e3). 1.2M-value comprehensive test suite passes.
+
+**Measured multiplier trade-offs at W=32** (from Bennett's `BENCHMARKS.md`):
+
+| Strategy | Total gates | Toffoli | Toffoli-depth | T-count |
+|---|---|---|---|---|
+| `:shift_add` | 11 202 | 5 024 | 190 | 35 168 |
+| `:karatsuba` | 36 778 | 12 276 | 132 | 85 932 |
+| `:qcla_tree` (Sun-Borissov) | 54 614 | 24 212 | **56** — 3.4× shallower | 169 484 |
+
+A real Pareto-frontier decision. Picking one now matters.
+
+**SHA-256 impact (Bennett BC.3, April 13).** 28 133 peak live qubits vs PRS15 projection 45 056 (0.62×) — Bennett now out-wires PRS15 at SHA-256 despite 3.1× higher total Toffoli (acceptable SSA/pebbling vs hand-opt trade). Memory-aware lowering does the work.
+
+**Pebbling story update.** The April 12 note that pebbling gave only 0.5% wire reduction ("Bennett-an5") is partially outdated. Universal dispatcher + shadow memory reduce ancillae so much that pebbling's value is now about **reusing shadow tape slots** (O(store-count) wires → O(budget)), not main-path optimisation. SAT pebbling machinery exists in `src/sat_pebbling.jl` but scheduling shadow slots is filed as Bennett follow-up.
+
+### Arithmetic circuit literature — two papers added to `docs/literature/arithmetic_circuits/`
+
+- `Nickerson_survey_2024_2406.03867.pdf` — arxiv 2406.03867. 2024 comprehensive survey. Ripple-carry (VBE 1996, Cuccaro 2004, Takahashi 2005), QFT-based (Draper 2000, Beauregard 2003), carry-lookahead (Draper-Kutin-Rains-Svore 2006), multipliers (Kepley-Steinberg 2015, Parent-Roetteler-Mosca 2017, Gidney 2019), modular exp (Beauregard 2003, Häner-Roetteler-Svore 2016, arxiv 1605.08927).
+- `Sun_Borissov_polylog_multiplier_2026_2604.09847.pdf` — **new state-of-the-art**. Sun (softwareQ) & Borissov (Waterloo), April 14 2026. Clifford+T multiplier at O(log²W) depth AND T-depth, O(W²) gates, O(W) ancillae. Concrete coefficients: depth `3·log²W + 17·log W + 20`, T-depth `3·log²W + 7·log W + 14`. Indicator-controlled copying + binary adder tree. Already implemented in Bennett as `mul=:qcla_tree`.
+
+### Multi-path arithmetic plan — `docs/multi-path-arithmetic-plan.md`
+
+Headline finding: **Bennett.jl IS the multi-path compilation framework**. `oracle(f, x; kw...)` in `src/bennett/bridge.jl` line 158 already splats kwargs into `reversible_compile`. Users can write `oracle(f, x; mul=:qcla_tree)` today and get Sun-Borissov's polylog multiplier — zero Sturm changes required. The plan is mostly about surfacing this cleanly and adding a small number of DSL-native paths for cases Bennett can't see (like pure-QFT-basis arithmetic).
+
+Seven-phase roll-out, all filed as beads:
+
+| Phase | Bead | P | What |
+|---|---|---|---|
+| 1 | `Sturm.jl-mjk` | P1 | Document Bennett kwarg pass-through, audit `QuantumOracle` cache key |
+| 2 | `Sturm.jl-xfk` | P1 | Strategy registry + `@strategy` macro (task-local hint) |
+| 3 | `Sturm.jl-adj` | P2 | DSL-native Draper QFT adder (blocked on xfk) |
+| 4 | `Sturm.jl-2l4` | P2 | Bennett pass-through as registered entries (blocked on xfk) |
+| 5 | `Sturm.jl-5se` | P2 | `Auto` dispatcher + cost-model objectives (blocked on 2l4) |
+| 6 | `Sturm.jl-3ii` | P3 | Beauregard classical-operand adder (blocked on adj) |
+| 7 | `Sturm.jl-3px` | P3 | Benchmark suite + trade-off table (blocked on 5se) |
+
+Note: `bd dep add` hit a DB error (`wisp_dependencies` table missing) so dependencies are documented only in bead descriptions, not in the formal edge graph.
+
+### User-facing API sketch (from the plan)
+
+```julia
+# No hint — today's ripple-carry, unchanged
+c = a + b
+
+# Explicit strategy hint, single expression
+c = @strategy DraperQFT a + b
+
+# Block-level hint, every arithmetic op inside
+@strategy BennettPath{:qcla_tree} begin
+    y = x * x + x          # mul=:qcla_tree flows through Bennett
+end
+
+# Objective-driven
+@context EagerContext() objective=:min_t_depth begin
+    y = f(x)               # Auto dispatches to Pareto-optimal strategy per op
+end
+
+# Escape hatch
+y = oracle(f, x; add=:qcla, mul=:qcla_tree, bennett=:pebbled_group)
+```
+
+### Risks surfaced in the plan
+
+- **Phase coherence inside `when()`** — Session-8 bug family (controlled-Rz(π) ≠ CZ). Highest risk for Draper QFT because it is phase-dense. Mitigation: per-strategy controlled-lift regression tests.
+- **Cache-key collisions on `quantum(f)`** — if the cache keys on `(f, argtypes)` only, switching `mul=` silently reuses a stale circuit. Phase 1 audits this. Fix: key on `(f, argtypes, sorted(strategy_kwargs))`.
+- **QFT output-basis mismatch** — mixing DraperQFT with ripple-carry needs explicit QFT round-trips. Registry `profile()` must flag output basis; dispatcher warns on incompatible chains.
+- **Bennett strategy flux** — `_pick_add_strategy` / `_pick_mul_strategy` still engineering in Bennett. `BennettPath{S}` shims couple to symbol names. Mitigation: version-check on import, compat layer in `bridge.jl`.
+- **P9 auto-dispatch interaction** — when `Sturm.jl-k3m` ships, `f(q)` catch-all must read `task_local_storage(:sturm_arithmetic_strategy)` before calling `oracle(f, q)`.
+- **Endianness drift** — Beauregard and Thapliyal papers use big-endian; Sturm is little-endian. Strategy implementers must convert.
+
+### Why Phase 1 first
+
+Phase 1 is zero-risk documentation of a capability that already works. `oracle(f, x; mul=:qcla_tree)` surfaces Sun-Borissov's April-2026 polylog multiplier for *any* Julia function today. Highest ROI-per-line. The plan's headline deliverable exists after Phase 1 ships.
+
+### Files touched this session
+
+- `docs/multi-path-arithmetic-plan.md` (new, ~350 lines) — full plan
+- `docs/literature/arithmetic_circuits/Nickerson_survey_2024_2406.03867.pdf` (new)
+- `docs/literature/arithmetic_circuits/Sun_Borissov_polylog_multiplier_2026_2604.09847.pdf` (new)
+- `WORKLOG.md` (this entry)
+
+### Beads filed (this session)
+
+`Sturm.jl-mjk` `xfk` `adj` `2l4` `5se` `3ii` `3px` — Phases 1–7 of the multi-path arithmetic plan.
+
+---
+
 ## 2026-04-14 — Session 17: axiom refinement (P2 cast, P7 infinite-d, P9 auto-dispatch) — `Sturm.jl-7nx`
 
 Principle-level pass at Tobias's direction. No code changes; three axioms sharpened in the PRD, README, and CLAUDE.md axiom list.
