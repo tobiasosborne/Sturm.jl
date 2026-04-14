@@ -4,6 +4,51 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 20 (continued): P8 shifts on QInt — `Sturm.jl-9x4`
+
+Third bead of the session. Classical-amount shifts land as wire permutations
+into a fresh target — no mux, no quantum shift amount, no ancillae beyond
+the fresh output register.
+
+### Design
+
+- `a << n` — allocate fresh W-wire target at `|0⟩`; for each `j` in `1:(W-n)`, CNOT `a.wires[j] → target.wires[j+n]`. Top n bits of a are "shifted out" — they stay on a's wires (a is preserved) but don't propagate to the target.
+- `a >> n` — mirror. For each `j` in `(n+1):W`, CNOT `a.wires[j] → target.wires[j-n]`.
+- `n ≥ W` — loop body skipped, target stays all `|0⟩`. Matches Julia's UInt semantics (`UInt8(0xff) << 8 == 0`).
+- `n < 0` — `error()` for now. A future two-sided shift can relax this.
+
+### Why fresh register, not in-place
+
+In-place shift would need to either (a) cascade SWAPs across W wires, which for `a << 1` means W-1 SWAPs = 3(W-1) CNOTs, or (b) run a wire permutation in the context — but Sturm's contexts don't expose a "rename wire" op, and doing so would break the immutability of `QInt.wires::NTuple{W,WireID}`.
+
+Fresh-register costs at most W CNOTs and preserves `a`, which matches the `&`/`|` convention established by `Sturm.jl-r9i`. Cheap, composable, reversible.
+
+### Tests (test/test_qint_shifts.jl, 4 testsets, 8 asserts)
+
+1. `<< 1` on `0b0011` → `0b0110`, `a` preserved.
+2. `>> 1` on `0b1010` → `0b0101`, `a` preserved.
+3. Edge cases bundle: `<< 0` identity, `<< W` and `>> W` both collapse to 0, `<< -1` raises.
+
+Shifts by 1 were the only RED-first tests; the edge cases held by construction once the `if n < W` guard was in place.
+
+### Beads
+
+- `Sturm.jl-9x4` — claimed, delivered, closing on commit.
+- Still open after this session: `Sturm.jl-fje` (`*` and `^` — the headline P8 gap, bigger scope, deserves its own session and a design check-in on DSL-native vs Bennett-2-arg).
+
+### Files touched
+
+- `src/types/qint.jl` — `+32` lines: `<<`, `>>`.
+- `test/test_qint_shifts.jl` (new) — 4 testsets, 8 asserts.
+- `test/runtests.jl` — include the new file.
+- `WORKLOG.md` — this entry.
+
+### Test counts
+
+- `test_qint_shifts.jl`: 8/8 GREEN.
+
+---
+
 ## 2026-04-14 — Session 20 (continued): P8 bitwise ops on QInt — `Sturm.jl-r9i`
 
 Second bead of the session. Session 19 reframed P9 as "complete P8, add explicit handles" — the bitwise gap was one of the concrete gaps the reframe surfaced. This bead closes it: `⊻`, `&`, `|` all work on `QInt{W}`, both for pure quantum operands and mixed-type with `Integer` (P8 promotion).

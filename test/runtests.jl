@@ -35,4 +35,5 @@ using Sturm
     include("test_p9_auto_dispatch.jl")
     include("test_multi_path_arithmetic.jl")
     include("test_qint_bitwise.jl")
+    include("test_qint_shifts.jl")
 end
