@@ -10,11 +10,14 @@ These are axioms, not guidelines.
 
 **P1. Functions are channels.** A Julia function with quantum arguments IS a completely positive map. There is no separate "channel" wrapper.
 
-**P2. The quantum-classical boundary is a type boundary.** There is no `measure()` function. Measurement happens when a quantum value is assigned to a classical type:
+**P2. The quantum-classical boundary is a *cast*, like `Float64 → Int64`.** There is no `measure()` function. Measurement is what happens when a quantum value is cast to a classical type — with implied information loss, exactly as truncating a float loses the fractional part:
 
 ```julia
-result::Bool = q    # measurement happens here, at the type boundary
+result = Bool(q)        # explicit cast: measurement
+q = QBool(result)       # explicit cast: preparation
 ```
+
+Because the cast loses information irreversibly, the compiler emits a **warning on implicit casts** — `x::Bool = q` without an explicit cast expression is flagged, just like implicit float-to-int truncation is flagged in sensible languages. The fix is always the same: wrap the RHS in an explicit cast. Information loss must be intentional.
 
 **P3. Operations are operations.** No language-level distinction between unitaries, noise, preparation, or measurement. They are all channels.
 
@@ -24,11 +27,11 @@ result::Bool = q    # measurement happens here, at the type boundary
 
 **P6. QECC is a higher-order function.** Error correction is `Channel -> Channel`. It wraps a function in encoding and decoding. It is not an annotation or pragma.
 
-**P7. The abstraction is dimension-agnostic.** The core must not assume d=2 in a way that forecloses qutrits or anyonic systems.
+**P7. The abstraction is dimension-agnostic across the entire Hilbert spectrum.** The core must extend *without modification* to: finite qudits (qutrits d=3, arbitrary `QDit{D}`), **anyons** (fusion categories, non-abelian braiding as a primitive), and — critically — **infinite-dimensional systems**. At minimum, Gaussian CV for quantum optics (bosonic modes, displacement, squeezing, beamsplitters, homodyne). Ideally, arbitrary infinite-d: Fock-space arithmetic, bosonic codes (cat, binomial, GKP), continuous-variable oracles. If any of these forces a change to the channel algebra, tracing infrastructure, or the P2 cast / P8 promotion rules, the abstraction is wrong.
 
 **P8. Quantum promotion follows Julia's numeric tower.** Classical values auto-promote to quantum when combined with quantum values, just as `Int + Float64 -> Float64`. Initial construction is explicit (`QInt{8}(42)` is like `complex(1)`). Mixed operations promote the classical side.
 
-**P9. Any Julia function is a quantum oracle.** Write a plain Julia function `f(x::Int8) = x^2 + 3x + 1`. Call `oracle(f, x)` where `x` is a `QInt`. The function is compiled to a reversible circuit via [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl) (LLVM IR extraction + Bennett's 1973 construction) and executed on the quantum register. Inside `when()`, it becomes a controlled oracle automatically. No manual circuit construction. No gate decomposition. Just write normal code.
+**P9. Any Julia function is a quantum oracle — automatically, via dispatch.** Write a plain Julia function `f(x::Int8) = x^2 + 3x + 1`. Call it with a quantum argument — `f(q)` where `q::QInt{8}` — and you get the reversible version for free. No macro, no wrapper, no manual lifting. The mechanism is a compile-time fallback: Julia's multiple dispatch routes `f(q)` to a generated catch-all on `Quantum` arguments, which at compile time checks `hasmethod(f, classical_types)` and lowers to `oracle(f, q)` — which hands `f` to [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl) (LLVM IR → reversible circuit, Shadow / MUX / QROM / Feistel strategies auto-dispatched) and caches the compiled circuit. Inside `when()`, the cached circuit is lifted to its controlled form automatically. `quantum(f)` remains as the explicit pre-compile handle (same pattern as `Enzyme.gradient`), but it is sugar on top of the automatic path, not a requirement. User overloads on quantum types always win. The same classical source runs on classical *and* quantum arguments without modification.
 
 ## The Four Primitives
 
@@ -100,7 +103,7 @@ end
 
 ### Quantum Oracles from Plain Julia (P9)
 
-Write normal Julia code. Get quantum circuits.
+Write normal Julia code. Get quantum circuits. Today the explicit form `oracle(f, x)` is the entry point; the **direct-call path `f(q)` — where Julia's dispatch routes a quantum argument to the same reversible lift automatically — is the P9 goal** (tracked under the P9 auto-dispatch bead).
 
 ```julia
 # Any pure Julia function:
@@ -108,10 +111,11 @@ f(x::Int8) = x^2 + 3x + 1
 
 @context EagerContext() begin
     x = QInt{2}(2)            # 2-bit quantum register
-    y = oracle(f, x)          # Bennett compiles f, executes on quantum register
-    result = Int(y)            # type boundary = measurement
-    @assert result == 3        # (4+6+1) mod 4 = 3
-    @assert Int(x) == 2        # input preserved (Bennett keeps inputs intact)
+    y = oracle(f, x)          # explicit form (works today)
+    # y = f(x)                # direct form (P9 goal, pending auto-dispatch)
+    result = Int(y)           # explicit cast = measurement
+    @assert result == 3       # (4+6+1) mod 4 = 3
+    @assert Int(x) == 2       # input preserved (Bennett keeps inputs intact)
 end
 ```
 

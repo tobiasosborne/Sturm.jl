@@ -4,6 +4,60 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 17: axiom refinement (P2 cast, P7 infinite-d, P9 auto-dispatch) — `Sturm.jl-7nx`
+
+Principle-level pass at Tobias's direction. No code changes; three axioms sharpened in the PRD, README, and CLAUDE.md axiom list.
+
+### P2 — measurement is a *cast*
+
+Reframed from "type boundary" to "type cast, like `Float64 → Int64`". Information loss is implied exactly as for float-to-int truncation. The compiler MUST warn on implicit assignments (`x::Bool = q`) and MUST stay silent on explicit casts (`x = Bool(q)`). Same discipline as implicit-narrowing warnings in C/Rust/Swift. Filed `Sturm.jl-f23` (P2) to implement the warning at the DSL layer. Today measurement happens silently on assignment; that's the bug.
+
+### P7 — dimension-agnostic across the *entire* Hilbert spectrum
+
+The old P7 covered qutrits/qudits/anyons. Tightened to three arms:
+- **Finite qudits** — `QDit{D}`, primitives generalise to `su(D)` generators.
+- **Anyons** — fusion categories, braiding σ_i, F/R moves. Composition is fusion, not tensor. Filed `Sturm.jl-5ta` (P4) — low priority but exists to *test* the P7 invariant (zero core edits).
+- **Infinite-dimensional** — at minimum Gaussian CV (bosonic modes, displacement, squeezing, beamsplitter, homodyne). Ideally arbitrary infinite-d (Fock, bosonic codes, GKP). Filed `Sturm.jl-wzj` (P3) for the Gaussian CV context.
+
+The mechanical test for P7 compliance: adding any of these must require **zero** edits to the channel algebra, tracing, `when()`, P2 cast rules, or P8 promotion rules. If a core file changes, P7 is violated and the abstraction is wrong.
+
+### P9 — `f(q)` dispatches to `oracle(f, q)` automatically
+
+The old P9 said "call `oracle(f, x)`". Tobias's question: can `f(q)` Just Work when `f` is a classical function and `q` is quantum? Answer: yes, via a compile-time generated fallback on `<:Quantum` argument types. Mechanism (three layers):
+
+1. Catch-all `(f::Function)(args::Quantum...)` — only fires when no more-specific method exists. Scoped to Sturm-owned types to avoid method piracy.
+2. Generated-function body: `hasmethod(f, classical_types_of(args))` at compile time; if yes, lower to `oracle(f, args...)`; else `MethodError`.
+3. Bennett cache keyed on `(f, argtypes)` — shared with the existing explicit `quantum(f)` handle.
+
+Pattern match: `ForwardDiff.Dual` / `Enzyme.gradient`. User overloads on quantum types always win by dispatch specificity, so domain-specific quantum versions shadow the automatic lift cleanly.
+
+Filed `Sturm.jl-k3m` (P1) — unblocks a big chunk of the "write normal Julia, get circuits" UX.
+
+### Gotcha: README examples must stay runnable
+
+Initial edit replaced `oracle(f, x)` with `f(x)` in the README "Quantum Oracles from Plain Julia" section. Reverted — the automatic dispatch isn't implemented yet, so the examples would `MethodError`. Kept explicit `oracle(f, x)` in the runnable code blocks, added a prose note that `f(q)` is the P9 goal tracked under the auto-dispatch bead. Principle text (in README "Design Principles" section) *is* aspirational; that's fine.
+
+### Why these changes matter strategically
+
+All three are about *how far* the language reaches:
+
+- P2 cast: makes the quantum→classical boundary feel like the rest of Julia's numeric tower — users already know implicit-narrowing warnings; no new mental model.
+- P7 infinite-d: opens quantum optics (Gaussian CV) as a *first-class* backend. Today's four backends (Eager/Density/Tracing + future MPS/Trajectory/StabilizerRank) are all finite-d qubit engines. A Gaussian CV backend brings photonic systems inside the same DSL surface.
+- P9 auto-dispatch: the experience gap between `y = oracle(f, x)` and `y = f(x)` is enormous. The latter makes "any Julia function is a quantum oracle" literally true at the syntax level, not a slogan.
+
+### Files touched
+
+- `Sturm-PRD.md` — rewrote P2 (cast framing + warning), expanded P7 (three arms, infinite-d explicit), added new P9 section (auto-dispatch mechanism).
+- `README.md` — same updates to the "Design Principles" block; runnable examples kept on `oracle(f, x)` with a note.
+- `CLAUDE.md` — updated axiom list (rule 14) from "Eight" to "Nine"; tightened P2, P7, P8, added P9.
+
+### Beads
+
+- Opened + closed: `Sturm.jl-7nx` (this refinement task).
+- Filed follow-ups: `Sturm.jl-k3m` P1 (auto-dispatch), `Sturm.jl-f23` P2 (cast warning), `Sturm.jl-wzj` P3 (Gaussian CV), `Sturm.jl-5ta` P4 (anyons).
+
+---
+
 ## 2026-04-12 — Session 16 (end): vis polish, compact scheduling, Bennett assessment
 
 Half-day of refinements after the initial ASCII + PNG renderers landed.

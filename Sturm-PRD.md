@@ -14,13 +14,15 @@ These are the axioms of the language. Every design decision must be consistent w
 
 **P1. Functions are channels.** A Julia function with quantum arguments IS a CP map (completely positive, possibly trace non-increasing). Its type signature determines the channel type. Composition of functions is composition of channels. There is no separate "channel" wrapper the programmer must use. Trace-preserving (CPTP) maps are the common case, but trace non-increasing maps are first-class: post-selection, conditional operations, and probabilistic channels (like a single branch of RUS) are all expressible. The type system does not enforce trace preservation — that is a property the programmer or verifier may check, not a constraint the language imposes.
 
-**P2. The quantum-classical boundary is a type boundary.** There is NO `measure()` function. The boundary between quantum and classical is expressed entirely through the type system and lexical scope:
+**P2. The quantum-classical boundary is a *cast* — like `Float64 → Int64`.** There is NO `measure()` function. Crossing the quantum/classical boundary is a type cast with implied information loss, exactly analogous to truncating a float to an integer. The language surfaces three cast directions:
 
-- `x::Bool = q` — quantum value assigned to classical type → measurement. The compiler inserts the measurement channel.
-- `q = QBool(x)` — classical value assigned to quantum type → preparation.
-- `f_classical = classicalise(ch)` — quantum channel converted to classical function type → decoherence. The off-diagonal elements of the channel's process matrix are discarded; what remains is the classical stochastic map. This is a higher-order type boundary: just as assigning a `QBool` to a `Bool` decoheres a state, assigning a quantum channel to a classical function decoheres the channel itself.
+- `x = Bool(q)` — explicit cast `QBool → Bool` (measurement). The compiler inserts the measurement channel.
+- `q = QBool(x)` — explicit cast `Bool → QBool` (preparation).
+- `f_classical = classicalise(ch)` — higher-order cast `Channel → function` (decoherence). Off-diagonal coherences of the process matrix are discarded, leaving a classical stochastic map. Just as `Bool(q)` decoheres a state, `classicalise(ch)` decoheres the channel itself.
 
-This is the ONLY mechanism for crossing the boundary. Measurement, preparation, and decoherence are not operations — they are consequences of information crossing a type boundary.
+**Compiler warning on implicit casts.** Because quantum→classical casting loses information irreversibly, an *implicit* assignment without an explicit cast expression — for example `x::Bool = q` or `y::Int = qi` — triggers a compiler warning, by direct analogy with the "implicit float-to-int truncation" warnings that sensible languages emit. The fix is always the same: wrap the RHS in an explicit cast (`Bool(q)`, `Int(qi)`). Information loss must be *intentional*.
+
+This is the ONLY mechanism for crossing the boundary. Measurement, preparation, and decoherence are not operations — they are consequences of a type cast.
 
 **P3. Operations are operations.** There is no language-level distinction between unitaries, measurements, preparations, noise channels, or partial traces. They are all channels. Whether the backend uses state vectors or density matrices is a compiler/runtime detail invisible to the programmer.
 
@@ -30,9 +32,32 @@ This is the ONLY mechanism for crossing the boundary. Measurement, preparation, 
 
 **P6. QECC is a higher-order function.** Error correction wraps a channel (= function) in encoding/syndrome/correction/decoding channels. It is a function `Channel → Channel`. It is not a language feature, annotation, or pragma. It is a library function.
 
-**P7. The abstraction is dimension-agnostic.** The core type system and channel algebra must not assume qubits (d=2). Qutrits (`QTrit`, d=3), qudits (`QDit{D}`, arbitrary d), and ultimately anyonic systems (fusion categories) should be expressible by extending the type hierarchy without modifying the core. If adding qutrits requires changes to the channel composition operators or the tracing infrastructure, the abstraction is wrong. For v0.1 only d=2 is implemented, but no design decision may foreclose higher d.
+**P7. The abstraction is dimension-agnostic across the entire Hilbert spectrum.** The core type system and channel algebra must not assume qubits (d=2), nor any specific local dimension. All of the following must be expressible by *extending* the type hierarchy — never by modifying the core:
+
+- **Finite qudits.** Qutrits (`QTrit`, d=3), arbitrary qudits (`QDit{D}`). The four primitives generalise to `Ry_D`, `Rz_D` on `su(D)` generators plus a controlled-shift for entanglement.
+- **Anyons.** Fusion-category wires (`QAnyon{C}`), with braiding and F-/R-moves as primitive-level operations. Topological charge is a type parameter; composition is fusion, not tensor product.
+- **Infinite-dimensional systems.** At minimum, **Gaussian CV** for quantum optics: bosonic modes (`QMode`), displacement, squeezing, beamsplitters, phase rotation, and homodyne/heterodyne measurement — all expressible as channels on a covariance-matrix context. Ideally, arbitrary infinite-dimensional systems: full Fock-space arithmetic, bosonic codes (cat, binomial, GKP), and continuous-variable oracles. A CV context stores a Gaussian covariance matrix (or a truncated Fock-basis density operator for non-Gaussian cases); the DSL surface is unchanged.
+
+The test is mechanical: if adding qutrits, anyons, or a Gaussian optical mode requires *any* change to channel composition operators, the tracing infrastructure, `when()`, the cast rules of P2, or the promotion rules of P8, the abstraction is wrong. For v0.1 only d=2 is implemented, but no design decision may foreclose higher finite d, topological d, *or* infinite d. Wires carry a Hilbert-space descriptor (finite-d integer, fusion category, or CV tag), tracked by the context; primitives dispatch on it.
 
 **P8. Quantum promotion follows Julia's numeric tower.** When a classical value (`Bool`, `Integer`) participates in an operation with a quantum value (`QBool`, `QInt{W}`), the classical value auto-promotes to the corresponding quantum type — just as `Int + Float64 → Float64`. Initial quantum construction is explicit: `QInt{8}(42)` is preparation (a physical operation), analogous to `complex(1)`. Mixed-type methods extract context and width from the quantum operand. Promotion is always classical→quantum; quantum→classical requires measurement via P2. Gates (`H!`, `X!`, etc.) and quantum control (`when`) do NOT participate in promotion — they require exact quantum types. Implementation: mixed-type methods are defined directly (NOT via `Base.promote_rule`/`Base.convert`, because `convert(QInt{W}, ::Integer)` would require a quantum context as a side-effect, which violates Julia convention). The context is extracted from the quantum operand.
+
+**P9. Any Julia function is a quantum oracle — automatically, via dispatch.** A plain Julia function written against classical types becomes a reversible quantum oracle the moment it is applied to a quantum argument. No macro, no wrapper, no manual lifting:
+
+```julia
+f(x::Int64) = x^2 + 3x + 1     # ordinary Julia
+y = f(q)                       # q::QInt{64} — Just Works
+```
+
+The mechanism is a three-layer compile-time lift, chosen to match the ergonomics of `ForwardDiff.Dual` and `Enzyme.gradient`:
+
+1. **Dispatch fallback.** A generated catch-all method `(f::Function)(args::Quantum...)` fires only when no more-specific user method exists. At compile time it inspects `hasmethod(f, classical_types_of(args))`; if a classical method exists, it lowers the call to `oracle(f, args...)`, otherwise it raises `MethodError`. Scoping the fallback to argument types Sturm owns (`<:Quantum`) avoids method piracy.
+2. **Bennett compilation.** `oracle` hands `f` to Bennett.jl, which extracts LLVM IR and emits a reversible circuit, auto-dispatching the cheapest memory strategy per allocation site (Shadow / MUX / QROM / Feistel). The compiled circuit is cached keyed on `(f, argtypes)` — a single LLVM pass per (function, signature) pair, amortised across shots.
+3. **Context integration.** Inside `when(ctrl) do … end`, the cached reversible circuit is lifted to its controlled form automatically through Sturm's existing control stack. No `controlled(f)` handle, no separate declaration.
+
+`quantum(f)` remains as the *explicit* pre-compile handle — useful when the caller wants to pay the LLVM-IR cost up front and reuse the cached circuit deliberately, the same pattern as `g = gradient(f)`. But it is sugar on top of the automatic path, not a requirement. User overloads of `f` on quantum types always win (Julia dispatch), so domain-specific quantum versions can shadow the automatic lift wherever that is desired.
+
+The principle: the user writes Julia; the language makes it quantum. The same classical code must run correctly on classical arguments and produce a valid reversible circuit on quantum arguments, with no change to the source of `f`.
 
 ---
 
