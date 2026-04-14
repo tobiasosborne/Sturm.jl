@@ -293,6 +293,166 @@ end
 Base.:-(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a - _promote_to_qint(a.ctx, b, Val(W)))
 Base.:-(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) - b)
 
+# ── Bitwise XOR: W parallel CNOTs (primitive 4) ─────────────────────────────
+# Matches QBool.xor semantics: mutate left, preserve right. `a ⊻ b` is a
+# reversible bit-parallel operation — the W CNOTs never need ancillae.
+
+"""
+    Base.xor(a::QInt{W}, b::QInt{W}) -> QInt{W}
+
+Bitwise XOR: `a_i ⊻= b_i` for every bit `i`, via W parallel CNOTs with
+`b[i]` as control and `a[i]` as target (primitive 4). Mutates `a`
+in place; `b` is preserved and remains live. Returns `a`.
+
+The in-place / preserving convention matches [`Base.xor`](@ref) on
+`QBool` — reversible CNOT semantics, no ancillae.
+"""
+function Base.xor(a::QInt{W}, b::QInt{W}) where {W}
+    a.ctx === b.ctx || error("Cannot xor QInts from different contexts")
+    check_live!(a)
+    check_live!(b)
+    ctx = a.ctx
+    for i in 1:W
+        apply_cx!(ctx, b.wires[i], a.wires[i])
+    end
+    return a
+end
+
+# Mixed-type XOR: quantum promotion (P8). Classical operand is a known
+# constant, so there's no entanglement — each set bit becomes an X gate.
+
+"""
+    Base.xor(a::QInt{W}, b::Integer) -> QInt{W}
+
+Bitwise XOR with a classical constant. For every bit `i` of `b` that is 1,
+apply X to `a.wires[i]`. Mutates `a` in place; returns `a`. No ancillae.
+`b` is reduced mod 2^W (matches the P8 promotion rule in `_promote_to_qint`).
+"""
+function Base.xor(a::QInt{W}, b::Integer) where {W}
+    check_live!(a)
+    bmod = mod(b, 1 << W)
+    for i in 1:W
+        if (bmod >> (i - 1)) & 1 == 1
+            apply_ry!(a.ctx, a.wires[i], π)
+        end
+    end
+    return a
+end
+
+"""
+    Base.xor(a::Integer, b::QInt{W}) -> QInt{W}
+
+Mirror of [`Base.xor(::Bool, ::QBool)`](@ref): prepare a fresh `QInt{W}`
+holding the classical value (mod 2^W), then CNOT the quantum operand
+into it bit-for-bit. The quantum operand is preserved (used only as a
+control). Returns the fresh QInt.
+"""
+function Base.xor(a::Integer, b::QInt{W}) where {W}
+    check_live!(b)
+    ctx = b.ctx
+    target = QInt{W}(ctx, mod(a, 1 << W))
+    for i in 1:W
+        apply_cx!(ctx, b.wires[i], target.wires[i])
+    end
+    return target
+end
+
+# ── Bitwise AND: Toffoli into fresh register ─────────────────────────────────
+# AND is not reversible in place — `c = a ∧ b` from (a, b) is a 2-to-1 map.
+# Reversible construction: allocate a fresh target register at |0⟩ and
+# Toffoli each bit into it. Both operands remain alive (used as controls).
+
+"""
+    Base.:&(a::QInt{W}, b::QInt{W}) -> QInt{W}
+
+Bitwise AND. Allocates a fresh `QInt{W}` at `|0⟩` and Toffolis each pair
+`(a_i, b_i)` into it, so the result holds `a ∧ b`. Both `a` and `b` are
+preserved — used only as Toffoli controls.
+"""
+function Base.:&(a::QInt{W}, b::QInt{W}) where {W}
+    a.ctx === b.ctx || error("Cannot AND QInts from different contexts")
+    check_live!(a)
+    check_live!(b)
+    ctx = a.ctx
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    for i in 1:W
+        apply_ccx!(ctx, a.wires[i], b.wires[i], target_wires[i])
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
+"""
+    Base.:&(a::QInt{W}, b::Integer) -> QInt{W}
+
+Bitwise AND with a classical constant. Allocates a fresh target at `|0⟩`
+and CNOTs `a_i` into it for every bit of `b` that is 1; bits where `b`
+is 0 stay at `|0⟩`. `a` is preserved. `b` is reduced mod 2^W.
+"""
+function Base.:&(a::QInt{W}, b::Integer) where {W}
+    check_live!(a)
+    ctx = a.ctx
+    bmod = mod(b, 1 << W)
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    for i in 1:W
+        if (bmod >> (i - 1)) & 1 == 1
+            apply_cx!(ctx, a.wires[i], target_wires[i])
+        end
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
+Base.:&(a::Integer, b::QInt{W}) where {W} = b & a
+
+# ── Bitwise OR: a ⊕ b ⊕ (a ∧ b) into fresh register ──────────────────────────
+# Identity: a ∨ b = a ⊕ b ⊕ (a ∧ b). With target starting at |0⟩ this is
+# 2 CNOTs then a Toffoli — no temporary X gates, both operands preserved.
+
+"""
+    Base.:|(a::QInt{W}, b::QInt{W}) -> QInt{W}
+
+Bitwise OR. Allocates a fresh `QInt{W}` at `|0⟩` and applies
+`CNOT(a_i) ; CNOT(b_i) ; Toffoli(a_i, b_i)` to each target bit so that
+`c_i = a_i ⊕ b_i ⊕ (a_i ∧ b_i) = a_i ∨ b_i`. Both operands preserved.
+"""
+function Base.:|(a::QInt{W}, b::QInt{W}) where {W}
+    a.ctx === b.ctx || error("Cannot OR QInts from different contexts")
+    check_live!(a)
+    check_live!(b)
+    ctx = a.ctx
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    for i in 1:W
+        apply_cx!(ctx, a.wires[i], target_wires[i])                  # target = a
+        apply_cx!(ctx, b.wires[i], target_wires[i])                  # target = a ⊕ b
+        apply_ccx!(ctx, a.wires[i], b.wires[i], target_wires[i])     # target = a ⊕ b ⊕ ab = a ∨ b
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
+"""
+    Base.:|(a::QInt{W}, b::Integer) -> QInt{W}
+
+Bitwise OR with a classical constant. Where the classical bit is 1 the
+target bit is forced to 1 (X on `|0⟩`); where the classical bit is 0 the
+target bit becomes `a_i` (CNOT from `a`). Preserves `a`. `b` is reduced
+mod 2^W.
+"""
+function Base.:|(a::QInt{W}, b::Integer) where {W}
+    check_live!(a)
+    ctx = a.ctx
+    bmod = mod(b, 1 << W)
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    for i in 1:W
+        if (bmod >> (i - 1)) & 1 == 1
+            apply_ry!(ctx, target_wires[i], π)          # target_i = 1
+        else
+            apply_cx!(ctx, a.wires[i], target_wires[i])  # target_i = a_i
+        end
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
+Base.:|(a::Integer, b::QInt{W}) where {W} = b | a
+
 # ── Comparison ───────────────────────────────────────────────────────────────
 
 """

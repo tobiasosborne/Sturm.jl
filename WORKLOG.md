@@ -4,6 +4,74 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 20 (continued): P8 bitwise ops on QInt — `Sturm.jl-r9i`
+
+Second bead of the session. Session 19 reframed P9 as "complete P8, add explicit handles" — the bitwise gap was one of the concrete gaps the reframe surfaced. This bead closes it: `⊻`, `&`, `|` all work on `QInt{W}`, both for pure quantum operands and mixed-type with `Integer` (P8 promotion).
+
+### The three operators, three designs
+
+- **`⊻` (XOR): W parallel CNOTs, mutate left, preserve right.** Matches `QBool.xor` exactly — `a ⊻= b` flips the target with the control untouched; the QInt version broadcasts over all W bits. Zero ancillae. The non-quantum analog would be Julia's `a .⊻= b`.
+- **`&` (AND): Toffoli into fresh register, preserve both.** AND is 2→1 so not reversible in place; allocate W fresh ancilla-free target wires at `|0⟩` and `Toffoli(a_i, b_i, c_i)`. Both operands remain live; they're used purely as controls.
+- **`|` (OR): two CNOTs + a Toffoli per bit via `a ⊕ b ⊕ ab = a ∨ b`.** Same fresh-target construction as AND, but the identity `a ∨ b = a ⊕ b ⊕ (a ∧ b)` avoids the temporary X-gates that a De Morgan construction (`¬(¬a ∧ ¬b)`) would need. Still preserves both operands.
+
+All three match the convention already established by `Base.xor` on `QBool` and by `Base.:+` / `Base.:-` on `QInt`: CNOT-preserving ops preserve the control; non-reversible-in-place ops (`&`, `|`) allocate fresh and preserve everything.
+
+### Mixed-type (P8 promotion)
+
+Each op gets three methods: `QInt×QInt`, `QInt×Integer`, `Integer×QInt`. The Integer side never allocates a qubit for the constant — the classical bit pattern directly parameterises X / CNOT / (nothing) on the quantum wire:
+
+| Op | Classical bit = 0 | Classical bit = 1 |
+|---|---|---|
+| `⊻` (QInt, Int) | no-op on `a_i` | X on `a_i` |
+| `⊻` (Int, QInt) | CNOT `b_i → fresh_i` | CNOT `b_i → fresh_i` then X — collapses via `target = Int ⊕ b` |
+| `&` (QInt, Int) | fresh_i stays `|0⟩` | CNOT `a_i → fresh_i` |
+| `|` (QInt, Int) | CNOT `a_i → fresh_i` | X on fresh_i |
+
+`Integer & QInt = QInt & Integer` and `Integer | QInt = QInt | Integer` exploit commutativity to forward to the primary method. `Integer ⊻ QInt` does NOT forward (it allocates a fresh QInt preloaded with the classical, then CNOTs the quantum in), matching `Bool ⊻ QBool`.
+
+### Tests (test/test_qint_bitwise.jl, 9 testsets, 19 asserts)
+
+Each testset pattern: prepare known classical values, run the op, assert the bitwise result AND (for preserving ops) assert the operand is still the original value. W=4 throughout — big enough to exercise a non-trivial bit pattern, small enough to fit inside MAX_QUBITS with headroom.
+
+Example assertion (the AND case):
+
+```julia
+@context EagerContext(capacity=20) begin
+    a = QInt{4}(0b1010); b = QInt{4}(0b0110)
+    c = a & b
+    @test Int(c) == 0b0010    # 10 & 6 = 2
+    @test Int(a) == 0b1010    # a preserved
+    @test Int(b) == 0b0110    # b preserved
+end
+```
+
+RED-first discipline for the primary method in each op; mixed-type variants landed as regression locks (single-op-at-a-time, all RED → GREEN on first implementation).
+
+### Gotchas
+
+- **`a & b` preserves both operands — don't consume**. The temptation, reading `Base.:+` on QInt, is to consume both and return a fresh register. But `+` consumes because ripple-carry overwrites `b` and uses `a.wires` as discardable ancilla-carriers; AND/OR do nothing of the kind — Toffoli with `|0⟩` target leaves its two controls pristine. Consuming them would be wrong and wasteful (deallocations for no reason). The CLAUDE.md rule "Linear resource semantics" is not a mandate to consume everywhere — it's a statement that *wires can only be used once before measurement or reset*, not *operations must consume their inputs*.
+- **`Integer ⊻ QInt` asymmetry.** Unlike `&` and `|`, we can't forward `a ⊻ b` to `b ⊻ a` because the QInt-side method mutates its left argument. So `Integer ⊻ QInt` allocates a fresh target and CNOTs — matching `Bool ⊻ QBool` exactly. Same divergence that exists at the QBool level; preserved here.
+- **OR via `a ⊕ b ⊕ ab` is the cheap path.** The alternative (De Morgan: flip a, flip b, Toffoli, flip a back, flip b back, flip target) is 2W + 1 X + 1 Toffoli per bit = 2W + 2W = 4W + 1 gates per bit vs 2 CNOT + 1 Toffoli = 3 gates per bit here. 1.33× fewer gates, and no mid-computation mutation of operands — cleaner semantics in a `when()` wrapper.
+
+### Beads
+
+- `Sturm.jl-r9i` — claimed, delivered, closing on commit.
+- Still open from this session's triage: `Sturm.jl-9x4` (shifts `<<`/`>>`, P2), `Sturm.jl-fje` (`*` / `^`, P1 — the headline P8 gap).
+
+### Files touched
+
+- `src/types/qint.jl` — `+88` lines: `xor(::QInt,::QInt)`, `xor(::QInt,::Integer)`, `xor(::Integer,::QInt)`, `&(::QInt,::QInt)`, `&(::QInt,::Integer)`, `&(::Integer,::QInt)`, `|(::QInt,::QInt)`, `|(::QInt,::Integer)`, `|(::Integer,::QInt)`.
+- `test/test_qint_bitwise.jl` (new) — 9 testsets, 19 asserts.
+- `test/runtests.jl` — include the new file.
+- `WORKLOG.md` — this entry.
+
+### Test counts
+
+- `test_qint_bitwise.jl`: 19/19 GREEN
+- `test_promotion.jl` + `test_qint.jl` regression: [pending]
+
+---
+
 ## 2026-04-14 — Session 20: Multi-path arithmetic Phase 1 — `Sturm.jl-v51`
 
 First bead of the Session-18 multi-path plan. Delivered RED-GREEN, test by test:
