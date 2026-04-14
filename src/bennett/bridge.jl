@@ -103,6 +103,10 @@ Compile a plain Julia function `f` to a reversible circuit via Bennett.jl
 and execute it on the Sturm context. Returns the compiled circuit for
 resource inspection.
 
+Any keyword arguments are forwarded to `Bennett.reversible_compile`, so
+strategy hints like `add=:qcla`, `mul=:qcla_tree`, `optimize=false`, or
+`max_loop_iterations=N` pass straight through.
+
 If called inside `when()`, the oracle is automatically controlled.
 """
 function apply_oracle!(ctx::AbstractContext, f, arg_type::Type,
@@ -119,6 +123,15 @@ end
 
 Resource estimates for compiling `f` as a reversible quantum oracle.
 Returns gate count, Toffoli count, T-count (7 per Toffoli), qubit count, T-depth.
+
+Keyword arguments are forwarded to `Bennett.reversible_compile`; use them
+to compare strategies without executing the circuit:
+
+```julia
+r_ripple = estimate_oracle_resources(x -> x + x, Int8; bit_width=8, add=:ripple)
+r_qcla   = estimate_oracle_resources(x -> x + x, Int8; bit_width=8, add=:qcla)
+@show r_ripple.toffoli, r_qcla.toffoli
+```
 """
 function estimate_oracle_resources(f, arg_type::Type; kw...)
     circuit = reversible_compile(f, arg_type; kw...)
@@ -138,6 +151,15 @@ Compile a plain Julia function `f` to a reversible quantum circuit via Bennett.j
 and execute it on the quantum register `x`. Returns a new `QInt{W}` containing
 `f(x)`. The input register `x` is preserved (Bennett's construction keeps inputs
 intact).
+
+Any keyword arguments are forwarded to `Bennett.reversible_compile`. Strategy
+hints let the caller choose between Pareto-frontier arithmetic circuit
+families — for example `add ∈ {:ripple, :cuccaro, :qcla, :auto}` or
+`mul ∈ {:shift_add, :karatsuba, :qcla_tree, :auto}`:
+
+```julia
+y = oracle(x -> x * x, x; mul=:qcla_tree)   # Sun-Borissov polylog multiplier
+```
 
 If called inside `when()`, the oracle is automatically controlled.
 
@@ -177,10 +199,14 @@ end
     QuantumOracle{F}
 
 A pre-compiled quantum oracle wrapping a plain Julia function `f`.
-Caches Bennett circuits per bit-width. Created via `quantum(f)`.
+Caches Bennett circuits keyed on `(W, sorted_kwargs)`, so calling
+`qf(x; mul=:shift_add)` and `qf(x; mul=:qcla_tree)` produce two distinct
+cached circuits instead of one silently reused from the first call.
+Created via `quantum(f)`.
 
-Callable on `QInt{W}`: `qf(x)` is equivalent to `oracle(f, x)` but
-reuses the cached circuit instead of recompiling.
+Callable on `QInt{W}`: `qf(x; kw...)` is equivalent to `oracle(f, x; kw...)`
+but reuses a cached circuit on subsequent calls with the same width and
+strategy kwargs.
 
 # Example
 ```julia
@@ -195,7 +221,7 @@ end
 """
 struct QuantumOracle{F}
     f::F
-    cache::Dict{Int, ReversibleCircuit}
+    cache::Dict{Any, ReversibleCircuit}
 end
 
 """
@@ -207,14 +233,25 @@ The returned object is callable on `QInt{W}` registers.
 Parallel to Enzyme's `gradient(f, x)` pattern: `quantum(f)` transforms
 a classical function into a quantum-callable one.
 """
-quantum(f) = QuantumOracle(f, Dict{Int, ReversibleCircuit}())
+quantum(f) = QuantumOracle(f, Dict{Any, ReversibleCircuit}())
+
+# Canonicalise (W, kwargs) into a stable cache key. Sorting by kwarg name
+# makes the key invariant under call-site ordering; including every kwarg
+# prevents silent reuse when strategy hints (add=, mul=, optimize=, …) change.
+function _oracle_cache_key(W::Int, kw)
+    isempty(kw) && return (W, ())
+    kv = sort!(collect(pairs(kw)); by=first)
+    return (W, Tuple(kv))
+end
 
 function (qo::QuantumOracle)(x::QInt{W}; kw...) where W
     check_live!(x)
     ctx = x.ctx
 
-    # Cache lookup / compile
-    circuit = get!(qo.cache, W) do
+    # Cache lookup / compile — key on (W, sorted kwargs) so that callers
+    # switching strategy (e.g. mul=:qcla_tree) get a fresh compilation.
+    key = _oracle_cache_key(W, kw)
+    circuit = get!(qo.cache, key) do
         reversible_compile(qo.f, Int8; bit_width=W, kw...)
     end
 
