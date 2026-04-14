@@ -9,6 +9,7 @@ include("types/wire.jl")
 include("context/abstract.jl")
 include("context/eager.jl")
 include("context/density.jl")
+include("types/quantum.jl")
 include("types/qbool.jl")
 include("types/qint.jl")
 
@@ -28,6 +29,7 @@ include("control/when.jl")
 
 # Bennett.jl reversible circuit integration
 include("bennett/bridge.jl")
+include("bennett/auto_dispatch.jl")
 
 # Convenience gates (built from primitives)
 include("gates.jl")
@@ -83,7 +85,7 @@ end
 export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @context, current_context
 
 # Types
-export QBool, QInt, WireID, discard!
+export QBool, QInt, WireID, discard!, Quantum
 
 # Quantum control
 export when

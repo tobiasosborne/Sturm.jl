@@ -4,11 +4,14 @@
 Single-qubit quantum boolean. The control type for `when` blocks.
 Wraps a WireID in a context. Tracks linear resource usage.
 """
-mutable struct QBool
+mutable struct QBool <: Quantum
     wire::WireID
     ctx::AbstractContext
     consumed::Bool
 end
+
+classical_type(::Type{QBool}) = Int8
+classical_compile_kwargs(::Type{QBool}) = (bit_width = 1,)
 
 """Check that a QBool has not been consumed (measured, discarded, or otherwise destroyed)."""
 function check_live!(q::QBool)

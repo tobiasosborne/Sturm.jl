@@ -11,11 +11,14 @@ can be accessed via getindex to get a QBool view.
 Width W is a type parameter — Julia specialises on it. Use `where {W}`
 dispatch, not runtime branching on width.
 """
-mutable struct QInt{W}
+mutable struct QInt{W} <: Quantum
     wires::NTuple{W, WireID}
     ctx::AbstractContext
     consumed::Bool
 end
+
+classical_type(::Type{<:QInt}) = Int8
+classical_compile_kwargs(::Type{<:QInt{W}}) where {W} = (bit_width = W,)
 
 # ── Linearity checks ─────────────────────────────────────────────────────────
 
