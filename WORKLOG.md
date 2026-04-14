@@ -4,6 +4,89 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 20 (end): session-end summary + handoff
+
+Three beads closed in one session, all RED→GREEN TDD, all pushed to both remotes. Session started with a status survey ("what are the next issues to work on?") and a recommended order (`v51 → P8 ops → i49 → d5r → d99`). Stopped before `fje` (the `*`/`^` gap) pending a design call from Tobias (A: DSL-native shift-add, B: extend Bennett bridge to 2-arg, C: hybrid).
+
+### Beads closed
+
+| Bead | Title | Commit | Tests added | Regression |
+|---|---|---|---|---|
+| `v51` | Multi-path arithmetic Phase 1 — `oracle` kwargs + `QuantumOracle` cache key | `174581a` | 8 asserts (1 RED-first) | Bennett 108/108 |
+| `r9i` | P8 bitwise ops (`⊻`, `&`, `|`) on QInt — 9 methods | `d4c84b0` | 19 asserts (3 RED-first) | promotion+qint 2619/2619 |
+| `9x4` | P8 shifts (`<<`, `>>`) on QInt with classical amount | `e6b4b61` | 8 asserts (2 RED-first) | isolated only (only new methods) |
+
+Net: `+516` lines insert, `+35` asserts, zero regressions, three commits, two remotes pushed, three beads closed.
+
+### The bug the session shipped — `QuantumOracle` cache collision
+
+`QuantumOracle.cache::Dict{Int,ReversibleCircuit}` was keyed on `W` alone. After `qf(x; mul=:shift_add)` populated `cache[W]`, any follow-up `qf(x; mul=:qcla_tree)` hit the cached `:shift_add` circuit and silently dropped the strategy kwarg. First call ever with the second strategy paid ~1m45s of compile for a result Bennett then threw away. Fix: `_oracle_cache_key(W, kw)` canonicalises to `(W, sorted_kwargs)`. Cache widened to `Dict{Any,ReversibleCircuit}`. Three `haskey(qf.cache, W)` asserts in `test_bennett_integration.jl` migrated to `(W, ())`.
+
+### User-facing headline
+
+**`oracle(f, x; mul=:qcla_tree)` now compiles `f` through Bennett's April-2026 Sun-Borissov polylog multiplier with zero Sturm changes required.** The full Bennett strategy taxonomy (`add ∈ {:ripple, :cuccaro, :qcla, :auto}`, `mul ∈ {:shift_add, :karatsuba, :qcla_tree, :auto}`) flows through `oracle`, `apply_oracle!`, and `estimate_oracle_resources` and is now called out in every docstring.
+
+### P8 op table — status
+
+After this session, the P8 table on `QInt{W}` is:
+
+| Op | QInt×QInt | QInt×Integer | Integer×QInt |
+|---|---|---|---|
+| `+`, `-` | ✓ (ripple-carry) | ✓ | ✓ |
+| `<`, `==` | ✓ (measure + classical compare) | ✓ | ✓ |
+| `⊻` | ✓ (W CNOTs) | ✓ (X on set bits) | ✓ (fresh + CNOT) |
+| `&` | ✓ (W Toffolis into fresh) | ✓ (CNOT where set) | ✓ (commutes) |
+| `|` | ✓ (`a⊕b⊕ab` into fresh) | ✓ (X or CNOT per bit) | ✓ (commutes) |
+| `<<`, `>>` | n/a | ✓ (wire permutation into fresh) | n/a |
+| **`*`, `^`** | **OPEN** (`Sturm.jl-fje`) | **OPEN** | **OPEN** |
+
+The `*` gap is the one Session 19 called "the gap between 'all generic arithmetic polynomials work' and 'only additive ones work'". Next session opens here.
+
+### Design decision teed up for next session — `Sturm.jl-fje`
+
+Three options on the table for `*` (and `^` which falls out as repeated `*`):
+
+- **A. DSL-native quantum shift-add multiplier** — ~200 lines, 4 primitives only, physics-grounded (Vedral-Barenco-Ekert 1996 §III or Kutin-Moulton 2010). Strictly worse gate counts than Bennett's `mul=:qcla_tree`. Fine for v0.1 baseline.
+- **B. Extend Bennett bridge to 2-arg oracles** — ~100 lines in `src/bennett/bridge.jl`, then `Base.:*(a::QInt{W}, b::QInt{W}) = oracle2(*, a, b)`. Inherits Sun-Borissov's polylog multiplier automatically. Multi-arg was already flagged "hardcoded single-arg" in Session 19 WORKLOG — extending it is explicitly a known follow-up.
+- **C. Hybrid** — DSL-native baseline with `mul=:qcla_tree` kwarg routing through Bennett 2-arg. Most work, best UX.
+
+The session-20 agent's recommendation is **B** — Bennett already owns the multiplier engineering, `QInt{W} + QInt{V}` promotion and `QInt × QBool` etc will eventually need the same 2-arg bridge anyway, and the DSL-native path would be strictly dominated on every metric Sun-Borissov optimises (Toffoli-depth, T-depth, total gate count at large W).
+
+### Gotchas worth keeping (session 20 ship list)
+
+- **MAX_QUBITS = 30 is a hard wall** on Bennett-backed test design. At W=4, `x*x` via `shift_add` is 61 wires; via `qcla_tree` it's 124 — both past the cap. Any test fixture must be probed with `circuit.n_wires` ahead of context allocation. v51 test fixture runs at W=2 (19 / 29 wires) to fit.
+- **The Julia task runtime auto-moves long bash invocations to background.** Happened twice in session 20 (regression runs). When the test suite runs 2+ minutes the tool surfaces a task ID and writes to `/tmp/claude-1000/...`. Read the file when notified; don't poll. Schedule a wakeup if you need a reminder.
+- **`Base.Pairs` sort canonicalisation via `sort!(collect(pairs(kw)); by=first)`** is the idiom for order-invariant kwargs caching. Both `collect(kw)` and `collect(pairs(kw))` work; the `pairs(…)` form reads more clearly.
+- **`a & b` on QInt preserves both operands — don't consume**. Reading `Base.:+` on QInt tempts the pattern "consume both, return fresh"; for Toffoli-on-`|0⟩`-target the two controls are pristine, consuming them would be wasted deallocations. The CLAUDE.md "Linear resource semantics" rule is about wires-once-used, not about always consuming operands. The rule of thumb: a reversible primitive that leaves its controls alone should leave its QInt wrapper alone too.
+- **`Integer ⊻ QInt` can't forward to `QInt ⊻ Integer`** — the QInt-side method mutates its left argument, so they have different semantics. Compare to `Integer & QInt = QInt & Integer` which commutes and forwards cleanly. Matches the `Bool ⊻ QBool` asymmetry at the scalar level.
+- **OR via `a ⊕ b ⊕ ab` beats De Morgan.** Three gates per bit (2 CNOT + 1 Toffoli), preserves operands, no mid-computation mutation. De Morgan (`¬(¬a ∧ ¬b)`) is 4W+1 gates per bit and temporarily flips a and b — composable risk inside a `when()` wrapper. Picking the identity that avoids mutation pays off both in count and in local reasoning.
+- **Dolt push succeeded in this session.** Session 19 flagged "Dolt push to GitHub rejects with 'repository rule violations' on `refs/dolt/data`." — this session pushed cleanly three times. Either Tobias relaxed the branch protection since April 13 or it was transient.
+
+### Open beads at session end (ready queue)
+
+P0:
+- `Sturm.jl-d99` — Choi phase polynomials for channels (research; Tobias's own conjecture)
+
+P1 (priority order, by recommendation):
+- `Sturm.jl-fje` — `*` / `^` (P8 multiplication — design call pending)
+- `Sturm.jl-i49` — Consolidate 6 copies of DSL Toffoli/AND cascade (rule-13 refactor; highest-value single cleanup)
+- `Sturm.jl-d5r` — P7 stress test via QTrit shim (axiom insurance)
+- `Sturm.jl-tcw` — TensorNetworkContext / MPS backend
+- `Sturm.jl-19h` — TrajectoryContext / Monte Carlo wavefunction
+- `Sturm.jl-79j` — ZXCalculus.jl pass
+- `Sturm.jl-kze` — Ergonomic `when(q) do f(x) end` for Bennett oracles
+- `Sturm.jl-26s`, `c34`, `dt7` — infra hygiene (type stability, `run(ch)`, PassManager)
+- Plus ~50 more.
+
+### Handoff for the next agent
+
+- If tackling `fje`: start with the A/B/C choice above. If B, Bennett already has `reversible_compile(f, arg_types::Type{<:Tuple})` — the constraint is entirely on the Sturm side (allocate paired input registers, map both sets of wires via `build_wire_map`). Cache key joins cleanly with `_oracle_cache_key` from v51 once argtypes are added.
+- If tackling `i49`: the five DSL-level cascade copies are at `src/block_encoding/select.jl:216-255, 283-319, 328-372`, `src/qsvt/circuit.jl:696-725`, `src/library/patterns.jl:244-258`. Pattern: closure-parameterised payload.
+- If tackling `d5r`: scope is an *exploratory* `QTrit <: QDit{3}` shim that doesn't modify any file outside `src/types/`. Goal is finding P7 violations, not shipping qutrit support.
+- All three shipped beads this session followed strict test-by-test TDD with the first test RED-first for each bead. Kept momentum; recommend continuing that discipline.
+
+---
+
 ## 2026-04-14 — Session 20 (continued): P8 shifts on QInt — `Sturm.jl-9x4`
 
 Third bead of the session. Classical-amount shifts land as wire permutations
