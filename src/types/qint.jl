@@ -453,6 +453,53 @@ end
 
 Base.:|(a::Integer, b::QInt{W}) where {W} = b | a
 
+# ── Shifts with classical amount: wire permutation into fresh register ───────
+# Logical (zero-fill) shifts matching Julia's UInt semantics. n ≥ W collapses
+# to all zeros. Operand preserved; classical amount parameterises the CNOT
+# pattern — no mux, no quantum shift amount.
+
+"""
+    Base.:<<(a::QInt{W}, n::Integer) -> QInt{W}
+
+Logical left shift by the classical amount `n`. Allocates a fresh `QInt{W}`
+at `|0⟩` and CNOTs `a.wires[j] → target.wires[j+n]` for each `j` whose
+shifted position still lies inside the register. `n ≥ W` returns an
+all-zero register. Preserves `a`.
+"""
+function Base.:<<(a::QInt{W}, n::Integer) where {W}
+    check_live!(a)
+    n >= 0 || error("QInt shift amount must be non-negative; got $n")
+    ctx = a.ctx
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    if n < W
+        for j in 1:(W - n)
+            apply_cx!(ctx, a.wires[j], target_wires[j + n])
+        end
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
+"""
+    Base.:>>(a::QInt{W}, n::Integer) -> QInt{W}
+
+Logical right shift by the classical amount `n`. Mirror of [`Base.:<<`](@ref)
+on `QInt`: bits `a.wires[j]` for `j > n` land at `target.wires[j-n]`; the
+top `n` bits stay at `|0⟩`. `n ≥ W` returns an all-zero register.
+Preserves `a`.
+"""
+function Base.:>>(a::QInt{W}, n::Integer) where {W}
+    check_live!(a)
+    n >= 0 || error("QInt shift amount must be non-negative; got $n")
+    ctx = a.ctx
+    target_wires = ntuple(_ -> allocate!(ctx), Val(W))
+    if n < W
+        for j in (n + 1):W
+            apply_cx!(ctx, a.wires[j], target_wires[j - n])
+        end
+    end
+    return QInt{W}(target_wires, ctx, false)
+end
+
 # ── Comparison ───────────────────────────────────────────────────────────────
 
 """
