@@ -4,6 +4,99 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-14 — Session 19: P9 hits a Julia wall, axiom reframed — `Sturm.jl-k3m`
+
+Started the implementation of P9 auto-dispatch (bead `k3m`). 3+1 protocol run in full: 1 Explore subagent for Phase A (codebase mechanics), 2 Opus proposers in parallel for Phase B (independent designs). Both proposers landed on the same core skeleton: `abstract type Quantum end`, `(f::Function)(q::Quantum)` catch-all, plain method + `hasmethod` at call time, separate auto-cache. Phase C started red-green TDD. Tests went RED as expected. Implementation ran into a Julia language-level wall, and after Tobias's one-line analogy we realised the axiom itself — not the implementation — was wrong.
+
+### Julia rejects `(f::Function)(q::Quantum)`
+
+```
+ERROR: LoadError: cannot add methods to builtin function `Function`
+```
+
+Confirmed on Julia 1.12.5. `Base.Function` is a builtin abstract type; methods on it are rejected at definition time regardless of parameterisation (`(f::F)(q::Quantum) where {F<:Function}` is rejected with a separate error: `function type in method definition is not a type`). Both proposers (and I) assumed the catch-all would work. None of us had probed the Julia constraint in Phase A.
+
+**Lesson for the 3+1 protocol.** Phase A exploration must include language-level probes for any dispatch-heavy design, not only codebase facts. Saved to memory.
+
+### Tobias's analogy — the reframe
+
+> "I guess this is not so surprising, no? the analogy: I have a function on ints and then expect it to 'work' on floats and complexs? Is this the right analogy?"
+
+Exactly. Julia does NOT auto-convert `f(x::Int) = x+1` to accept `Float64`. You get `MethodError`. Julia DOES auto-cover generic `f(x) = x+1` on any type where `+` is overloaded — the `ForwardDiff.Dual` pattern. The P9 axiom as written demanded something stronger than Julia's own numeric tower: that `f(x::Int8)` silently extend to `QInt{8}`. A catch-all on `Function` would do this by **lying about the type contract** — the exact reason Julia forbids it.
+
+So P9 is *not* a fight with Julia's dispatch; it is P8 done fully, plus honest explicit handles for typed code. The reframe:
+
+1. **Generic path (automatic).** Complete the operator table on `Quantum` — `+`, `-`, `*`, `^`, `<`, `==`, bitwise — so any generic Julia function runs on quantum as it runs on Float. This IS P8. It already works for `+`/`-`/`<`/`==`; `*`/`^`/bitwise are the gap.
+2. **Explicit lift.** `oracle(f, q)` compiles typed classical `f` to a reversible circuit via Bennett.jl. Already shipped, already tested.
+3. **Opt-in sugar.** `@quantum_lift g(x::Int8) = …` adds a specific `g(::QInt{W})` method that routes through `oracle`. One annotation per function the user wants to feel implicit. Not yet shipped.
+4. **Pre-compile handle.** `quantum(f)` caches the circuit, same pattern as `Enzyme.gradient(f)`. Already shipped.
+
+Autodiff analogy is exact: (1)+(2) = `ForwardDiff.Dual`; (3)+(4) = `Enzyme.gradient`. Neither autodiff package adds a catch-all on `Function`; neither needs to. Sturm follows the same discipline.
+
+### What landed in this session
+
+Abstract type + traits + infrastructure (all clean, no regressions):
+
+- **`src/types/quantum.jl`** — new file. `abstract type Quantum end` as the piracy-scoping supertype. `classical_type(::Type{<:Quantum})` + `classical_compile_kwargs(::Type{<:Quantum})` trait functions.
+- **`src/types/qbool.jl`** — `QBool <: Quantum`; `classical_type(QBool) = Int8`, `classical_compile_kwargs(QBool) = (bit_width = 1,)`.
+- **`src/types/qint.jl`** — `QInt{W} <: Quantum`; `classical_type(::QInt) = Int8`, `classical_compile_kwargs(::QInt{W}) = (bit_width = W,)`.
+- **`src/bennett/auto_dispatch.jl`** — new file. `_P9_CACHE::Dict{(UInt,DataType),ReversibleCircuit}` + `ReentrantLock` + `clear_auto_cache!()`. Ready for whichever explicit handle ships (`@quantum_lift`, specific-method route, etc.).
+- **`src/Sturm.jl`** — include the two new files; export `Quantum`, `clear_auto_cache!`.
+- **`test/test_p9_auto_dispatch.jl`** — 15 tests: abstract type presence, trait values, cache infrastructure, existing-dispatch-paths-still-work. 15/15 pass. No regressions on smoke tests (`Base.:+(::QInt, ::Integer)`, `oracle(f, q)`, user-typed quantum overrides).
+
+The failed catch-all method in `auto_dispatch.jl` is gone; the file now documents the Julia constraint explicitly as a beacon for future agents.
+
+### Docs rewritten
+
+- **`Sturm-PRD.md` §1 P9** — rewritten end-to-end with the `Int / Float64 / Complex / QInt` mini-example, the MethodError analogy, the four-point contract (generic / explicit / opt-in / pre-compile), and the `ForwardDiff`-vs-`Enzyme` framing. Explicit statement that no catch-all on `Base.Function` will be added.
+- **`README.md`** — P9 paragraph and "Quantum Oracles from Plain Julia" section both rewritten to match. User-facing examples show the generic path (works today via P8) and the explicit path (`oracle(f, q)`). `@quantum_lift` referenced as the opt-in sugar.
+- **`CLAUDE.md` rule 14** — P9 bullet rewritten: "Quantum registers are a numeric type for Julia's dispatch"; generic path via P8; MethodError on typed classical is correct; bridge is explicit (`oracle`/`@quantum_lift`/`quantum`); **do NOT add a catch-all on `Function`**; autodiff analogy stated.
+
+### Phase A / B findings captured (for posterity)
+
+The Phase A report and the two proposer designs are in conversation history. Key facts that survived the reframe:
+
+- `oracle(f, q::QInt{W}; kw...)` at `src/bennett/bridge.jl:154` is the explicit lift. Hardcoded to `reversible_compile(f, Int8; bit_width=W)`; no QBool overload today; no multi-arg.
+- `QuantumOracle.cache::Dict{Int, ReversibleCircuit}` at `bridge.jl:196-199` keys only on `W` — the `mjk` bug. Separate bead. P9 reframe does not inherit it because the reframed P9 does not introduce a new cache; `oracle`/`quantum` keep their existing cache; `_P9_CACHE` stands by for the opt-in `@quantum_lift` path, which will key on `(objectid(f), T)`.
+- `when(ctrl)` control-stack lift already covers every `apply_*!` call. Bennett circuits inherit auto-control via `apply_reversible!` → gate primitives. No new plumbing needed for any P9 path — generic or explicit.
+- Precedent for callable wrappers: `(qo::QuantumOracle)(x::QInt{W})` at `bridge.jl:212-231`. Sturm-owned struct → no piracy. The reframe uses the same pattern (`@quantum_lift`-generated specific methods on Sturm-owned argument types).
+
+### Gotchas worth keeping
+
+- **Julia rejects `(f::Function)(x)` methods outright.** The error message is `cannot add methods to builtin function Function` — `Function` is treated as a builtin for method definition purposes. Parametric `(f::F)(x::Q) where {F<:Function}` fails too (`function type in method definition is not a type`). This is the fundamental block; do not try to work around it.
+- **Anonymous/untyped functions already work through P8.** `f = x -> x + 1; f(QInt{2}(3))` runs cleanly today — Julia dispatches the untyped `f`'s `(::Any)` method, which calls `+`, which routes through `Base.:+(::QInt, ::Integer)` (qint.jl:208). No P9 machinery involved.
+- **Typed functions on Int are walls, not bridges.** `g(x::Int8) = x+1` then `g(QInt{8}(5))` is `MethodError`. This is correct, not a bug, and identical to `g(5.0) → MethodError`. Users who need the bridge use `oracle(g, q)` or `@quantum_lift`.
+- **`Function(x::Q) = …` succeeds as a constructor definition** (Julia 1.12 deprecation warning about extending `Function`). This is not relevant to P9 — it adds a `Function` constructor, not a method on function instances. Ignore.
+- **Dolt push to GitHub rejects with "repository rule violations"** on `refs/dolt/data`. Branch protection is blocking. `bd update` / `bd remember` succeed locally; the push failures are cosmetic for this session. Flag for Tobias to relax the dolt ref protection when convenient.
+
+### Beads
+
+- `Sturm.jl-k3m` — reopened in spirit: the original catch-all is unimplementable. Landed partial (abstract type + traits + cache infrastructure, 15/15 tests). New scope pending: `@quantum_lift` macro and/or completing P8 operator table. Bead notes updated locally (dolt push blocked).
+- Follow-ups that naturally fall out of the reframe:
+  - Complete P8: `Base.:*(::QInt{W}, ::QInt{W})`, `^`, bitwise `&` / `|` / `⊻`, `<<` / `>>`. The gap between "all generic arithmetic polynomials work" and "only additive ones work" is the `*` overload.
+  - `@quantum_lift` macro: expand `@quantum_lift g(x::Int8) = body` to the original method + `g(::QInt{W}) = oracle(g, q)`.
+  - `oracle(f, q::QBool)` overload — Bennett takes `Int8` with `bit_width=1`; we re-wrap as `QBool`.
+
+### Files touched
+
+- `src/types/quantum.jl` (new)
+- `src/types/qbool.jl` (+ 2 lines: supertype + two trait methods)
+- `src/types/qint.jl` (+ 2 lines: supertype + two trait methods)
+- `src/bennett/auto_dispatch.jl` (new, documentation + cache skeleton only)
+- `src/Sturm.jl` (+ 2 include lines, + 1 export)
+- `test/test_p9_auto_dispatch.jl` (new, 15 tests)
+- `test/runtests.jl` (+ 1 include)
+- `Sturm-PRD.md` (§1 P9 rewritten)
+- `README.md` (P9 axiom + oracles section rewritten)
+- `CLAUDE.md` (rule 14 P9 bullet rewritten)
+- `WORKLOG.md` (this entry)
+
+### Test result
+
+15/15 in `test/test_p9_auto_dispatch.jl` (fresh file). Smoke: `oracle(f, q)`, `QInt + Integer`, `QBool` round-trip — all still work. No full test suite run this session (Tobias flagged "too slow on this device").
+
+---
+
 ## 2026-04-14 — Session 18: Bennett.jl v0.5 assessment + multi-path arithmetic compilation plan
 
 Two threads in this session. Tobias pushed Bennett.jl forward substantially since April 12; in parallel he asked for a plan to treat arithmetic compilation as a menu of state-of-the-art circuit families. Investigation plus written plan; no code changes to Sturm.jl.

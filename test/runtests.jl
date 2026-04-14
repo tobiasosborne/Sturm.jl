@@ -32,4 +32,5 @@ using Sturm
     include("test_qsvt_reflect.jl")
     include("test_oaa.jl")
     include("test_bennett_integration.jl")
+    include("test_p9_auto_dispatch.jl")
 end

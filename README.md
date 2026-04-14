@@ -31,7 +31,25 @@ Because the cast loses information irreversibly, the compiler emits a **warning 
 
 **P8. Quantum promotion follows Julia's numeric tower.** Classical values auto-promote to quantum when combined with quantum values, just as `Int + Float64 -> Float64`. Initial construction is explicit (`QInt{8}(42)` is like `complex(1)`). Mixed operations promote the classical side.
 
-**P9. Any Julia function is a quantum oracle — automatically, via dispatch.** Write a plain Julia function `f(x::Int8) = x^2 + 3x + 1`. Call it with a quantum argument — `f(q)` where `q::QInt{8}` — and you get the reversible version for free. No macro, no wrapper, no manual lifting. The mechanism is a compile-time fallback: Julia's multiple dispatch routes `f(q)` to a generated catch-all on `Quantum` arguments, which at compile time checks `hasmethod(f, classical_types)` and lowers to `oracle(f, q)` — which hands `f` to [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl) (LLVM IR → reversible circuit, Shadow / MUX / QROM / Feistel strategies auto-dispatched) and caches the compiled circuit. Inside `when()`, the cached circuit is lifted to its controlled form automatically. `quantum(f)` remains as the explicit pre-compile handle (same pattern as `Enzyme.gradient`), but it is sugar on top of the automatic path, not a requirement. User overloads on quantum types always win. The same classical source runs on classical *and* quantum arguments without modification.
+**P9. Quantum registers are a numeric type for dispatch.** A plain Julia function works on a quantum argument exactly the way it works on `Float64` or `Complex` — via operator overloading, not via magic:
+
+```julia
+f(x) = x^2 + 3x + 1
+f(5)              # Int      — works
+f(5.0)            # Float64  — works (Float64's `*`, `+` are defined)
+f(1 + 2im)        # Complex  — works (Complex's `*`, `+` are defined)
+f(QInt{8}(5))     # quantum  — works (QInt's `*`, `+` are defined, P8)
+```
+
+Type-restricted methods wall out other types — quantum included, just like Float:
+
+```julia
+g(x::Int) = x^2 + 3x + 1
+g(5.0)            # MethodError — Int-typed method does not match Float64
+g(QInt{8}(5))     # MethodError — same rule, same reason
+```
+
+A catch-all that secretly routed `g(q)` through Bennett would lie about the type contract — Julia rightly forbids overriding `Base.Function`, and so does Sturm. For type-restricted classical functions the bridge is explicit: [`oracle(f, q)`](https://github.com/tobiasosborne/Bennett.jl) compiles the LLVM IR to a reversible circuit, and the opt-in macro `@quantum_lift` adds a specific `f(::QInt{W})` method so that `f(q)` works at the call site. `quantum(f)` pre-compiles once for reuse, the same pattern as `Enzyme.gradient(f)`. Inside `when()`, every path auto-controls via the existing control stack. The autodiff analogy is exact: our P8 + generic path is `ForwardDiff.Dual`; our `oracle` / `@quantum_lift` / `quantum` is `Enzyme.gradient`. Neither adds a catch-all on `Function`; neither needs to.
 
 ## The Four Primitives
 
@@ -103,21 +121,32 @@ end
 
 ### Quantum Oracles from Plain Julia (P9)
 
-Write normal Julia code. Get quantum circuits. Today the explicit form `oracle(f, x)` is the entry point; the **direct-call path `f(q)` — where Julia's dispatch routes a quantum argument to the same reversible lift automatically — is the P9 goal** (tracked under the P9 auto-dispatch bead).
+Julia's dispatch treats quantum registers as a numeric type. Generic functions work automatically through P8 operator overloads; type-restricted ones lift explicitly through Bennett.
+
+**Generic functions just work** — same as `Float64` or `Complex`:
 
 ```julia
-# Any pure Julia function:
-f(x::Int8) = x^2 + 3x + 1
+f(x) = x + 1     # generic — no type annotation
+
+f(5)             # 6
+f(5.0)           # 6.0
+f(QInt{2}(3))    # QInt holding (3+1) mod 4 = 0  (via Base.:+(::QInt, ::Int))
+```
+
+**Type-restricted functions lift explicitly** — `oracle(f, q)` routes `f` through [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl):
+
+```julia
+f(x::Int8) = x^2 + 3x + 1  # typed Int8 → walls out Float64 AND QInt{W}
 
 @context EagerContext() begin
-    x = QInt{2}(2)            # 2-bit quantum register
-    y = oracle(f, x)          # explicit form (works today)
-    # y = f(x)                # direct form (P9 goal, pending auto-dispatch)
-    result = Int(y)           # explicit cast = measurement
-    @assert result == 3       # (4+6+1) mod 4 = 3
-    @assert Int(x) == 2       # input preserved (Bennett keeps inputs intact)
+    x = QInt{2}(2)
+    y = oracle(f, x)        # explicit lift: LLVM IR → reversible circuit
+    @assert Int(y) == 3     # (4+6+1) mod 4 = 3
+    @assert Int(x) == 2     # input preserved (Bennett keeps inputs intact)
 end
 ```
+
+There is no catch-all on `Base.Function`: Julia forbids it, and it would lie about the type contract — just as `f(::Int)` does not silently accept `Float64`. For typed functions the user wants to feel implicit, the opt-in sugar is `@quantum_lift`, which adds a specific `f(::QInt{W})` method so `f(q)` works directly at the call site (tracked under the `k3m` bead).
 
 Controlled oracles — just wrap in `when()`:
 

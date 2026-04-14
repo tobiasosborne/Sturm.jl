@@ -30,11 +30,14 @@ ancilla / gate count). The infrastructure is mostly plumbing.
   dominates depth, T-count, and ancilla budget at moderate n. A compiler that
   hard-codes ripple-carry leaves orders of magnitude of resource savings on
   the floor (see §4 for numbers).
-- P9 (PRD §1) promises that any Julia function becomes a quantum oracle
-  automatically. "Automatic" doesn't mean "fixed lowering" — for the same
-  source `f(x) = x * y`, a user optimising for shallow circuits wants
-  Sun-Borissov (O(log²W) depth, 56 Toffoli-depth at W=32); a user optimising
-  for qubits wants shift-add (5 024 Toffoli, O(W) ancillae).
+- P9 (PRD §1, reframed Session 19) routes any **generic** Julia function
+  through P8 operator overloads on quantum types; **typed** classical
+  functions lift explicitly via `oracle(f, q)` or the opt-in `@quantum_lift`
+  macro. Either path, there is no "fixed lowering" — for the same source
+  `f(x) = x * y`, a user optimising for shallow circuits wants Sun-Borissov
+  (O(log²W) depth, 56 Toffoli-depth at W=32); a user optimising for qubits
+  wants shift-add (5 024 Toffoli, O(W) ancillae). The strategy registry must
+  apply identically to the P8 `*` overload and to `oracle(f, q; mul=…)`.
 - No mainstream quantum framework (Qiskit, Cirq, tket, Catalyst, Quipper,
   BQSKit) surfaces arithmetic strategy selection as a first-class option
   today. This is a feature.
@@ -329,10 +332,12 @@ exponentiation). Publish Toffoli / Toffoli-depth / T-count numbers in
   `BennettPath{S}` shims couple to symbol names that may churn. Mitigation:
   version-check Bennett on import; maintain a compat layer in
   `src/bennett/bridge.jl`.
-- **P9 auto-dispatch interaction.** When P9's `f(q)` catch-all ships
-  (`Sturm.jl-k3m`), it must respect the active strategy hint. The fallback
-  needs to read `task_local_storage(:sturm_arithmetic_strategy)` too, not
-  just call `oracle(f, q)` with defaults.
+- **P9 interaction (post-reframe).** `k3m`'s literal catch-all is blocked by
+  Julia (`cannot add methods to builtin function Function`), so the P9 path
+  is now either (a) P8 operator overloads — these must read
+  `task_local_storage(:sturm_arithmetic_strategy)` at the method body — or
+  (b) `@quantum_lift`-generated specific methods routing through
+  `oracle(f, q; …)` with kwargs derived from the task-local hint.
 - **Endianness drift.** Several papers (Beauregard, Thapliyal) use big-endian
   conventions; Sturm is little-endian. Strategy implementers must convert.
 

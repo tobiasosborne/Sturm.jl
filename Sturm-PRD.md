@@ -42,22 +42,44 @@ The test is mechanical: if adding qutrits, anyons, or a Gaussian optical mode re
 
 **P8. Quantum promotion follows Julia's numeric tower.** When a classical value (`Bool`, `Integer`) participates in an operation with a quantum value (`QBool`, `QInt{W}`), the classical value auto-promotes to the corresponding quantum type — just as `Int + Float64 → Float64`. Initial quantum construction is explicit: `QInt{8}(42)` is preparation (a physical operation), analogous to `complex(1)`. Mixed-type methods extract context and width from the quantum operand. Promotion is always classical→quantum; quantum→classical requires measurement via P2. Gates (`H!`, `X!`, etc.) and quantum control (`when`) do NOT participate in promotion — they require exact quantum types. Implementation: mixed-type methods are defined directly (NOT via `Base.promote_rule`/`Base.convert`, because `convert(QInt{W}, ::Integer)` would require a quantum context as a side-effect, which violates Julia convention). The context is extracted from the quantum operand.
 
-**P9. Any Julia function is a quantum oracle — automatically, via dispatch.** A plain Julia function written against classical types becomes a reversible quantum oracle the moment it is applied to a quantum argument. No macro, no wrapper, no manual lifting:
+**P9. Quantum registers are a numeric type for Julia's dispatch.** A plain Julia function works on a quantum argument exactly the way it works on `Float64` or `Complex` — via operator overloading, not via a hidden catch-all. This is the same mechanism `ForwardDiff.Dual` uses to ride existing Julia code, and it respects Julia's type contract instead of fighting it.
 
 ```julia
-f(x::Int64) = x^2 + 3x + 1     # ordinary Julia
-y = f(q)                       # q::QInt{64} — Just Works
+f(x) = x^2 + 3x + 1     # ordinary generic Julia
+f(5)                     # Int      — works
+f(5.0)                   # Float64  — works (Float64's *, + are defined)
+f(1 + 2im)               # Complex  — works (Complex's *, + are defined)
+f(QInt{8}(5))            # quantum  — works (QInt's *, + are defined; P8)
 ```
 
-The mechanism is a three-layer compile-time lift, chosen to match the ergonomics of `ForwardDiff.Dual` and `Enzyme.gradient`:
+Type-restricted methods wall out other types — quantum included, just like Float and Complex. Julia's dispatch is not broken in this case; it is working correctly:
 
-1. **Dispatch fallback.** A generated catch-all method `(f::Function)(args::Quantum...)` fires only when no more-specific user method exists. At compile time it inspects `hasmethod(f, classical_types_of(args))`; if a classical method exists, it lowers the call to `oracle(f, args...)`, otherwise it raises `MethodError`. Scoping the fallback to argument types Sturm owns (`<:Quantum`) avoids method piracy.
-2. **Bennett compilation.** `oracle` hands `f` to Bennett.jl, which extracts LLVM IR and emits a reversible circuit, auto-dispatching the cheapest memory strategy per allocation site (Shadow / MUX / QROM / Feistel). The compiled circuit is cached keyed on `(f, argtypes)` — a single LLVM pass per (function, signature) pair, amortised across shots.
-3. **Context integration.** Inside `when(ctrl) do … end`, the cached reversible circuit is lifted to its controlled form automatically through Sturm's existing control stack. No `controlled(f)` handle, no separate declaration.
+```julia
+g(x::Int) = x^2 + 3x + 1
+g(5.0)                   # MethodError — Int-typed method does not match Float64
+g(QInt{8}(5))            # MethodError — same rule, same reason
+```
 
-`quantum(f)` remains as the *explicit* pre-compile handle — useful when the caller wants to pay the LLVM-IR cost up front and reuse the cached circuit deliberately, the same pattern as `g = gradient(f)`. But it is sugar on top of the automatic path, not a requirement. User overloads of `f` on quantum types always win (Julia dispatch), so domain-specific quantum versions can shadow the automatic lift wherever that is desired.
+A language-level catch-all `(f::Function)(q::Quantum)` that secretly re-routed `g(q)` to a reversible-circuit compile would violate exactly this type contract — it would pretend `Int`-typed code can take a different argument. Julia rightly forbids overriding `Base.Function` (`cannot add methods to builtin function Function`), and so does Sturm: P9 does not add one. A user who writes `g(x::Int)` has *said* the function is for `Int`; silently running it on a quantum register would be a type lie.
 
-The principle: the user writes Julia; the language makes it quantum. The same classical code must run correctly on classical arguments and produce a valid reversible circuit on quantum arguments, with no change to the source of `f`.
+**The P9 contract, stated without magic.**
+
+1. **Generic path (automatic).** Complete the operator table on `Quantum` types — arithmetic, comparison, bitwise, polynomial evaluation — so that any generic Julia function whose body consists of overloaded operators runs on a quantum register with no source modification. P8 does the lifting, operator by operator, the same way `Float64`, `Complex`, `Measurement`, `Unitful`, and `ForwardDiff.Dual` all extend Julia's numeric stack.
+
+2. **Explicit lift (for typed classical functions).** `oracle(f, q)` hands `f` to Bennett.jl, which extracts LLVM IR and emits a reversible circuit, auto-dispatching the cheapest memory strategy per allocation site (Shadow / MUX / QROM / Feistel) and the requested arithmetic strategy (ripple / Cuccaro / QCLA / Sun–Borissov). The compiled circuit is cached keyed on `(f, argtypes, strategy_kwargs)` — a single LLVM pass per signature, amortised across shots.
+
+3. **Opt-in sugar (for typed classical functions the user wants to feel implicit).** `@quantum_lift` is the Sturm analogue of `Base.Broadcast.broadcastable` or `@enzyme`: one macro annotation adds a specific `f(::QInt{W}) where {W} = oracle(f, q)` method, after which `f(q)` works at the call site. The user declares the lift — the compiler does not guess.
+
+```julia
+@quantum_lift g(x::Int8) = x^2 + 3x + 1
+g(QInt{8}(5))            # now works — oracle(g, q) under the covers
+```
+
+4. **`quantum(f)` remains the explicit pre-compile handle.** Same pattern as `Enzyme.gradient(f)`: pay the LLVM cost once, reuse the cached circuit deliberately. Inside `when(ctrl) do … end`, every one of these paths — P8 operators, `oracle`, `@quantum_lift`-generated methods, and `quantum(f)` — automatically picks up the quantum control via Sturm's existing control stack.
+
+The analogy in the autodiff ecosystem is exact. `ForwardDiff.Dual` rides generic user code through operator overloading (our P8 + generic path). `Enzyme.gradient(f, x)` is an explicit transformation handle for code `Dual` can't reach (our `oracle(f, q)` + `quantum(f)`). Neither package adds a catch-all on `Function`; neither needs to. Sturm follows the same discipline.
+
+The principle: the user writes Julia; the type system carries quantum meaning; the dispatch system does not lie. Generic code generalises, typed code is honest, and the bridge for typed code is one keyword away.
 
 ---
 
