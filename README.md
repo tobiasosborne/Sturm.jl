@@ -133,29 +133,46 @@ f(5.0)           # 6.0
 f(QInt{2}(3))    # QInt holding (3+1) mod 4 = 0  (via Base.:+(::QInt, ::Int))
 ```
 
-**Type-restricted functions lift explicitly** — `oracle(f, q)` routes `f` through [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl):
+**Type-restricted functions lift explicitly** — `oracle(f, q)` routes `f` through [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl), which extracts LLVM IR and synthesises a reversible circuit:
 
 ```julia
-f(x::Int8) = x^2 + 3x + 1  # typed Int8 → walls out Float64 AND QInt{W}
+f(x::Int8) = x^2 + 3x + 1     # typed Int8 → walls out Float64 AND QInt{W}
 
+estimate_oracle_resources(f, Int8; bit_width=2)
+# → (gates=126, toffoli=36, t_count=252, qubits=43, t_depth=14)
+```
+
+That **43 qubits** is the blessing-and-curse of compiling via LLVM. Bennett lifts *any* Julia polynomial for free, but its forward+copy+uncompute pattern holds every SSA intermediate live simultaneously — so `x^2 + 3x + 1` at `W=2` expands to 43 wires, 13 over Orkan's 30-qubit statevector cap. The same polynomial in a 4-entry lookup table is ~8 wires; compiling via general IR is the price of "any Julia function is a quantum oracle." Two ways to run it today:
+
+**A. Decompose into smaller oracles.** After `oracle(...)` returns, Bennett guarantees its ancillae are at `|0⟩` and Sturm recycles them to the free-slot pool. Chaining smaller compilations with native arithmetic stitching keeps peak-live under the cap:
+
+```julia
 @context EagerContext() begin
-    x = QInt{2}(2)
-    y = oracle(f, x)        # explicit lift: LLVM IR → reversible circuit
-    @assert Int(y) == 3     # (4+6+1) mod 4 = 3
-    @assert Int(x) == 2     # input preserved (Bennett keeps inputs intact)
+    x      = QInt{2}(2)
+    xsq    = oracle(y -> y * y, x)     # peak 19 wires, ancillae freed on return
+    threex = oracle(y -> 3y, x)        # peak 23 wires, reuses freed slots
+    y      = xsq + threex + QInt{2}(1) # native P8 ripple-carry stitches the chain
+    @assert Int(y) == 3                # (4+6+1) mod 4 = 3
+    @assert Int(x) == 2                # input preserved
 end
 ```
+
+**B. QROM-small lowering** *(forthcoming Bennett strategy)* — for `bit_width ≤ 4`, any pure function is a `2^W`-entry table, and Babbush-Gidney QROM (already in Bennett v0.4 for constant arrays) would compile `f` to `4·(2^W − 1)` Toffoli regardless of expression complexity. At `W=2` that is 12 Toffoli in ~8 wires — the identical polynomial, a 5× smaller circuit, one `oracle` call. Dispatched automatically when the cost model favours it.
+
+Automatic decomposition is tracked as Sturm beads `Sturm.jl-16l` (auto-pass on the LLVM IR) and `Sturm.jl-25u` (opt-in `oracle(f, q; decompose=true)` kwarg).
 
 There is no catch-all on `Base.Function`: Julia forbids it, and it would lie about the type contract — just as `f(::Int)` does not silently accept `Float64`. For typed functions the user wants to feel implicit, the opt-in sugar is `@quantum_lift`, which adds a specific `f(::QInt{W})` method so `f(q)` works directly at the call site (tracked under the `k3m` bead).
 
 Controlled oracles — just wrap in `when()`:
 
 ```julia
+sq(x::Int8) = x * x            # 19 wires at W=2 — fits a single oracle call
+
 @context EagerContext() begin
     q = QBool(1/2)             # control in superposition
     x = QInt{2}(2)
     when(q) do
-        y = oracle(f, x)       # controlled version — automatic
+        y = oracle(sq, x)      # controlled version — automatic
     end
 end
 ```
@@ -163,19 +180,22 @@ end
 Pre-compile for reuse across shots (like Enzyme's `gradient`):
 
 ```julia
-qf = quantum(f)                # compile once, cache the circuit
+qsq = quantum(sq)              # compile once, cache the circuit
 
 @context EagerContext() begin
     x = QInt{2}(3)
-    y = qf(x)                  # reuses cached circuit — no recompilation
+    y = qsq(x)                 # reuses cached circuit — no recompilation
 end
 ```
 
-Resource estimation without execution:
+Resource estimation without execution — useful for comparing Bennett strategies:
 
 ```julia
-r = estimate_oracle_resources(f, Int8)
-# => (gates=846, toffoli=352, t_count=2464, qubits=264, t_depth=...)
+estimate_oracle_resources(f, Int8; bit_width=2)
+# → (gates=126, toffoli=36, t_count=252, qubits=43, t_depth=14)
+
+estimate_oracle_resources(f, Int8; bit_width=2, mul=:qcla_tree)
+# → (gates=282, toffoli=90, t_count=630, qubits=63, t_depth=...)   # shallower but wider
 ```
 
 ### Quantum Promotion (P8)

@@ -4,6 +4,164 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-15 — Session 21: README audit + oracle decomposition honesty
+
+Started with a user-requested audit of the codebase against the Sturm axioms. Four
+parallel Explore agents; findings at the end of this entry. Then the user pivoted:
+"at the very least the examples in the readme had better work."
+
+### README example verification — 18/21 passing pre-fix
+
+Built `/tmp/readme_examples_test.jl` exercising every executable code block in
+`README.md`. Initial run: 18 pass, 3 fail. All three failures were the same
+function: `f(x::Int8) = x^2 + 3x + 1` invoked via `oracle(f, QInt{2}(2))`,
+`when(q) do oracle(f, x) end`, and `quantum(f)(QInt{2}(3))` respectively. Error
+was always the same:
+
+```
+EagerContext: capacity would grow to 32 qubits (64.000 GiB).
+Hard limit is 30 qubits (16.000 GiB).
+Use qubit recycling (measure/discard) to free slots.
+```
+
+### Investigation — why 43 qubits for a 2-bit polynomial?
+
+The user's instinct ("I was pretty sure 2-bit ints fit in 30 qubits") was right
+in isolation but wrong in aggregate:
+
+| Polynomial at `bit_width=2` | Bennett `n_wires` |
+|---|---|
+| `x + 1`            | 10 |
+| `x * x`            | 19 |
+| `x^2 + 1`          | 24 |
+| `3x + 1`           | 26 |
+| `(x+1)*(x+2)`      | 27 |
+| **`x^2 + 3x + 1`** | **43** |
+| `x^2 + 3x + 1` at W=1 | 19 |
+
+Each piece fits. The composition doesn't, because Bennett compiles the whole
+expression as a single forward+copy+uncompute unit — every SSA intermediate
+stays live simultaneously through the entire reversible sequence.
+
+Confirmed via:
+- **Liveness analysis on the 126-gate circuit**: peak concurrent-live wires = 43
+  (every ancilla lives ≥116/126 gates). Interval-scheduling at Sturm level can't
+  help — there's no slack to exploit.
+- **Strategy sweep** via `reversible_compile` kwargs: `shift_add`=43 (default),
+  `karatsuba`=71, `qcla_tree`=63. `pebbled_bennett` with `max_pebbles∈[1..8]`
+  fell back to full Bennett because the pre-Bennett lowering already allocates
+  41 wires — pebbling operates on Bennett's top-level structure, not the
+  lowering's SSA explosion.
+- **Raising `MAX_QUBITS` not feasible**: 30 qubits = 16 GiB statevector; 43
+  qubits = 128 TiB. Physics wall, not Sturm design.
+
+### What works today — Sturm-level qubit recycling between oracle calls
+
+`apply_reversible!` already deallocates Bennett ancillae after each call
+(`src/bennett/bridge.jl:46-48` → `measure!` → `free_slots`). So chaining
+smaller oracles *does* recycle correctly — just not inside one call.
+Verified:
+
+```julia
+@context EagerContext() begin
+    x      = QInt{2}(2)
+    xsq    = oracle(y -> y * y, x)     # peak 19 wires
+    threex = oracle(y -> 3y, x)        # peak 23, reuses freed slots
+    y      = xsq + threex + QInt{2}(1)
+    @assert Int(y) == 3 && Int(x) == 2
+end
+```
+
+This is **Approach A** in the new README — shows qubit recycling as a
+first-class DSL idiom instead of hiding it.
+
+### README rewrite
+
+- Kept `f(x::Int8) = x^2 + 3x + 1` as the showcase function. Honest about the
+  43-qubit cost — called out as "the blessing-and-curse of compiling via LLVM."
+- Added **Approach A** (decomposed chain, executable).
+- Added **Approach B** as forward-looking prose: Babbush-Gidney QROM lowering
+  at `bit_width ≤ 4` (Bennett already has QROM for const tables; extending
+  dispatch to cover small pure functions would collapse `x^2+3x+1` to
+  `4·(2^W − 1) = 12` Toffoli in ~8 wires).
+- Changed the `when()` and `quantum()` examples to use a smaller showcase
+  function `sq(x::Int8) = x * x` (19 wires) so they run.
+- Rewrote the resource-estimation block to compare Bennett strategies
+  side-by-side, a pattern users will actually reach for.
+
+### Beads filed
+
+- `Sturm.jl-16l` P2 — Sturm-level auto-decompose pass on `oracle(f, q)`:
+  walk ParsedIR before handing to Bennett, partition at fresh-output SSA
+  boundaries, emit a chain of smaller oracle calls stitched by native P8
+  arithmetic. Depends on `fje` (P8 `*`) so stitching can go full polynomial.
+- `Sturm.jl-25u` P2 — explicit kwarg `oracle(f, q; decompose=true)`: lighter
+  version of 16l where the user's expression structure drives the split.
+
+Both aim at the same README example, from different directions.
+
+### Axiom audit (from 4 parallel Explore agents, early in the session)
+
+Compact status table (full agent reports in conversation history):
+
+| Axiom | Status | Gap |
+|---|---|---|
+| P1 Functions are channels | Clean | `trace()` reifies; not required for composition |
+| P2 No `measure()`, cast + implicit warn | Partial | No `measure!`; warning on `convert(Bool,::QBool)` NOT implemented — bead `f23` |
+| P3 Operations are operations | Clean | IR stratifies only for optimisation (legit) |
+| P4 `if` classical / `when` quantum | Clean | `if q` routes through `Bool(q)` correctly |
+| P5 No gates, no qubits | Violated | `src/qecc/steane.jl:53-141` uses `q[i]` position indexing — reads like a circuit diagram |
+| P6 QECC higher-order | Partial | Both `encode!(Steane(), q)` (low-level) and `encode(Channel, code)` (higher-order) exist; README still uses the low-level form |
+| P7 Dimension-agnostic | Violated | `allocate!(ctx)` takes no dim param; QBool/QInt hardcode d=2; infinite-d impossible without core edits |
+| P8 Quantum promotion | Partial | `*`/`^` missing (`fje`); 14/16 operators ship |
+| P9 Numeric type for dispatch | Clean | No catch-all on Function; `@quantum_lift` not shipped (known) |
+| Rule 11 (4 primitives only) | Clean | `src/gates.jl` all built from Ry/Rz/CNOT |
+| Rule 13 (no duplicates) | Violated | 5 copies of Toffoli/AND cascade — bead `i49` |
+
+P5 (Steane uses position indexing) and P7 (no dimension parameter) are the
+structural cracks that future agents should treat as real work, not
+cosmetic. P1/P3/P4/P9 are genuinely clean; their agents' initial "violated"
+calls on P1 and P6 both turned on the same subtlety — `trace()` /
+`encode!` wrappers are *capture* forms that coexist with the direct
+function-as-channel path rather than replacing it, which is OK per axiom
+text.
+
+### Files touched
+
+- `README.md` — Quantum Oracles section rewritten (lines 136-199); strategy
+  comparison in the resource-estimation block.
+- `WORKLOG.md` — this entry.
+
+### Test result
+
+`/tmp/readme_examples_test.jl` runs 22 checks (Approach A split into the
+resource-estimate check + the decomposed-execution check, `when()` and
+`quantum()` now on `sq`): **22/22 pass**. Full Sturm test suite not run
+(Tobias's earlier flag: suite is ~slow on this device and nothing touched in
+`src/` this session).
+
+### Dolt push blocked
+
+`bd create` succeeded locally (bead IDs allocated from `.beads/embeddeddolt`),
+but the auto-push to `refs/dolt/data` on GitHub is rejected by GitHub's
+secret-scanning push protection — an old dolt commit
+(`48e18ec28b59463a6c1c5783235d776127bd0566`, `c567agkmpup1e95c98o1ksvu512d8q0a.darc:44`)
+contains a GitHub OAuth token. Not introduced this session; bead state is
+local-only until Tobias removes the historical secret or whitelists it.
+Session 19 flagged the same block.
+
+### Handoff
+
+- README 22/22 green. If the full test suite had a lightweight README test it
+  would catch the next regression; currently guarded only by the local script.
+- The two new beads (`16l`, `25u`) are both sensible P2 work. `25u` is simpler
+  and more ergonomic (~100 LOC); `16l` is the architectural answer.
+- Agent-flagged P5 (Steane) and P7 (no `allocate!` dim parameter) deserve own
+  beads at some point — not filed this session; left as notes above for the
+  next agent to triage.
+
+---
+
 ## 2026-04-14 — Session 20 (end): session-end summary + handoff
 
 Three beads closed in one session, all RED→GREEN TDD, all pushed to both remotes. Session started with a status survey ("what are the next issues to work on?") and a recommended order (`v51 → P8 ops → i49 → d5r → d99`). Stopped before `fje` (the `*`/`^` gap) pending a design call from Tobias (A: DSL-native shift-add, B: extend Bennett bridge to 2-arg, C: hybrid).
