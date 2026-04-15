@@ -133,18 +133,25 @@ f(5.0)           # 6.0
 f(QInt{2}(3))    # QInt holding (3+1) mod 4 = 0  (via Base.:+(::QInt, ::Int))
 ```
 
-**Type-restricted functions lift explicitly** — `oracle(f, q)` routes `f` through [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl), which extracts LLVM IR and synthesises a reversible circuit:
+**Type-restricted functions lift explicitly** — `oracle(f, q)` routes `f` through [Bennett.jl](https://github.com/tobiasosborne/Bennett.jl), which extracts LLVM IR and synthesises a reversible circuit. A cost-model dispatcher picks the cheapest sound strategy:
 
 ```julia
 f(x::Int8) = x^2 + 3x + 1     # typed Int8 → walls out Float64 AND QInt{W}
 
 estimate_oracle_resources(f, Int8; bit_width=2)
+# → (gates=26, toffoli=6, t_count=42, qubits=9, t_depth=...)   # :auto → :tabulate
+```
+
+Nine qubits for a polynomial with two multiplies, because Bennett's `:auto` flipped to **`:tabulate`** — at `W ≤ 4` with a multiplicative IR, evaluating `f` classically on all `2^W` inputs and emitting the result via Babbush-Gidney QROM is strictly cheaper than symbolic lowering. The alternative is `:expression`, which compiles the LLVM IR in full:
+
+```julia
+estimate_oracle_resources(f, Int8; bit_width=2, strategy=:expression)
 # → (gates=126, toffoli=36, t_count=252, qubits=43, t_depth=14)
 ```
 
-That **43 qubits** is the blessing-and-curse of compiling via LLVM. Bennett lifts *any* Julia polynomial for free, but its forward+copy+uncompute pattern holds every SSA intermediate live simultaneously — so `x^2 + 3x + 1` at `W=2` expands to 43 wires, 13 over Orkan's 30-qubit statevector cap. The same polynomial in a 4-entry lookup table is ~8 wires; compiling via general IR is the price of "any Julia function is a quantum oracle." Two ways to run it today:
+43 wires and 13 over Orkan's 30-qubit statevector cap — the forward+copy+uncompute pattern holds every SSA intermediate live simultaneously. For pure additive functions the dispatcher keeps `:expression` with ripple-carry because tabulation would cost more than the symbolic path; it only flips to `:tabulate` when the cost model favours it. When `:auto` does pick `:expression`, adder/multiplier choice is controlled orthogonally (`add=:qcla`, `mul=:qcla_tree`, …).
 
-**A. Decompose into smaller oracles.** After `oracle(...)` returns, Bennett guarantees its ancillae are at `|0⟩` and Sturm recycles them to the free-slot pool. Chaining smaller compilations with native arithmetic stitching keeps peak-live under the cap:
+**When the cost model can't help**: `W > 4`, impure functions, or anything `:auto` routes to `:expression` on a register Orkan can't hold. Decompose the call into smaller oracles — Bennett guarantees its ancillae are at `|0⟩` on return and Sturm recycles them:
 
 ```julia
 @context EagerContext() begin
@@ -157,9 +164,7 @@ That **43 qubits** is the blessing-and-curse of compiling via LLVM. Bennett lift
 end
 ```
 
-**B. QROM-small lowering** *(forthcoming Bennett strategy)* — for `bit_width ≤ 4`, any pure function is a `2^W`-entry table, and Babbush-Gidney QROM (already in Bennett v0.4 for constant arrays) would compile `f` to `4·(2^W − 1)` Toffoli regardless of expression complexity. At `W=2` that is 12 Toffoli in ~8 wires — the identical polynomial, a 5× smaller circuit, one `oracle` call. Dispatched automatically when the cost model favours it.
-
-Automatic decomposition is tracked as Sturm beads `Sturm.jl-16l` (auto-pass on the LLVM IR) and `Sturm.jl-25u` (opt-in `oracle(f, q; decompose=true)` kwarg).
+Automatic IR-level decomposition for cases the dispatcher can't cover is tracked as Sturm beads `Sturm.jl-16l` (auto-pass on the LLVM IR) and `Sturm.jl-25u` (opt-in `oracle(f, q; decompose=true)` kwarg).
 
 There is no catch-all on `Base.Function`: Julia forbids it, and it would lie about the type contract — just as `f(::Int)` does not silently accept `Float64`. For typed functions the user wants to feel implicit, the opt-in sugar is `@quantum_lift`, which adds a specific `f(::QInt{W})` method so `f(q)` works directly at the call site (tracked under the `k3m` bead).
 
@@ -191,11 +196,14 @@ end
 Resource estimation without execution — useful for comparing Bennett strategies:
 
 ```julia
-estimate_oracle_resources(f, Int8; bit_width=2)
+estimate_oracle_resources(f, Int8; bit_width=2)                              # :auto
+# → (gates=26,  toffoli=6,  t_count=42,  qubits=9,  t_depth=...)   # picks :tabulate
+
+estimate_oracle_resources(f, Int8; bit_width=2, strategy=:expression)        # LLVM-native
 # → (gates=126, toffoli=36, t_count=252, qubits=43, t_depth=14)
 
-estimate_oracle_resources(f, Int8; bit_width=2, mul=:qcla_tree)
-# → (gates=282, toffoli=90, t_count=630, qubits=63, t_depth=...)   # shallower but wider
+estimate_oracle_resources(f, Int8; bit_width=2, strategy=:expression, mul=:qcla_tree)
+# → (gates=282, toffoli=80, t_count=..., qubits=63, t_depth=...)   # shallower but wider
 ```
 
 ### Quantum Promotion (P8)

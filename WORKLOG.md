@@ -4,6 +4,109 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-15 — Session 22: Bennett `:tabulate` adoption — `Sturm.jl-7cm`
+
+Bennett-cfjx shipped `strategy=:tabulate` earlier today (Bennett commits `8f7969b` +
+`2eb4cd8`). This is the upstream path we scoped in Session 21 as "Approach B" and
+explicitly flagged in README as *forthcoming*. Zero Sturm-side code changes required
+— the `v51` cache-key work from Session 20 already sorts kwargs, so the new strategy
+flows through `oracle(f, x; strategy=:tabulate)` automatically.
+
+### Smoke test — the 43-qubit README showcase now runs on a 30-qubit cap
+
+```
+                                  qubits  gates  toffoli  t_count
+:auto (no kwarg)                    9      26       6       42
+strategy=:tabulate (explicit)       9      26       6       42
+strategy=:expression                43     126     36       252
+strategy=:expression mul=:qcla_tree 63     282     80       ...
+```
+
+`oracle(x -> x^2 + 3x + 1, QInt{2}(2))` now runs on `EagerContext()` without any
+kwargs, returning `3` (= 11 mod 4) with `x` preserved. Bennett's `:auto` cost model
+picks `:tabulate` for this case because total input width ≤ 4 AND the IR contains a
+mul. For pure additive functions `:auto` stays on `:expression` with ripple-carry —
+tabulation would be strictly more expensive there.
+
+### The strategy taxonomy (updated)
+
+Bennett now has a two-level strategy hierarchy:
+
+- **Top-level `strategy ∈ {:auto, :tabulate, :expression}`** — picks the *shape* of
+  the compilation. `:tabulate` evaluates `f` classically on all `2^W` inputs and
+  emits via existing `qrom.jl` (Babbush-Gidney). `:expression` is the LLVM-IR path
+  that was the only game in town until today.
+- **Inner `add=`, `mul=`, etc.** — only apply *within* `:expression`. Meaningless
+  for `:tabulate` because a lookup table has no adder.
+
+Concretely: `mul=:qcla_tree` with no explicit `strategy=` silently does nothing
+for W=2 polynomials because `:auto` flips to `:tabulate` and throws the multiplier
+choice away. Users who want to measure the Sun-Borissov multiplier need to pin
+`strategy=:expression` explicitly. README resource-estimation block updated to show
+this.
+
+### Gotcha — `estimate_oracle_resources` NamedTuple field names
+
+The NamedTuple returned by `estimate_oracle_resources` has fields
+`(gates, toffoli, t_count, qubits, t_depth)`, NOT `(n_wires, n_gates, n_toffoli)`.
+My first three smoke-test snippets failed with `FieldError` before I read the
+actual field list. Fix: always match the destructure to the source, not to a
+mental model of "wires = qubits."
+
+### Gotcha — Bennett is a dev path, not registered
+
+Fresh clones of Sturm.jl hit `expected package Bennett to be registered` on
+`Pkg.resolve()`. Remedy: `Pkg.develop(path="../Bennett.jl")` once, then normal
+`Pkg.instantiate()`. This happened on this device; worth documenting for future
+agents who hit a clean environment. `Project.toml` lists Bennett by UUID but there
+is no registry entry — Dolt/GitHub-hosted and dev-pathed only.
+
+### README rewrite (lines 136–204)
+
+- Removed the "43 qubits is the blessing-and-curse of compiling via LLVM" framing;
+  the default path no longer blows up for this example.
+- Reframed the two-approach block: default is now `:auto → :tabulate` for small-W
+  polynomials; `:expression` exposed as the opt-in for LLVM-native lowering;
+  Approach-A decomposition kept as the answer for `W > 4` / impure / cases
+  `:auto` picks `:expression` on registers Orkan can't hold.
+- Updated resource-estimation comparison block to include the explicit
+  `strategy=:expression` pin so the `mul=:qcla_tree` comparison is meaningful.
+- Kept the forward pointer to `Sturm.jl-16l` / `Sturm.jl-25u` — they remain
+  useful for the regime tabulate doesn't cover, just no longer on the critical
+  path for the README showcase.
+
+### Bead triage
+
+- `Sturm.jl-7cm` (this session) — closed.
+- `Sturm.jl-16l` (auto-decompose pass) — dropped P2 → P3. Motivating example
+  solved upstream; bead kept for the `W > 4` / non-pure regime.
+- `Sturm.jl-25u` (opt-in `decompose=true`) — dropped P2 → P3. Same reasoning.
+
+### Feedback memory saved
+
+`sturm-jl-test-suite-slow` (`bd memories`): never run the full test suite
+unsolicited — slow on this device. Use targeted `julia --project -e '…'` probes
+for verification; trust CI for full regressions. User flagged during this
+session while I was about to run the full probe through `using Sturm`.
+
+### Files touched
+
+- `README.md` — lines 136–204 rewrite (Oracle section lead + resource-estimation
+  comparison).
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- Created + closed: `Sturm.jl-7cm` (this session).
+- Updated: `Sturm.jl-16l` P2→P3, `Sturm.jl-25u` P2→P3.
+
+### Remote writes pending
+
+- `git add README.md WORKLOG.md` + commit + `git push`
+- `bd dolt push`
+
+---
+
 ## 2026-04-15 — Session 21: README audit + oracle decomposition honesty
 
 Started with a user-requested audit of the codebase against the Sturm axioms. Four
