@@ -37,13 +37,6 @@ using Sturm
         @test Sturm.classical_compile_kwargs(QInt{8}) == (bit_width = 8,)
     end
 
-    @testset "infrastructure exported" begin
-        @test isdefined(Sturm, :clear_auto_cache!)
-        # Cache is present as a shared primitive even with no catch-all wired.
-        Sturm.clear_auto_cache!()
-        @test isempty(Sturm._P9_CACHE)
-    end
-
     @testset "existing dispatch paths still work" begin
         # P8 mixed-op: Base.:+(::QInt, ::Integer) wins regardless.
         @context EagerContext() begin

@@ -29,7 +29,6 @@ include("control/when.jl")
 
 # Bennett.jl reversible circuit integration
 include("bennett/bridge.jl")
-include("bennett/auto_dispatch.jl")
 
 # Convenience gates (built from primitives)
 include("gates.jl")
