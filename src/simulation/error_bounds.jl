@@ -66,24 +66,33 @@ Nested commutator norm [Childs et al. 2021, Eq. 2]:
 For Pauli Hamiltonians, ‖[P_a, P_b]‖ = 2 if anticommute, 0 if commute.
 Each nesting level contributes a factor of 2 when nonzero.
 
-Complexity: O(L^{p+1}) where L = number of terms. Feasible for p ≤ 2
-and L ≤ ~100. For p ≥ 3, use `alpha_comm_naive` as upper bound.
+Complexity: O(L^{p+1}) where L = number of terms. Exact for p = 1 (O(L²))
+and p = 2 (O(L³)).
+
+For **p ≥ 3** (Suzuki-6 and higher), exact computation is not implemented.
+`alpha_comm(H, p≥3)` **errors** — the previous silent naive-bound fallback
+could be 10⁹× looser than the true value and was therefore removed under
+"fail fast, fail loud". To get the naive 1-norm bound explicitly, call
+`trotter_error(H, t, order; method=:naive)` or `trotter_steps(…; method=:naive)`,
+which compute `(λ·t)^(p+1)` directly without touching `alpha_comm`.
 
 # Arguments
 - `p::Int`: formula order (1 for Trotter1, 2 for Trotter2, etc.)
 """
 function alpha_comm(H::PauliHamiltonian{N}, p::Int) where {N}
     p >= 1 || error("alpha_comm: p must be >= 1, got $p")
-    L = length(H.terms)
 
     if p == 1
         return _alpha_comm_p1(H)
     elseif p == 2
         return _alpha_comm_p2(H)
     else
-        # For p ≥ 3, exact computation is O(L^{p+1}). Fall back to
-        # recursive estimation. For now, use the naive upper bound.
-        return _alpha_comm_naive(H, p)
+        error("""
+            alpha_comm: exact commutator-scaling bound for p ≥ 3 (Suzuki-$(2p)+) is not implemented.
+            For the naive 1-norm bound use trotter_error(H, t, order; method=:naive)
+            or trotter_steps(H, t, ε, order; method=:naive). The prior silent fallback
+            to the triangle-inequality bound could be 10⁹× looser than the true value.
+            """)
     end
 end
 
