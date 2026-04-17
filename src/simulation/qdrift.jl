@@ -1,3 +1,5 @@
+using Random: AbstractRNG, default_rng
+
 # qDRIFT: randomized Hamiltonian simulation via importance sampling.
 #
 # Algorithm (Campbell 2019):
@@ -17,7 +19,7 @@
 # PRX Quantum 2, 040305, arXiv:2008.11751).
 
 """
-    QDrift(; samples=100)
+    QDrift(; samples=100, rng=Random.default_rng())
 
 qDRIFT randomized Hamiltonian simulation [Campbell 2019, arXiv:1811.08017].
 
@@ -33,12 +35,18 @@ For target diamond-norm error ε: N ≥ 2λ²t²/ε suffices, where
 λ = Σⱼ|hⱼ| is the 1-norm of the Hamiltonian coefficients.
 
 Use `qdrift_samples(H, t, epsilon)` to compute the required N.
+
+# Reproducibility
+Pass an explicit `rng` to make the sampled circuit deterministic:
+`QDrift(samples=N, rng=Random.MersenneTwister(42))`. Two runs with
+RNGs seeded identically produce identical circuit realizations.
 """
 struct QDrift <: AbstractStochasticAlgorithm
     samples::Int
-    function QDrift(; samples::Int=100)
+    rng::AbstractRNG
+    function QDrift(; samples::Int=100, rng::AbstractRNG=default_rng())
         samples >= 1 || error("QDrift: samples must be >= 1, got $samples")
-        new(samples)
+        new(samples, rng)
     end
 end
 
@@ -87,8 +95,8 @@ function _QDriftDist(H::PauliHamiltonian{N}) where {N}
 end
 
 """Sample a term index from the precomputed distribution."""
-@inline function _sample(dist::_QDriftDist)
-    r = rand()
+@inline function _sample(dist::_QDriftDist, rng::AbstractRNG=default_rng())
+    r = rand(rng)
     # Binary search for the first cumprob ≥ r
     searchsortedfirst(dist.cumprobs, r)
 end
@@ -111,7 +119,7 @@ function _apply_qdrift!(qubits, H::PauliHamiltonian{N}, t::Real, alg::QDrift) wh
     λτ = dist.λ * τ
 
     for _ in 1:alg.samples
-        j = _sample(dist)
+        j = _sample(dist, alg.rng)
         term = @inbounds H.terms[j]
         # _pauli_exp!(qubits, term, θ) applies exp(-i·θ·h·P)
         # We want exp(-i·λτ·sign(h)·P), so θ = λτ/|h|

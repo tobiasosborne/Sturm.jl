@@ -17,7 +17,8 @@
 #      Section 5, p.5: deterministic cutoff partitioning.
 
 """
-    Composite(; steps=10, qdrift_samples=100, cutoff=0.1, trotter_order=2)
+    Composite(; steps=10, qdrift_samples=100, cutoff=0.1,
+                trotter_order=2, rng=Random.default_rng())
 
 Composite Trotter+qDRIFT simulation [Hagan & Wiebe 2023, arXiv:2206.06409].
 
@@ -36,19 +37,22 @@ Edge cases: if all terms exceed cutoff → pure Trotter; if none do → pure qDR
 - `qdrift_samples::Int`: total qDRIFT samples across all steps (Nв)
 - `cutoff::Float64`: partition threshold on |hⱼ|
 - `trotter_order::Int`: 1 (Lie-Trotter), 2 (Strang), or 4,6,... (Suzuki)
+- `rng::AbstractRNG`: random source for the qDRIFT partition. Seed for reproducibility.
 """
 struct Composite <: AbstractSimAlgorithm
     steps::Int
     qdrift_samples::Int
     cutoff::Float64
     trotter_order::Int
+    rng::AbstractRNG
     function Composite(; steps::Int=10, qdrift_samples::Int=100,
-                        cutoff::Float64=0.1, trotter_order::Int=2)
+                        cutoff::Float64=0.1, trotter_order::Int=2,
+                        rng::AbstractRNG=default_rng())
         steps >= 1 || error("Composite: steps must be >= 1, got $steps")
         qdrift_samples >= 0 || error("Composite: qdrift_samples must be >= 0, got $qdrift_samples")
         cutoff > 0 || error("Composite: cutoff must be > 0, got $cutoff")
         trotter_order >= 1 || error("Composite: trotter_order must be >= 1, got $trotter_order")
-        new(steps, qdrift_samples, cutoff, trotter_order)
+        new(steps, qdrift_samples, cutoff, trotter_order, rng)
     end
 end
 
@@ -99,7 +103,7 @@ function _apply_composite!(qubits, H::PauliHamiltonian{N}, t::Real,
     end
     if A === nothing
         # All terms in qDRIFT partition
-        _apply_qdrift!(qubits, B, t, QDrift(samples=max(1, alg.qdrift_samples)))
+        _apply_qdrift!(qubits, B, t, QDrift(samples=max(1, alg.qdrift_samples), rng=alg.rng))
         return nothing
     end
 
@@ -116,7 +120,7 @@ function _apply_composite!(qubits, H::PauliHamiltonian{N}, t::Real,
         τ = dt / samples_per_step
         λτ = λB * τ
         for _ in 1:samples_per_step
-            j = _sample(dist)
+            j = _sample(dist, alg.rng)
             term = @inbounds B.terms[j]
             _pauli_exp!(qubits, term, λτ / abs(term.coeff))
         end

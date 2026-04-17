@@ -4,6 +4,132 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-17 — Session 23: Harmonise repo against PRD and vision
+
+Full-day session. Shape: (1) stocktake across the whole codebase (122 files, ~9.5k src LOC), (2) beads triage — delete the future-vision epics that no longer match direction, (3) file replacement beads covering the real state-based findings, (4) revise PRD/docs to match current code + the "four pillars" vision from user's blog draft, (5) execute a run of easy beads.
+
+### Vision (from author's blog + A1 discussion)
+
+Sturm.jl is NOT a new language. It is Julia, extended. Quantum algorithms written in idiomatic Julia at the level of channels / operators / higher-order patterns, compiled by the package to circuits. Four pillars:
+
+1. **Expressive** — no gates, no qubits in user code; registers and higher-order patterns.
+2. **Compiler quality** — DAG IR optimised by publishable passes; new circuit-construction papers shippable as transformations.
+3. **Extensible** — new pass APIs integrate in hours (as the Bennett.jl + Sun-Borissov experience demonstrated).
+4. **Backend-agnostic** — Orkan, simulators, tensor networks, hardware all substitutable behind `AbstractContext`.
+
+Everything else in the PRD (`P1`–`P9`) reads under this framing. See Sturm-PRD.md after this session's revision.
+
+### Beads harmonisation
+
+**Deleted 10** (multi-path arithmetic Phases 2-7: `xfk, adj, 2l4, 5se, 3ii, 3px`; oracle decompose subsumed by Bennett `:tabulate`: `16l, 25u`; P7 future arms: `wzj, 5ta`).
+
+**Closed 2** (`k3m` incoherent — the literal `f(q)` syntax the P9 bead asked for is rejected by Julia and by the PRD; `mjk` done — Phase 1 test coverage exists, bridge cache sorts kwargs).
+
+**Kept 1** (`f23` — the P2 implicit-cast warning is a legit current-state gap).
+
+**Filed 15 new**, all traceable to stocktake findings. Priorities follow the user's G1 rule: P0/P1 = red-flashing emergency, ergonomics/nice-to-have pushed to P3/P4. See `bd list --status=open -n 20`.
+
+**Also deleted** `docs/PLAN.md`, `docs/bennett-integration-v01-vision.md`, `docs/multi-path-arithmetic-plan.md` — three stale docs; git history preserves them. `docs/bennett-integration-implementation-plan.md` is current and kept.
+
+**Created `KNOWN_ISSUES.md`** at project root — bullet register of architectural constraints (noise outside DAG IR by design), performance targets (31 bytes/node from Session 3), hard caps (30-qubit MAX_QUBITS), and test gaps that don't warrant individual beads.
+
+**PRD revised** to remove "v0.1 POC" framing throughout, rewrite §7 as a current-state inventory (what is shipped, what is not, what is excluded by design), correct §9.2 (EagerContext is Orkan-backed, not a dense Julia vector as the old PRD said), align §2.5 / §9.4 / §9.6 to the real code, update §11 deps and §12 non-goals. Axioms P1-P9 untouched. ~300 lines net-down; see commit `a9752fa`.
+
+### Beads worked this session
+
+- **`wmo` P0 bug** (closed, commit `c162959`) — `alpha_comm(H, p≥3)` previously returned a naive triangle bound silently; per WORKLOG Session 4 that can be 10^9× looser than the true commutator-scaling value. Changed to throw `ErrorException` with a message directing users to `trotter_error(H, t, order; method=:naive)` (which bypasses `alpha_comm` entirely and uses `(λt)^(p+1)` directly). 7 new tests in `test_error_bounds.jl`, 68/68 pass.
+
+- **`ndm` P1 task** (closed, commit `679cdea`) — orphaned `qsvt!` in `src/qsvt/circuit.jl` had a 13-line WARNING block stating it was broken for general block encodings. `qsvt_combined_reflect!` + `oaa_amplify!` is the working path (what `evolve!(…, QSVT(ε))` dispatches to). Deleted the function, docstring, WARNING block (~80 LOC). Removed 2 associated tests from `test_qsvt_phase_factors.jl` and the import. 162/162 pass.
+
+- **`w4g` P1 task** (closed, commit `ba6e295`) — `Base.:<(::QInt, ::QInt)` and `Base.:(==)(::QInt, ::QInt)` plus their 4 Integer-mixed overloads silently measured both operands and returned a deterministic QBool. Violated P1 (functions are channels) and P9 (quantum registers as numeric type for reversible dispatch). Deleted all 6 definitions (~50 LOC). Removed 5 testsets from `test_qint.jl` and 4 from `test_promotion.jl`. Short comment at the deletion site points future readers to `oracle(f, q)` for quantum comparators. 562 + 2043 tests pass.
+
+- **`lpj` P4 task** (closed, commit `3b60acf`) — `src/bennett/auto_dispatch.jl` was a 45-line stub holding `_P9_CACHE`, `_P9_LOCK`, `clear_auto_cache!()` for the Julia-forbidden literal `f(q)` catch-all. No callers outside the test. Deleted the file, removed include from `src/Sturm.jl`, deleted the "infrastructure exported" testset from `test_p9_auto_dispatch.jl`. Remaining 13 P9 tests pass (Quantum abstract type, classical_type trait, classical_compile_kwargs, existing dispatch paths).
+
+- **`1f3` P3 feature** (in_progress, not closed) — QDrift and Composite RNG injection. Code changes are in this commit but END-TO-END VERIFICATION IS PARTIAL. See next-session pickup below.
+
+### `1f3` state at stop time — PICK THIS UP FIRST
+
+**Code landed (this commit):**
+
+- `Project.toml`: added `Random = "9a3f8284-..."` to `[deps]`. `Random` is a stdlib but Julia still requires declaration in `[deps]` for non-Base modules.
+- `src/simulation/qdrift.jl`:
+  - `using Random: AbstractRNG, default_rng` at top
+  - `QDrift` struct gained `rng::AbstractRNG` field; constructor has `rng::AbstractRNG = default_rng()` kwarg
+  - `_sample(dist)` became `_sample(dist, rng::AbstractRNG = default_rng())` (backward-compat)
+  - `_apply_qdrift!` now passes `alg.rng` to `_sample`
+- `src/simulation/composite.jl`:
+  - `Composite` gained `rng::AbstractRNG` field; constructor `rng::AbstractRNG = default_rng()` kwarg
+  - `_apply_composite!` threads `alg.rng` in BOTH places: the pure-qDRIFT branch (constructs a `QDrift(..., rng=alg.rng)`) and the interleaved Trotter+qDRIFT loop (`_sample(dist, alg.rng)`)
+- Test files `test_qdrift.jl` and `test_composite.jl`:
+  - `using Random: MersenneTwister` at top
+  - New testset `RNG injection: _sample is deterministic with seeded RNG` in `test_qdrift.jl` — verifies two `MersenneTwister(42)` give byte-identical sample sequences; different seed produces different sequence. **This part ran green.**
+  - New testset `QDrift rng kwarg is stored and threaded to sampling` in `test_qdrift.jl`, and a parallel `Composite rng kwarg ...` in `test_composite.jl` — end-to-end: two seeded `evolve!` calls on identical |0…0⟩ produce identical Orkan amplitudes.
+
+**Gotcha found and fixed but NOT re-verified:**
+
+First attempt used two back-to-back `@context EagerContext() begin ... end` blocks with `amps_a = [_amp(...) for i in 0:7]` inside the first block and `@test amps_a == amps_b` inside the second. Failed with `UndefVarError: amps_a not defined in Main`. The `@context` macro introduces a scope via its `try ... finally` that hides inner assignments from the outer scope. Fix: wrap each run in a local function `run_once() = @context EagerContext() begin ...; a; end` that returns the amps list as the block's final expression (before `discard!`s? no — discards before the return); then `amps_a = run_once(); amps_b = run_once(); @test amps_a == amps_b`. This is now the committed shape but the probe was interrupted mid-execution.
+
+Looking more carefully: `run_once()` returns `a` but the `@context ... end` ends with `a` AFTER the `for q in qs; discard!(q); end`. The `discard!`s clean up; the state is captured in `a` beforehand. Should be fine.
+
+**Next steps to close `1f3`:**
+
+1. Run the targeted probe to re-verify:
+   ```
+   LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so julia --project -e '
+   using Sturm, Test; using Sturm: _QDriftDist, _sample, _amp; using Random: MersenneTwister
+   H = ising(Val(3), J=1.0, h=0.5)
+   run_qd() = @context EagerContext() begin
+       qs = [QBool(0.0) for _ in 1:3]
+       evolve!(qs, H, 0.5, QDrift(samples=10, rng=MersenneTwister(42)))
+       a = [_amp(qs[1].ctx, i) for i in 0:7]
+       for q in qs; discard!(q); end
+       a
+   end
+   a = run_qd(); b = run_qd()
+   @test a == b
+   println("ok")
+   '
+   ```
+2. If green, run the full `test_qdrift.jl` once (slow — ~13 minutes on this machine due to the N=24 Ising ground-truth test) OR skip and trust CI.
+3. Also run `test_composite.jl`.
+4. `bd close Sturm.jl-1f3 --reason="..."` + commit + push.
+
+**Risk:** if the `run_once()` closure pattern doesn't work with `@context` either (TLS semantics across function calls are subtle), an alternative is to set `amps_a` via a `Ref{Vector{ComplexF64}}()` written inside the `@context` block. The macro expansion of `@context ctx body` is in `src/context/abstract.jl:~98`; look there if you need to debug scoping.
+
+### Remaining easy-ish open beads
+
+After `1f3` closes, low-friction candidates:
+
+- **`eiq` P3** — CasesNode consumer policy. Touch `channel.jl` compat constructor, `openqasm.jl` line ~112, renderer warnings. Mechanical.
+- **`q93` P2** — oracle Int8 hardcoding. Needs a small inference function: W → smallest signed/unsigned integer type.
+- **`zv1` P4** — Refresh CLAUDE.md + README. Documentation sweep.
+
+Harder beads that need design first:
+
+- **`1wv` P1** — `with_empty_controls(f, ctx)` method on `AbstractContext`. Touches `pauli_exp.jl` (~line 200) and `lcu.jl` (lines 72-96). Needs a review to make sure no subtle semantics change.
+- **`rpq` P1** — Arbitrary `when()` nesting in `TracingContext`. Requires either widening `HotNode` (kills 25-byte isbits, regresses Session 3 perf) or adding a cold-path node variant. User's earlier preference: option B (cold-path `DeepCtrlNode`).
+- **`xcu` P1** — Multi-controlled gates on `DensityMatrixContext`. Density-matrix Toffoli via Kraus superop composition is non-trivial.
+- **`870` P1** — Steane syndromes. This is QECC framework + 3 X-stabilisers + 3 Z-stabilisers + Table II lookup — a real bit of work.
+
+### Environment gotchas for next agent
+
+- Fresh clone requires `Pkg.develop(path="../Bennett.jl")` then `Pkg.instantiate()` (Bennett is dev-pathed, not registered). Listed in KNOWN_ISSUES.md.
+- Orkan shared library: `LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so`.
+- bd uses SSH now (`git+ssh://git@github.com/tobiasosborne/Sturm.jl.git`). `bd dolt push` works without interactive prompt.
+- Per saved feedback: the full test suite is slow. Use targeted `julia --project -e '...'` probes against specific test files; trust CI for regressions. Even individual test files (qdrift.jl, composite.jl) hit minute+ runtimes because of large-N Ising / Heisenberg ground-truth tests. For quick verification run only the relevant testset rather than `include()`ing the whole file.
+
+### Files touched this session
+
+`Sturm-PRD.md`, `KNOWN_ISSUES.md` (new), `Project.toml`, `src/simulation/error_bounds.jl`, `src/simulation/qdrift.jl`, `src/simulation/composite.jl`, `src/types/qint.jl`, `src/Sturm.jl`, `src/qsvt/circuit.jl`, `test/test_error_bounds.jl`, `test/test_qsvt_phase_factors.jl`, `test/test_qint.jl`, `test/test_promotion.jl`, `test/test_qdrift.jl`, `test/test_composite.jl`, `test/test_p9_auto_dispatch.jl`, `.beads/config.yaml`. Deleted: `src/bennett/auto_dispatch.jl`, `docs/PLAN.md`, `docs/bennett-integration-v01-vision.md`, `docs/multi-path-arithmetic-plan.md`.
+
+### Beads state at end of session
+
+Total: 40. Open: 15 (1f3 in_progress). Closed: 25 this session (4 this session + 2 harmonisation closures + 37 historical; deleted 10 harmonisation).
+
+Run `bd ready` or `bd list --status=open -n 30` to see the current queue.
+
+---
+
 ## 2026-04-15 — Session 22: Bennett `:tabulate` adoption — `Sturm.jl-7cm`
 
 Bennett-cfjx shipped `strategy=:tabulate` earlier today (Bennett commits `8f7969b` +
