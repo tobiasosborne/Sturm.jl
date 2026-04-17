@@ -10,7 +10,7 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              extract_phases, QSVTPhases,
              qsvt_protocol!, apply_processing_op!,
              QSVT, qsvt_hamiltonian_sim_phases,
-             qsvt!, BlockEncoding,
+             BlockEncoding,
              _cz!,
              to_openqasm
 
@@ -663,66 +663,7 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
     end
 
     # ─────────────────────────────────────────────────────────────────────
-    # Step 7: qsvt! with BlockEncoding
-    # ─────────────────────────────────────────────────────────────────────
-
-    @testset "qsvt!: hand-crafted Z block encoding" begin
-        # Block encoding of Z (Pauli Z) on 1 system qubit with 1 ancilla.
-        # Oracle: X!(ancilla) then CZ(ancilla, system) then X!(ancilla)
-        # This gives ⟨0|_a U |0⟩_a = Z with α=1.
-        #
-        # Eigenvalues of Z: +1 (|0⟩), -1 (|1⟩).
-        # Signal angles: z = e^{iθ} where Z eigenvalue = cos(θ).
-        # For eigenvalue +1: θ = 0. For eigenvalue -1: θ = π.
-        function z_oracle!(anc::Vector{QBool}, sys::Vector{QBool})
-            X!(anc[1])
-            _cz!(anc[1], sys[1])
-            X!(anc[1])
-        end
-        function z_oracle_adj!(anc::Vector{QBool}, sys::Vector{QBool})
-            # Z oracle is self-adjoint (Z² = I, CZ is self-adjoint, X!² ≡ -I but channel-equiv to I)
-            X!(anc[1])
-            _cz!(anc[1], sys[1])
-            X!(anc[1])
-        end
-
-        be = BlockEncoding{1, 1}(z_oracle!, z_oracle_adj!, 1.0)
-
-        # Trivial phases (identity polynomial) → ancilla should always be |0⟩
-        F = zeros(ComplexF64, 3)
-        phases = extract_phases(F)
-
-        N_samples = 500
-        n_success = 0
-        for _ in 1:N_samples
-            @context EagerContext() begin
-                sys = [QBool(0.0)]  # |0⟩ eigenstate of Z
-                success = qsvt!(sys, be, phases)
-                success && (n_success += 1)
-            end
-        end
-        # With trivial phases, post-selection should mostly succeed
-        @test n_success > N_samples * 0.5
-    end
-
-    @testset "qsvt!: returns Bool and handles post-selection" begin
-        function trivial_oracle!(anc::Vector{QBool}, sys::Vector{QBool})
-            # Identity oracle — does nothing
-        end
-        be = BlockEncoding{1, 1}(trivial_oracle!, trivial_oracle!, 1.0)
-
-        F = zeros(ComplexF64, 2)
-        phases = extract_phases(F)
-
-        @context EagerContext() begin
-            sys = [QBool(0.0)]
-            result = qsvt!(sys, be, phases)
-            @test result isa Bool
-        end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Step 8: QSVT DAG capture and OpenQASM export
+    # Step 7: QSVT DAG capture and OpenQASM export
     # ─────────────────────────────────────────────────────────────────────
 
     @testset "QSVT DAG: trace captures qsvt_protocol!" begin
