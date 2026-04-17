@@ -10,7 +10,7 @@
 
 # Sync: pull beads data from the git remote's refs/dolt/data
 sync:
-  git-remote: git+https://github.com/tobiasosborne/Sturm.jl.git
+  git-remote: git+ssh://git@github.com/tobiasosborne/Sturm.jl.git
 
 # Use no-db mode: JSONL-only, no Dolt database
 # When true, bd will use .beads/issues.jsonl as the source of truth
