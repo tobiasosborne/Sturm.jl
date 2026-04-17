@@ -136,6 +136,21 @@ end
         end
     end
 
+    @testset "alpha_comm(p>=3) errors — no silent naive fallback" begin
+        # Previously alpha_comm silently returned the naive triangle bound for p>=3;
+        # under fail-fast this now errors. Users who want the naive bound must call
+        # trotter_error(..., method=:naive) which does not touch alpha_comm.
+        H = hamiltonian(pauli_term(1.0, :Z), pauli_term(1.0, :X))
+        @test_throws ErrorException alpha_comm(H, 3)
+        @test_throws ErrorException alpha_comm(H, 4)
+        # Naive trotter_error path still works for high order without alpha_comm:
+        @test trotter_error(H, 1.0, 6; method=:naive) isa Real
+        @test trotter_steps(H, 1.0, 1e-6, 6; method=:naive) isa Integer
+        # method=:comm at p>=3 propagates the alpha_comm error:
+        @test_throws ErrorException trotter_error(H, 1.0, 3; method=:comm)
+        @test_throws ErrorException trotter_steps(H, 1.0, 1e-6, 3; method=:comm)
+    end
+
     @testset "Ising α̃_comm < λ^{p+1} (commutator advantage)" begin
         # Ising model: ZZ terms commute with each other, only anticommute
         # with X terms on shared qubits. So α̃_comm << λ^{p+1}.
