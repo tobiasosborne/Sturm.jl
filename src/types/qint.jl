@@ -502,59 +502,12 @@ end
 
 # ── Comparison ───────────────────────────────────────────────────────────────
 
-"""
-    Base.:<(a::QInt{W}, b::QInt{W}) -> QBool
-
-Returns a QBool that is true iff a < b (unsigned).
-Both a and b are consumed (no-cloning theorem).
-
-Algorithm: compute (a - b) mod 2^W. If a < b, the MSB of the W-bit
-subtraction result corresponds to a borrow. We check the carry-out of
-(a + ~b + 1): carry-out = 0 means a < b (borrow occurred).
-"""
-function Base.:<(a::QInt{W}, b::QInt{W}) where {W}
-    a.ctx === b.ctx || error("Cannot compare QInts from different contexts")
-    check_live!(a)
-    check_live!(b)
-    ctx = a.ctx
-
-    diff = a - b  # consumes a and b
-    # The MSB of diff tells us the sign in unsigned arithmetic:
-    # if a >= b: diff = a-b, MSB could be 0 or 1 depending on magnitude
-    # But for unsigned comparison via carry: we need the carry-out.
-    #
-    # Simpler approach for v0.1: measure diff, compare classically.
-    # This works for computational-basis inputs (the plan's test cases).
-    val = Int(diff)  # consumes diff
-    # Reconstruct: a < b iff the subtraction borrowed (result >= 2^(W-1) as unsigned)
-    # Actually, we just measured everything classically. Return a fresh QBool.
-    result_val = val >= (1 << (W - 1))
-    q = QBool(ctx, result_val ? 1.0 : 0.0)
-    return q
-end
-
-"""
-    Base.:(==)(a::QInt{W}, b::QInt{W}) -> QBool
-
-Returns a QBool that is true iff a == b.
-Both a and b are consumed.
-
-For v0.1: measures both and compares classically.
-"""
-function Base.:(==)(a::QInt{W}, b::QInt{W}) where {W}
-    a.ctx === b.ctx || error("Cannot compare QInts from different contexts")
-    check_live!(a)
-    check_live!(b)
-    va = Int(a)  # consumes a
-    vb = Int(b)  # consumes b
-    ctx = a.ctx
-    q = QBool(ctx, va == vb ? 1.0 : 0.0)
-    return q
-end
-
-# ── Mixed-type comparison: quantum promotion (P8) ───────────────────────────
-
-Base.:<(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a < _promote_to_qint(a.ctx, b, Val(W)))
-Base.:<(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) < b)
-Base.:(==)(a::QInt{W}, b::Integer) where {W} = (check_live!(a); a == _promote_to_qint(a.ctx, b, Val(W)))
-Base.:(==)(a::Integer, b::QInt{W}) where {W} = (check_live!(b); _promote_to_qint(b.ctx, a, Val(W)) == b)
+# ── Comparison operators (`<`, `==`) intentionally NOT defined ──────────────
+#
+# Quantum `<` and `==` have no single unitary meaning. A prior v0.1 hack
+# measured both operands classically and returned a deterministic QBool;
+# that silently collapsed entanglement and violated P1 (functions are channels)
+# and P9 (quantum registers are a numeric type for reversible dispatch).
+# Users who want a quantum comparator write a classical Julia function and
+# route it through `oracle(f, q)` from Bennett.jl, which compiles to a
+# reversible circuit. See Sturm.jl-w4g.

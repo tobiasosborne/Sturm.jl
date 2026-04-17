@@ -162,33 +162,6 @@ using Sturm
         end
     end
 
-    @testset "Comparison: QInt{8}(5) < QInt{8}(10) → true" begin
-        @context EagerContext() begin
-            @test Bool(QInt{8}(5) < QInt{8}(10)) == true
-        end
-    end
-
-    @testset "Comparison: QInt{8}(10) < QInt{8}(5) → false" begin
-        @context EagerContext() begin
-            @test Bool(QInt{8}(10) < QInt{8}(5)) == false
-        end
-    end
-
-    @testset "Comparison: QInt{8}(5) < QInt{8}(5) → false" begin
-        @context EagerContext() begin
-            @test Bool(QInt{8}(5) < QInt{8}(5)) == false
-        end
-    end
-
-    @testset "Equality: QInt{4}(7) == QInt{4}(7) → true" begin
-        @context EagerContext() begin
-            @test Bool(QInt{4}(7) == QInt{4}(7)) == true
-        end
-    end
-
-    @testset "Equality: QInt{4}(7) == QInt{4}(3) → false" begin
-        @context EagerContext() begin
-            @test Bool(QInt{4}(7) == QInt{4}(3)) == false
-        end
-    end
+    # `<` and `==` on QInt are intentionally NOT defined; removed in Sturm.jl-w4g.
+    # Quantum comparators go through oracle(f, q) with a classical predicate.
 end
