@@ -1,4 +1,5 @@
 using Test
+using Random: MersenneTwister
 using Sturm
 using Sturm: nqubits, nterms, lambda, _partition
 using LinearAlgebra: eigen, Diagonal, kron
@@ -299,6 +300,30 @@ using LinearAlgebra: eigen, Diagonal, kron
         @test abs(_amp(ctx, 2)) < 1e-12
         @test abs(_amp(ctx, 3) - (-im * sin(θ))) < 1e-6
         discard!(ctrl); discard!(target)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # RNG injection: reproducible circuits (Sturm.jl-1f3)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "Composite rng kwarg is stored and threaded to qDRIFT partition" begin
+        H = ising(Val(3), J=1.0, h=0.5)
+        alg = Composite(steps=2, qdrift_samples=10, cutoff=0.5,
+                        trotter_order=2, rng=MersenneTwister(42))
+        @test alg.rng isa MersenneTwister
+        # End-to-end: identically-seeded runs yield identical amplitudes.
+        run_once() = @context EagerContext() begin
+            qs = [QBool(0.0) for _ in 1:3]
+            evolve!(qs, H, 0.5,
+                    Composite(steps=2, qdrift_samples=10, cutoff=0.5,
+                              trotter_order=2, rng=MersenneTwister(42)))
+            a = [_amp(qs[1].ctx, i) for i in 0:7]
+            for q in qs; discard!(q); end
+            a
+        end
+        amps_a = run_once()
+        amps_b = run_once()
+        @test amps_a == amps_b
     end
 
 end

@@ -1,4 +1,5 @@
 using Test
+using Random: MersenneTwister
 using Sturm
 using Sturm: nqubits, nterms, lambda, _QDriftDist, _sample
 using LinearAlgebra: eigen, Diagonal, kron
@@ -446,6 +447,39 @@ end
         @test abs(_amp(ctx, 2)) < 1e-12
         @test abs(_amp(ctx, 3) - (-im * sin(θ))) < 1e-12
         discard!(ctrl); discard!(target)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # RNG injection: reproducible circuits (Sturm.jl-1f3)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "RNG injection: _sample is deterministic with seeded RNG" begin
+        H = ising(Val(3), J=1.0, h=0.5)
+        dist = _QDriftDist(H)
+        rng1 = MersenneTwister(42); seq1 = [_sample(dist, rng1) for _ in 1:30]
+        rng2 = MersenneTwister(42); seq2 = [_sample(dist, rng2) for _ in 1:30]
+        @test seq1 == seq2
+        rng3 = MersenneTwister(43); seq3 = [_sample(dist, rng3) for _ in 1:30]
+        @test seq1 != seq3
+    end
+
+    @testset "QDrift rng kwarg is stored and threaded to sampling" begin
+        H = ising(Val(3), J=1.0, h=0.5)
+        alg = QDrift(samples=10, rng=MersenneTwister(42))
+        @test alg.rng isa MersenneTwister
+        # End-to-end: two independently-seeded runs of evolve! on |0…0⟩ yield
+        # identical amplitudes (circuit is determined by the sample sequence,
+        # which is determined by the RNG state).
+        run_once() = @context EagerContext() begin
+            qs = [QBool(0.0) for _ in 1:3]
+            evolve!(qs, H, 0.5, QDrift(samples=10, rng=MersenneTwister(42)))
+            a = [_amp(qs[1].ctx, i) for i in 0:7]
+            for q in qs; discard!(q); end
+            a
+        end
+        amps_a = run_once()
+        amps_b = run_once()
+        @test amps_a == amps_b
     end
 
 end
