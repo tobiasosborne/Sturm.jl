@@ -55,35 +55,9 @@
         end
     end
 
-    # ── QInt mixed-type comparison ──────────────────────────────────────────
-    @testset "QInt{8} < Integer" begin
-        @context EagerContext() begin
-            @test Bool(QInt{8}(5) < 10) == true
-            @test Bool(QInt{8}(10) < 5) == false
-            @test Bool(QInt{8}(5) < 5) == false
-        end
-    end
-
-    @testset "Integer < QInt{8}" begin
-        @context EagerContext() begin
-            @test Bool(5 < QInt{8}(10)) == true
-            @test Bool(10 < QInt{8}(5)) == false
-        end
-    end
-
-    @testset "QInt{4} == Integer" begin
-        @context EagerContext() begin
-            @test Bool(QInt{4}(7) == 7) == true
-            @test Bool(QInt{4}(7) == 3) == false
-        end
-    end
-
-    @testset "Integer == QInt{4}" begin
-        @context EagerContext() begin
-            @test Bool(7 == QInt{4}(7)) == true
-            @test Bool(3 == QInt{4}(7)) == false
-        end
-    end
+    # ── QInt mixed-type comparison: REMOVED in Sturm.jl-w4g ────────────────
+    # The v0.1 classical-collapse `<` and `==` violated P1/P9 and were deleted.
+    # Quantum comparators must go through oracle(f, q) with a classical predicate.
 
     # ── QBool mixed-type XOR ────────────────────────────────────────────────
     @testset "QBool ⊻ true = X gate" begin
