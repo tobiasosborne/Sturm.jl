@@ -11,6 +11,9 @@
 using Bennett: ReversibleCircuit, ReversibleGate,
                NOTGate, CNOTGate, ToffoliGate, WireIndex,
                reversible_compile, gate_count, t_depth
+using Bennett: emit_qrom!, WireAllocator, wire_count,
+               LoweringResult, bennett
+import Bennett: allocate! as _bennett_wa_allocate!
 
 # Pick the narrowest Julia integer type that fits a W-bit quantum register,
 # so that Bennett extracts LLVM IR at the right numeric type. Hardcoding Int8
@@ -273,6 +276,108 @@ function _oracle_cache_key(W::Int, signed::Bool, kw)
     kv = sort!(collect(pairs(kw)); by=first)
     return (W, signed, Tuple(kv))
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# oracle_table: classical tabulation + QROM for functions Bennett cannot lower
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `oracle(f, x)` extracts LLVM IR from `f` and symbolically lowers it. That path
+# chokes on complex stdlib calls like `powermod`, `invmod`, or soft-float poly
+# — Session 24's attempt at Shor's algorithm hit "Undefined SSA variable: %__v2"
+# lowering `powermod`'s IR. The idiomatic fallback is to *evaluate `f`
+# classically on all 2^W inputs* and emit the result via Babbush-Gidney QROM
+# (Bennett's `emit_qrom!`), at cost 2·(2^W − 1) Toffoli and T-count independent
+# of `W_out`. Use when:
+#
+#   * `f` uses stdlib numerics Bennett cannot yet lower symbolically;
+#   * W is small (≤ ~12) so the 2^W classical evaluations are cheap;
+#   * you want a single controlled lookup rather than symbolic IR.
+#
+# Auto-controls inside `when()` via the existing control stack.
+
+"""
+    oracle_table(f, x::QInt{W_in}, ::Val{W_out}) -> QInt{W_out}
+
+Evaluate `f` classically on every W_in-bit input, emit a Babbush-Gidney QROM
+(Bennett.jl `emit_qrom!`) for the resulting table, and execute it on the
+Sturm context. Returns a fresh `QInt{W_out}` holding `f(x) & (2^W_out − 1)`
+for the superposition of inputs in `x`; the input register is preserved.
+
+This complements [`oracle`](@ref): `oracle` extracts and symbolically lowers
+the LLVM IR of `f`; `oracle_table` skips the IR entirely and bakes the
+function's value table into a QROM. Use when `f` calls stdlib numerics that
+Bennett cannot lower (`powermod`, `invmod`, soft-float transcendentals, etc.)
+or when a single-shot table lookup is strictly cheaper than symbolic
+decomposition.
+
+`f` receives a plain Julia `Int`; the returned integer is masked to W_out
+bits.
+
+Cost: `2 · (2^W_in − 1)` Toffoli, T-count `4 · (2^W_in − 1)`, independent of
+W_out. Plus W_in ancillae (unary-iteration tree, self-uncomputing).
+
+If called inside `when()`, the QROM is automatically controlled via the
+existing control stack.
+
+# Example
+```julia
+@context EagerContext() begin
+    k = QInt{4}(0); superpose!(k)
+    y = oracle_table(k -> powermod(7, k, 15), k, Val(4))
+    # `y` now holds 7^k mod 15 entangled with k.
+end
+```
+"""
+# Module-private cache: data-hash → compiled QROM circuit. Bennett's
+# `emit_qrom!` + `bennett(lr)` is the expensive part of `oracle_table` —
+# two shots that share the same table (same `(a, N, W_in, W_out)` in Shor's
+# case) compile the circuit once and reuse it on every subsequent call.
+const _ORACLE_TABLE_CACHE = Dict{Tuple{UInt64, Int, Int}, ReversibleCircuit}()
+
+function oracle_table(f, x::QInt{W_in}, ::Val{W_out}) where {W_in, W_out}
+    check_live!(x)
+    W_in  >= 1 || error("oracle_table: W_in must be ≥ 1, got $W_in")
+    1 <= W_out <= 64 || error("oracle_table: W_out must be 1..64, got $W_out")
+    ctx = x.ctx
+
+    # Classical evaluation: build the W_out-bit lookup table.
+    mask = W_out == 64 ? typemax(UInt64) : (UInt64(1) << W_out) - UInt64(1)
+    L = 1 << W_in
+    data = Vector{UInt64}(undef, L)
+    @inbounds for k in 0:(L - 1)
+        data[k + 1] = UInt64(f(k)) & mask
+    end
+
+    # Cache by content-hash. Two tables with the same values (regardless of
+    # which `f` produced them) share a circuit — this is correct because the
+    # circuit depends only on the table contents, not on the function body.
+    key = (hash(data), W_in, W_out)
+    circuit = get!(_ORACLE_TABLE_CACHE, key) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, W_in)
+        data_out_b  = emit_qrom!(gates, wa, data, idx_wires_b, W_out)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [W_in], [W_out], Set{Int}())
+        bennett(lr)
+    end
+
+    # Execute on the Sturm context. `apply_reversible!` handles ancillae and
+    # picks up the active control stack automatically inside `when()`.
+    input_wires = WireID[x.wires[i] for i in 1:W_in]
+    output_wires_tuple = ntuple(Val(W_out)) do _
+        allocate!(ctx)
+    end
+    output_vec = WireID[output_wires_tuple[i] for i in 1:W_out]
+    wm = build_wire_map(circuit, input_wires, output_vec)
+    apply_reversible!(ctx, circuit, wm)
+
+    return QInt{W_out}(output_wires_tuple, ctx, false)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# QuantumOracle callable (with kwargs for strategy overrides)
+# ═══════════════════════════════════════════════════════════════════════════
 
 function (qo::QuantumOracle)(x::QInt{W}; signed::Bool=true, kw...) where W
     check_live!(x)
