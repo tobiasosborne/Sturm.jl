@@ -631,31 +631,33 @@ function _shor_mulmod_controlled!(ctx::AbstractContext, ctrl_wire::WireID,
                                   circuit_g::ReversibleCircuit) where {L}
     check_live!(y_reg)
 
-    # Fresh |0⟩ ancilla register z
+    # Sub-stage instrumentation — each step flushes to stderr so a stall
+    # inside a QROM apply is visible at the last printed line. This adds
+    # four log lines per mulmod call; at `t=3` that's 12 extra lines per
+    # shot — trivial compared to the information value when debugging.
+    LOG(msg) = (println(stderr, "  [mulmod ctrl=", ctrl_wire, "] ", msg); flush(stderr))
+
     z_wires = WireID[allocate!(ctx) for _ in 1:L]
     y_wires = WireID[y_reg.wires[i] for i in 1:L]
+    LOG("allocated z ($(L) wires), live=$(_live_qubits(ctx))")
 
-    # Packed input wire order: [ctrl, y_1, …, y_L] (ctrl = packed MSB, matching
-    # _shor_mulmod_packed_circuits's `(ctrl << L) | y` bit layout).
     packed_input_wires = WireID[ctrl_wire; y_wires]
     packed_input_for_g = WireID[ctrl_wire; z_wires]
 
-    # Run at the empty control stack — the `ctrl` wire is already folded into
-    # the QROM index, so any outer `when(...)` from the caller would only add
-    # spurious controls. with_empty_controls is the public API for this.
+    # Run at the empty control stack — `ctrl` is already folded into the QROM
+    # index so an outer `when(...)` would only add spurious controls.
     with_empty_controls(ctx) do
-        # Step A: z ⊻= f(ctrl, y) ⇒ z = f(ctrl, y)   (y preserved by QROM's
-        # compute-copy-uncompute index tree).
+        LOG("enter QROM_f (packed forward mulmod)")
         wm_f = build_wire_map(circuit_f, packed_input_wires, z_wires)
         apply_reversible!(ctx, circuit_f, wm_f)
+        LOG("exit  QROM_f, live=$(_live_qubits(ctx))")
 
-        # Step B: y ⊻= g(ctrl, z) = g(ctrl, f(ctrl, y)) = y ⇒ y = 0.
+        LOG("enter QROM_g (packed inverse, uncomputes y to 0)")
         wm_g = build_wire_map(circuit_g, packed_input_for_g, y_wires)
         apply_reversible!(ctx, circuit_g, wm_g)
+        LOG("exit  QROM_g, live=$(_live_qubits(ctx))")
 
-        # Step C: half-swap y ↔ z (y side known |0⟩ after step B).
-        #   y ⊻= z  ⇒  y = f(ctrl, y_orig);
-        #   z ⊻= y  ⇒  z = 0.
+        LOG("half-swap via 2L=$(2L) CNOTs")
         for i in 1:L
             apply_cx!(ctx, z_wires[i], y_wires[i])
         end
@@ -664,10 +666,10 @@ function _shor_mulmod_controlled!(ctx::AbstractContext, ctrl_wire::WireID,
         end
     end
 
-    # Step D: deallocate z (guaranteed |0⟩)
     for w in z_wires
         deallocate!(ctx, w)
     end
+    LOG("dealloc z, live=$(_live_qubits(ctx))")
     return y_reg
 end
 
@@ -706,60 +708,71 @@ Ref: Nielsen & Chuang §5.3.1, Box 5.2 (modular-exponentiation expansion),
 Eq. 5.36 (identity-on-y≥N extension), Box 5.4 (N=15 worked example).
 See `docs/physics/nielsen_chuang_5.3.md`.
 """
-function shor_order_C(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where {t}
+# Fail-fast logger: every line reaches stderr immediately, no Julia buffering.
+# `@info` has macro-level overhead and buffers in some environments; a plain
+# println+flush always hits the terminal within milliseconds so a user can
+# kill the process the instant a stage stalls.
+@inline function _shor_log(msg::AbstractString)
+    println(stderr, msg)
+    flush(stderr)
+end
+
+function shor_order_C(a::Int, N::Int, ::Val{t}; verbose::Bool=true) where {t}
     gcd(a, N) == 1 || error("shor_order_C: a=$a and N=$N must be coprime")
     1 <= a < N || error("shor_order_C: a=$a must satisfy 1 ≤ a < N=$N")
     L = max(1, ceil(Int, log2(N)))
 
     ctx = current_context()
-    verbose && @info "shor_order_C: a=$a, N=$N, t=$t, L=$L" live_qubits=_live_qubits(ctx)
+    t0 = time_ns()
+    lq() = _live_qubits(ctx)
+    ms() = round((time_ns() - t0) / 1e6, digits=1)
+    verbose && _shor_log("[shor_C t=+0.0ms] start a=$a N=$N t=$t L=$L  live=$(lq())")
 
-    # Classical precompute — N&C Box 5.2 replaces each quantum squaring with
-    # a plain powermod. For a=7, N=15, t=3: a_j = {7, 4, 1}.
+    # Classical precompute — N&C Box 5.2 replaces each quantum squaring with a
+    # plain powermod. For a=7, N=15, t=3: a_j = {7, 4, 1}.
     a_js = [powermod(a, 1 << (j - 1), N) for j in 1:t]
-    verbose && @info "  classical precompute a_j" a_js=a_js
+    verbose && _shor_log("[shor_C t=+$(ms())ms] classical a_j=$(a_js)")
 
-    # Build + cache (forward, inverse) packed circuits, one pair per distinct
-    # a_j. Two counter qubits with the same a_j share both circuits via
-    # _ORACLE_TABLE_CACHE (data-hash keyed).
+    # Build + cache (forward, inverse) packed circuits, one pair per a_j.
     circuits = [_shor_mulmod_packed_circuits(a_j, N, Val(L)) for a_j in a_js]
-    verbose && @info "  packed circuits compiled/cached" n_pairs=length(circuits) live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] packed circuits ready ($(length(circuits)) pairs)  live=$(lq())")
 
-    # Counter register (t qubits) — Box 5.2 top half.
     c_reg = QInt{t}(0)
     superpose!(c_reg)
-    verbose && @info "  after superpose!(c_reg)" live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] superpose!(c_reg)                live=$(lq()) cap=$(ctx.capacity)")
 
-    # Shared eigenstate y = |1⟩_L (Eq. 5.44). Persists across all t stages —
-    # the cascade multiplies the running y by a_j at stage j iff c[j] = 1.
     y_reg = QInt{L}(ctx, 1)
-    verbose && @info "  after QInt{$L}(1) eigenstate" live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] y = QInt{$L}(1) eigenstate      live=$(lq()) cap=$(ctx.capacity)")
 
     # Box 5.2 cascade: t controlled mulmods, one per counter qubit.
+    # Log BEFORE + AFTER each stage so a stall inside the mulmod is visible at
+    # the last "enter" line (no need to wait for exit to know something is
+    # happening, or to know WHERE it's stuck).
     for j in 1:t
         ctrl_wire = c_reg.wires[j]
         cf, cg = circuits[j]
+        verbose && _shor_log("[shor_C t=+$(ms())ms] ENTER mulby a_$j=$(a_js[j]) mod $N  live=$(lq()) cap=$(ctx.capacity)")
+        t_stage = time_ns()
         _shor_mulmod_controlled!(ctx, ctrl_wire, y_reg, cf, cg)
-        verbose && @info "  after controlled-mulby-a_$j mod N" a_j=a_js[j] live_qubits=_live_qubits(ctx) capacity=ctx.capacity
+        stage_ms = round((time_ns() - t_stage) / 1e6, digits=1)
+        verbose && _shor_log("[shor_C t=+$(ms())ms] EXIT  mulby a_$j done in $(stage_ms)ms  live=$(lq()) hwm=$(ctx.n_qubits) cap=$(ctx.capacity)")
     end
-    verbose && @info "  cascade complete" live_qubits=_live_qubits(ctx) peak_allocated=ctx.n_qubits capacity=ctx.capacity
 
-    # Inverse QFT on the counter — standard phase-estimation decode.
     interfere!(c_reg)
-    verbose && @info "  after interfere!(c_reg)" live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] interfere!(c_reg)                live=$(lq())")
 
     discard!(y_reg)
-    verbose && @info "  after discard!(y_reg)" live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] discard!(y_reg)                  live=$(lq())")
 
     y_tilde = Int(c_reg)
-    verbose && @info "  measured ỹ=$y_tilde" live_qubits=_live_qubits(ctx)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] measured ỹ=$y_tilde                    live=$(lq())")
 
     r = _shor_period_from_phase(y_tilde, t, N)
-    verbose && @info "  continued-fraction decode" ỹ=y_tilde φ=(y_tilde//(1<<t)) r=r
+    verbose && _shor_log("[shor_C t=+$(ms())ms] decoded φ=$(y_tilde)/$(1<<t) r=$r   (total=$(ms())ms)")
     return r
 end
 
-shor_order_C(a::Int, N::Int; t::Int=3, verbose::Bool=false) =
+shor_order_C(a::Int, N::Int; t::Int=3, verbose::Bool=true) =
     shor_order_C(a, N, Val(t); verbose=verbose)
 
 """
