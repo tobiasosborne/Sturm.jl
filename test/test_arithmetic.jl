@@ -217,3 +217,81 @@ end
     end
 end
 
+# ── Sturm.jl-uf4: mulmod_beauregard! (Beauregard 2003 Fig. 7) ──────────────
+#
+# mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer, ctrl::QBool)
+# maps |ctrl⟩|x⟩ to |ctrl⟩|(a·x) mod N⟩ when ctrl=1, identity when ctrl=0.
+# Requires gcd(a, N) = 1 (classical a must be invertible mod N).
+#
+# Internally: CMULT(a)MOD(N) + ctrl-SWAP + CMULT(a^{-1})MOD(N)^{-1},
+# using an L+1-qubit accumulator and a 1-qubit ancilla, both restored.
+
+@testset "mulmod_beauregard!: Beauregard controlled modular multiplication" begin
+
+    # Exhaustive L=3, pick (N, a) pairs with gcd(a, N) = 1.
+    # Note: b < N is enforced by construction; modadd uses b < N precondition.
+    # For mulmod, we need x < N (the quantum input to multiply). For x ≥ N
+    # the Beauregard circuit is undefined; we don't test that regime.
+    @testset "exhaustive L=3 ctrl=|1⟩ (N=$N)" for N in (3, 5, 7)
+        L = 3
+        for a in 1:(N-1)
+            gcd(a, N) == 1 || continue
+            for x0 in 0:(N-1)
+                @context EagerContext() begin
+                    x    = QInt{L}(x0)
+                    ctrl = QBool(1)            # always-on
+                    mulmod_beauregard!(x, a, N, ctrl)
+                    @test Int(x)    == (a * x0) % N
+                    @test Bool(ctrl) == true   # ctrl passes through untouched
+                end
+            end
+        end
+    end
+
+    @testset "exhaustive L=3 ctrl=|0⟩ identity (N=$N)" for N in (5, 7)
+        L = 3
+        for a in 1:(N-1)
+            gcd(a, N) == 1 || continue
+            for x0 in 0:(N-1)
+                @context EagerContext() begin
+                    x    = QInt{L}(x0)
+                    ctrl = QBool(0)            # off
+                    mulmod_beauregard!(x, a, N, ctrl)
+                    @test Int(x) == x0          # unchanged
+                    @test Bool(ctrl) == false
+                end
+            end
+        end
+    end
+
+    # Coherent test: ctrl = |+⟩ gives 50/50 mixture of (x0, a·x0 mod N).
+    @testset "coherent ctrl=|+⟩" begin
+        L = 3
+        cases = [(N=5, a=2, x0=3), (N=7, a=3, x0=4), (N=5, a=4, x0=2)]
+        for c in cases
+            n_id = 0; n_mul = 0; n_other = 0
+            for _ in 1:400
+                @context EagerContext() begin
+                    x    = QInt{L}(c.x0)
+                    ctrl = QBool(1/2)             # |+⟩
+                    mulmod_beauregard!(x, c.a, c.N, ctrl)
+                    r = Int(x)
+                    _ = Bool(ctrl)
+                    expected = (c.a * c.x0) % c.N
+                    if r == c.x0
+                        n_id += 1
+                    elseif r == expected
+                        n_mul += 1
+                    else
+                        n_other += 1
+                    end
+                end
+            end
+            @test n_other == 0
+            @test 140 <= n_id  <= 260
+            @test 140 <= n_mul <= 260
+        end
+    end
+end
+
+

@@ -170,3 +170,115 @@ function modadd!(y::QInt{Lp1}, anc::QBool, a::Integer, N::Integer) where {Lp1}
 
     return y
 end
+
+"""
+    mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer, ctrl::QBool) -> x
+
+Controlled modular multiplication by a classical constant:
+`|ctrl⟩|x⟩ ↦ |ctrl⟩|(a·x) mod N⟩` when `ctrl = |1⟩`, identity when
+`ctrl = |0⟩`. Beauregard 2003 Fig. 7 (the `c-U_a` gate).
+
+# Preconditions
+  * `0 ≤ x < N` and `0 ≤ a < N`.
+  * `N < 2^L` (i.e. N fits in L bits, matching x's register width).
+  * `gcd(a, N) = 1` — a must be invertible mod N. Enforced by error.
+
+# Postconditions
+  * `x := (a·x) mod N` on the `ctrl = 1` branch, `x` unchanged on
+    `ctrl = 0`. Linear in superposition on `ctrl`.
+  * No net change to any allocated ancilla register.
+
+# Gate count
+
+  `mulmod_beauregard!` uses `2L` calls to [`modadd!`](@ref), each with a
+  classical constant smaller than N, plus one L-qubit controlled-SWAP.
+  Each `modadd!` is O(L) gates (dominated by the QFT + add_qft pair).
+  Total: **O(L²) gates** per mulmod, **O(L² log L)** if counting
+  approximate-QFT optimisations. Polynomial in L — compare QROM-based
+  impls (A/B/C in `src/library/shor.jl`) which are O(2^L).
+
+# Method (Fig. 7)
+
+Allocate an (L+1)-qubit accumulator `b := |0⟩` and one ancilla.
+Under `when(ctrl)`:
+
+  1. `CMULT(a) MOD(N)` : for each bit j of x, doubly-controlled
+     modular addition of `(a · 2^j) mod N` into `b`. Result: `b = (a·x) mod N`.
+  2. Controlled-SWAP(x, b[1..L]): swaps x with the first L qubits of b.
+     After: `x = (a·x_orig) mod N`, `b[1..L] = x_orig`, `b[L+1] = 0`.
+  3. `CMULT(a⁻¹) MOD(N)⁻¹` : inverse of forward CMULT with a⁻¹ — for
+     each bit j of x (the NEW x = (a·x_orig) mod N), controlled
+     modular SUBTRACTION of `(a⁻¹ · 2^j) mod N` from `b`. This
+     computes `b := b − a⁻¹·x mod N = x_orig − a⁻¹·(a·x_orig) mod N = 0`.
+
+`a⁻¹ = invmod(a, N)` computed classically via extended Euclid.
+Modular subtraction of `c` is implemented as `modadd!(b, …, N − c, N)`
+since `(b + (N − c)) mod N = (b − c) mod N`.
+
+# Reference
+  Beauregard 2003 §2.3 "The controlled multiplier gate", p. 7–8,
+  Fig. 6 (CMULT) and Fig. 7 (c-U_a). Eq. (2)–(3).
+  `docs/physics/beauregard_2003_2n3_shor.pdf`.
+"""
+function mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer,
+                            ctrl::QBool) where {L}
+    check_live!(x); check_live!(ctrl)
+    N > 0       || error("mulmod_beauregard!: N must be positive, got $N")
+    N < (1 << L) || error("mulmod_beauregard!: N must fit in L bits, got N=$N, L=$L")
+    a_mod = mod(Int(a), Int(N))
+    gcd(a_mod, Int(N)) == 1 ||
+        error("mulmod_beauregard!: need gcd(a, N) = 1, got gcd($(a_mod), $N) = $(gcd(a_mod, Int(N)))")
+    a_inv = invmod(a_mod, Int(N))
+
+    ctx = x.ctx
+
+    # Allocate work registers UNCONDITIONALLY (outside when(ctrl)) so that
+    # allocation/deallocation is not itself controlled. When ctrl = 0, the
+    # body is skipped and these stay at |0⟩; when ctrl = 1, the circuit
+    # restores them to |0⟩.
+    b   = QInt{L + 1}(0)
+    anc = QBool(0)
+
+    when(ctrl) do
+        # ── 1. CMULT(a)MOD(N): b ← b + a·x mod N ─────────────────────
+        superpose!(b)
+        for j in 1:L
+            xj = QBool(x.wires[j], ctx, false)
+            c  = (a_mod * (1 << (j - 1))) % Int(N)
+            c == 0 && continue
+            when(xj) do
+                modadd!(b, anc, c, N)
+            end
+        end
+        interfere!(b)
+        # state: |ctrl=1⟩|x⟩|b = a·x mod N⟩|anc=0⟩
+
+        # ── 2. Controlled SWAP(x, b[1..L]) ────────────────────────────
+        for j in 1:L
+            xj = QBool(x.wires[j], ctx, false)
+            bj = QBool(b.wires[j], ctx, false)
+            swap!(xj, bj)
+        end
+        # state: |ctrl=1⟩|a·x_orig mod N⟩|b[1..L]=x_orig, b[L+1]=0⟩|anc=0⟩
+
+        # ── 3. CMULT(a⁻¹)MOD(N)⁻¹: b ← b − a⁻¹·x mod N = 0 ───────────
+        superpose!(b)
+        for j in 1:L
+            xj = QBool(x.wires[j], ctx, false)
+            c  = (a_inv * (1 << (j - 1))) % Int(N)
+            c == 0 && continue
+            when(xj) do
+                # inverse of "add c": subtract c mod N  ≡  add (N − c) mod N
+                modadd!(b, anc, mod(Int(N) - c, Int(N)), N)
+            end
+        end
+        interfere!(b)
+        # state: |ctrl=1⟩|a·x_orig mod N⟩|b=0⟩|anc=0⟩
+    end
+
+    # Work registers are in |0⟩ on both ctrl branches — clean discard.
+    discard!(b)
+    discard!(anc)
+
+    return x
+end

@@ -4036,3 +4036,83 @@ Initial controlled-modadd test included `(a=0, b=4, N=5)` among its
 Both branches produce the same value, so the bucketing distinction
 between "unchanged" and "added" collapses; the test fails despite
 correct behavior. Fixed by choosing only (a, b) with (a+b)%N ≠ b.
+
+### Sturm.jl-uf4: mulmod_beauregard! — WORK IN PROGRESS, NOT VERIFIED
+
+Code written (Beauregard 2003 Fig. 7, c-U_a gate) but **never run to green**.
+The test was backgrounded mid-run on user interrupt. Leaving bead OPEN.
+
+#### Code status (committed, but unverified)
+  * `src/library/arithmetic.jl` — `mulmod_beauregard!(x::QInt{L}, a, N, ctrl::QBool)`
+    * Allocates QInt{L+1} accumulator + QBool ancilla outside `when(ctrl)`.
+    * `when(ctrl) do … end` wraps: forward CMULT via 2L modadd! calls
+      (L with constants `a·2^j mod N`, L with constants `N − a⁻¹·2^j mod N`
+      for the inverse CMULT), plus L controlled-SWAPs in the middle.
+    * `a⁻¹` classical via `invmod(a, N)`. Requires `gcd(a, N) = 1`, checked.
+  * `src/Sturm.jl` — exports `mulmod_beauregard!`.
+  * `test/test_arithmetic.jl` — exhaustive L=3 sweeps (ctrl=|1⟩ multiplication,
+    ctrl=|0⟩ identity), plus coherent ctrl=|+⟩ bucketing test.
+
+#### The performance problem uncovered during attempted run
+
+Nested `when(ctrl) do when(x_j) do modadd!(…) end end` PLUS modadd's
+internal `when(anc) do add_qft!(…) end` = **3 levels of when-controls**
+at the deepest Rz. Sturm's DAG caps at 2 controls, so every 3-controlled
+Rz/Rz/CX auto-cascades through `_multi_controlled_gate!` in
+`src/context/multi_control.jl` — allocating `nc-1 = 2` workspace ancillae
+**per primitive**, Toffoli-cascading them forward and reverse.
+
+Back-of-envelope per mulmod at L=3 / N=5:
+  2L modadds × (5 QFT per modadd × 3·L primitives × ancilla-alloc) ≈ thousands of
+  primitive gates per mulmod call. 400-shot coherence test × 3 cases = astronomical.
+
+Needs attention **before** shipping uf4:
+  1. **Optimisation**: avoid nested whens by manually lifting controls. The
+     Beauregard paper specifies: only the `φADD(a)` gates inside modadd
+     need to be doubly-controlled — everything else (QFT, sub N, CNOT, X,
+     inverse QFT, add-N-under-ancilla-control) is unconditional in his
+     design. A refactored `modadd!` that accepts an explicit `(ctrl1, ctrl2)`
+     tuple and only uses those where Beauregard's Fig. 5 has black control
+     dots would halve or quarter the cascade cost.
+  2. **Alternative**: pre-AND the controls into a single ancilla via Toffoli,
+     then use `when(and_ancilla)` — O(L) Toffolis amortised across the
+     entire modadd body, vs. O(gates-in-modadd) ancillae allocations today.
+  3. **Smaller tests**: the initial mulmod test should sweep L=2 N∈{3}
+     with a few shots, not 400-shot coherence at L=3 N∈{5,7}. TDD at the
+     smallest viable scale first.
+
+#### Operational lesson: verbose eager-flush violated, rules repeated
+
+User interrupted because I ran a minutes-long julia test FOREGROUND with
+`| tail -40`, producing zero output for the duration. This violates
+`feedback_verbose_eager_flush.md` (blank-screen-waiting = FAIL) AND
+rule 7 (get feedback fast — not after 500 lines).
+
+Corrective pattern going forward:
+  * Any julia run expected > 30 s: launch with `run_in_background=true`,
+    periodically `tail` the output file.
+  * EVERY testset should `println(stderr, "…")` + `flush(stderr)` at entry,
+    per-case, and on exit — tracing the wall-clock ms on the way.
+  * For long per-test setup (compile, precompile, Orkan init), log the
+    first "using Sturm" timing explicitly.
+  * The pre-flight tally (how many cases, rough cost estimate) should be
+    printed BEFORE the testset begins, same principle as the Shor
+    benchmark preflight table.
+  * Blocking on a test: split into fast sanity (small L, few cases) + slow
+    full sweep. Fast first, verify green, THEN full.
+
+This applies to mulmod_beauregard! green-up next session: start with the
+smallest test (L=2, N=3, a=2, x0=1 → expect 2·1 mod 3 = 2) with printfs,
+then expand.
+
+#### Handoff checklist for the next session on uf4
+
+  1. Ship a minimal-scope unit test (L=2, N=3, 1 shot at ctrl=|1⟩) with
+     eager println logging, verify green. Estimate: seconds, not minutes.
+  2. If green: expand gradually (L=3, N=5), again with per-case logging.
+  3. If still fast enough: enable the ctrl=|+⟩ coherence test.
+  4. If TOO SLOW at any stage: implement optimisation #1 (split modadd!
+     so only φADD(a) portions inherit outer controls). Expect this makes
+     nested-when stack = 2 instead of 3, eliminating multi-control cascade.
+  5. Close bead uf4 with the measured gate count per mulmod at L=3 so the
+     next bead (`shor_order_D`, Sturm.jl-6kx) can set scaling expectations.
