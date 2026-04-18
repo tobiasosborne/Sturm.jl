@@ -178,9 +178,9 @@ function _pauli_exp!(qubits, term::PauliTerm{N}, theta::Real) where {N}
     angle = 2.0 * theta * term.coeff
 
     # ── Controlled-gate optimisation ────────────────────────────────────
-    # If inside when() block, temporarily clear the control stack so that
-    # basis changes and CNOT staircase are unconditional. Only restore
-    # the stack for the Rz pivot (the only physically necessary control).
+    # If inside when() block, clear the control stack so that basis changes
+    # and CNOT staircase are unconditional; restore it only for the Rz
+    # pivot (the only physically necessary control).
     #
     # Proof: Let V = basis_change · CNOT_staircase (acts on target qubits
     # only, not on the control qubit c). Then:
@@ -188,59 +188,48 @@ function _pauli_exp!(qubits, term::PauliTerm{N}, theta::Real) where {N}
     #   = |0><0|_c ⊗ V·V† + |1><1|_c ⊗ V·Rz·V†
     #   = |0><0|_c ⊗ I + |1><1|_c ⊗ exp(-iθP)
     #   = controlled(exp(-iθP))   ✓
-    controls = qubits[1].ctx.control_stack
-    has_controls = !isempty(controls)
-    if has_controls
-        saved = copy(controls)
-        empty!(controls)
-    end
+    ctx = qubits[1].ctx
+    saved = current_controls(ctx)
 
-    # Step 1: basis change — unconditional (self-inverse, cancels if Rz = I)
-    @inbounds for k in 1:N
-        term.ops[k] != pauli_I && _basis_change!(qubits[k], term.ops[k])
-    end
-
-    # Step 2: CNOT staircase — unconditional (self-inverse)
-    prev_active = 0
-    last_active = 0
-    @inbounds for k in 1:N
-        if term.ops[k] != pauli_I
-            if prev_active > 0
-                qubits[k] ⊻= qubits[prev_active]
-            end
-            prev_active = k
-            last_active = k
+    with_empty_controls(ctx) do
+        # Step 1: basis change — unconditional (self-inverse, cancels if Rz = I)
+        @inbounds for k in 1:N
+            term.ops[k] != pauli_I && _basis_change!(qubits[k], term.ops[k])
         end
-    end
 
-    # Step 3: Rz(2·θ·h) on the pivot — CONTROLLED if inside when()
-    if has_controls
-        append!(controls, saved)
-    end
-    @inbounds qubits[last_active].φ += angle
-    if has_controls
-        empty!(controls)
-    end
-
-    # Step 4: reverse CNOT staircase — unconditional
-    prev_active = 0
-    @inbounds for k in N:-1:1
-        if term.ops[k] != pauli_I
-            if prev_active > 0
-                qubits[prev_active] ⊻= qubits[k]
+        # Step 2: CNOT staircase — unconditional (self-inverse)
+        prev_active = 0
+        last_active = 0
+        @inbounds for k in 1:N
+            if term.ops[k] != pauli_I
+                if prev_active > 0
+                    qubits[k] ⊻= qubits[prev_active]
+                end
+                prev_active = k
+                last_active = k
             end
-            prev_active = k
         end
-    end
 
-    # Step 5: reverse basis change — unconditional
-    @inbounds for k in N:-1:1
-        term.ops[k] != pauli_I && _basis_unchange!(qubits[k], term.ops[k])
-    end
+        # Step 3: Rz(2·θ·h) on the pivot — CONTROLLED if inside when()
+        with_controls(ctx, saved) do
+            @inbounds qubits[last_active].φ += angle
+        end
 
-    # Restore control stack for subsequent operations
-    if has_controls
-        append!(controls, saved)
+        # Step 4: reverse CNOT staircase — unconditional
+        prev_active = 0
+        @inbounds for k in N:-1:1
+            if term.ops[k] != pauli_I
+                if prev_active > 0
+                    qubits[prev_active] ⊻= qubits[k]
+                end
+                prev_active = k
+            end
+        end
+
+        # Step 5: reverse basis change — unconditional
+        @inbounds for k in N:-1:1
+            term.ops[k] != pauli_I && _basis_unchange!(qubits[k], term.ops[k])
+        end
     end
 
     return nothing

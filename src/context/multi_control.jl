@@ -82,7 +82,7 @@ end
 
 function _multi_controlled_gate!(ctx::_MCTX, target_wire::WireID,
                                  angle::Real, single_ctrl_fn!::Function)
-    controls = copy(ctx.control_stack)
+    controls = current_controls(ctx)
     nc = length(controls)
     nc >= 2 || error("_multi_controlled_gate!: need ≥2 controls, got $nc")
 
@@ -99,7 +99,7 @@ function _multi_controlled_gate!(ctx::_MCTX, target_wire::WireID,
 end
 
 function _multi_controlled_cx!(ctx::_MCTX, cx_ctrl_wire::WireID, target_wire::WireID)
-    controls = copy(ctx.control_stack)
+    controls = current_controls(ctx)
     nc = length(controls)
     nc >= 2 || error("_multi_controlled_cx!: need ≥2 stack controls, got $nc")
 

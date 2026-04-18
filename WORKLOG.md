@@ -4,6 +4,122 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24E: Close `1wv` (`with_empty_controls` public API)
+
+Three external files were reaching into `ctx.control_stack::Vector{WireID}`
+directly to save/clear/restore controls around basis changes (pauli_exp.jl)
+and PREPARE/SELECT isolation (lcu.jl). That field is not part of the
+`AbstractContext` contract — it's a convention every current context
+happens to share. A future tensor-network or hardware-emitting backend
+might represent controls differently and would silently produce wrong
+circuits. The Session 24D refactor (xcu) also introduced two fresh leaks
+in `src/context/multi_control.jl` (`copy(ctx.control_stack)`). Closing
+both before the pattern spreads.
+
+### RED-GREEN TDD
+
+Wrote `test/test_control_api.jl` first — 9 testsets covering:
+
+- `current_controls(ctx)` returns a copy (mutating it does not alter the
+  stack) — regression test on existing API.
+- `with_empty_controls(f, ctx)` clears the stack inside `f()`, restores on
+  normal exit, restores on exception.
+- `with_empty_controls` returns the value of `f()`.
+- `with_controls(f, ctx, controls)` swaps the stack, restores on exit.
+- Nested pattern: the pauli_exp / lcu idiom (outer empty-clear, inner
+  temporarily-restore).
+- Works identically on all three contexts (EagerContext,
+  DensityMatrixContext, TracingContext) — the default
+  implementation in `abstract.jl` uses `push_control!` / `pop_control!` /
+  `current_controls` only, so any context that implements the three gets
+  `with_controls` / `with_empty_controls` for free.
+
+RED: 9/9 errored (symbols don't exist yet — `using Sturm: …` fails the whole
+file). First GREEN: added `with_controls` + `with_empty_controls` to
+`src/context/abstract.jl`, exported both, got 1/9 passing (the no-imports-
+needed test). Second fix: my test file also needed `allocate!` /
+`current_context` imported — both are unexported. After that, 23/23 green
+(23 is the sub-assert count inside the 9 testsets).
+
+### Migration — three caller sites
+
+- `src/simulation/pauli_exp.jl:191` — the `_pauli_exp!` basis-change
+  optimisation. Old: raw `empty!` / `append!` on the stack with
+  `has_controls` boolean flag threading through 5 `if` guards. New: outer
+  `with_empty_controls(ctx) do … end` wrapping all 5 steps, with a single
+  `with_controls(ctx, saved) do … end` for the one controlled Rz pivot.
+  Lost ~20 lines of bookkeeping, kept the physics proof comment intact.
+
+- `src/block_encoding/lcu.jl:72, 102` — `oracle!` and `oracle_adj!`.
+  Identical shape (PREPARE / SELECT / PREPARE†) and identical collapse:
+  outer `with_empty_controls`, inner `with_controls(saved)` around the one
+  SELECT call. Both functions lost their `try`/`finally` block — the new
+  primitives handle restoration automatically.
+
+- `src/context/multi_control.jl:85, 102` — `copy(ctx.control_stack)` is
+  semantically identical to `current_controls(ctx)` (both return a copy).
+  Swapped both. These are internal cascade helpers shared between
+  EagerContext and DensityMatrixContext, so removing the field access
+  here tightens the context-polymorphic seam.
+
+### Design decision
+
+Primary primitive is `with_controls(f, ctx, controls::Vector{WireID})`
+(swap-in / run / swap-out). `with_empty_controls(f, ctx) =
+with_controls(f, ctx, WireID[])` is a one-line wrapper. The bead
+explicitly requested `with_empty_controls` by name, so that's the
+documented/exported surface, but `with_controls` also ends up exported
+because the pauli_exp / lcu idiom needs it.
+
+Default implementation in `abstract.jl` uses only
+`current_controls` / `push_control!` / `pop_control!`, all three of which
+were already required by the abstract interface. So:
+
+- EagerContext, DensityMatrixContext, TracingContext all get
+  `with_controls` / `with_empty_controls` with zero code per context.
+- A future backend need only implement the three existing interface
+  methods to pick up the full control-lifecycle API.
+- The internal `.control_stack` field in each concrete context is NOT
+  touched by the migration — per the bead: "default implementation can
+  still use the control_stack field for backward compat with current
+  contexts."
+
+### Verification
+
+- `test_control_api.jl` (new): 23/23 green.
+- `test_when.jl` (regression): 507/507 green.
+- `test_density_matrix_mc.jl` (regression after `multi_control.jl`
+  migration): 17/17 green.
+- `test_block_encoding.jl` (regression after `lcu.jl` migration): 63/63.
+- `test_simulation.jl` (regression after `pauli_exp.jl` migration): 122/122.
+
+Total new+regression: 732/732. No failures.
+
+### Files touched
+
+- `src/context/abstract.jl`: `with_controls`, `with_empty_controls` +
+  docstrings; one-line update to `current_controls` docstring noting it
+  returns a copy.
+- `src/Sturm.jl`: export `current_controls`, `with_controls`,
+  `with_empty_controls`.
+- `src/simulation/pauli_exp.jl`: migrate `_pauli_exp!` basis-change
+  optimisation.
+- `src/block_encoding/lcu.jl`: migrate `oracle!` and `oracle_adj!`.
+- `src/context/multi_control.jl`: `copy(ctx.control_stack)` →
+  `current_controls(ctx)` at two cascade helpers.
+- `test/test_control_api.jl` (new), `test/runtests.jl` (include).
+- `WORKLOG.md`: this entry.
+
+### Lesson
+
+When extracting helpers that reach into context internals (Session 24D's
+`multi_control.jl`), leave a note to revisit. Fresh code that uses
+implementation details becomes the next migration's problem within a
+session. Better: identify the abstract-interface candidate up front, even
+if you defer the full sweep.
+
+---
+
 ## 2026-04-18 — Session 24D: Close `xcu` (multi-controlled gates on DensityMatrixContext)
 
 `DensityMatrixContext` errored "not yet implemented" on every multi-controlled
