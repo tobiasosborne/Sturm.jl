@@ -18,6 +18,7 @@ using Sturm
     include("test_passes.jl")
     include("test_density_matrix.jl")
     include("test_density_matrix_mc.jl")
+    include("test_tracing_deep_when.jl")
     include("test_noise.jl")
     include("test_qecc.jl")
     include("test_grover.jl")

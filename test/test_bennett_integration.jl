@@ -496,12 +496,21 @@ end
 
     @testset "oracle forwards signed kwarg without breaking W=2 regression" begin
         # Regression: W=2 defaults to Int8 as before; signed=false runs too.
-        for signed in (true, false)
-            @context EagerContext() begin
-                x = QInt{2}(2)
-                y = oracle(x -> x + (signed ? Int8(1) : UInt8(1)), x; signed=signed)
-                @test Int(y) == 3
-            end
+        # Bennett lowers the function's LLVM IR — using two top-level
+        # functions (not a closure over `signed`) keeps the IR free of
+        # captured-variable struct types that Bennett cannot compile.
+        f_signed(x)   = x + Int8(1)
+        f_unsigned(x) = x + UInt8(1)
+
+        @context EagerContext() begin
+            x = QInt{2}(2)
+            y = oracle(f_signed, x; signed=true)
+            @test Int(y) == 3
+        end
+        @context EagerContext() begin
+            x = QInt{2}(2)
+            y = oracle(f_unsigned, x; signed=false)
+            @test Int(y) == 3
         end
     end
 
