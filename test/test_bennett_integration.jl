@@ -429,7 +429,7 @@ end
             y1 = qf(x1)
             @test Int(y1) == 1
         end
-        @test haskey(qf.cache, (2, ()))    # cached for bit_width=2, no-kwargs key
+        @test haskey(qf.cache, (2, true, ()))    # key: (W=2, signed=true, no kwargs)
         @context EagerContext() begin
             x2 = QInt{2}(3)
             y2 = qf(x2)
@@ -449,8 +449,8 @@ end
             y3 = qf(x3)
             @test Int(y3) == 7
         end
-        @test haskey(qf.cache, (2, ()))
-        @test haskey(qf.cache, (3, ()))
+        @test haskey(qf.cache, (2, true, ()))
+        @test haskey(qf.cache, (3, true, ()))
     end
 
     @testset "inside when()" begin
@@ -464,6 +464,62 @@ end
             end
             @test Int(y) == (9 % 4)   # 1
         end
+    end
+end
+
+# ── Width-fitting arg type (Sturm.jl-q93) ───────────────────────────────────
+
+@testset verbose=true "arg-type selection by W" begin
+    using Sturm: _bennett_arg_type
+
+    @testset "_bennett_arg_type: signed=true (default)" begin
+        # W≤8 → Int8, W≤16 → Int16, W≤32 → Int32, W≤64 → Int64
+        for W in 1:8;    @test _bennett_arg_type(W) === Int8;  end
+        for W in 9:16;   @test _bennett_arg_type(W) === Int16; end
+        for W in [17, 24, 32]; @test _bennett_arg_type(W) === Int32; end
+        for W in [33, 48, 64]; @test _bennett_arg_type(W) === Int64; end
+    end
+
+    @testset "_bennett_arg_type: signed=false" begin
+        for W in 1:8;    @test _bennett_arg_type(W; signed=false) === UInt8;  end
+        for W in 9:16;   @test _bennett_arg_type(W; signed=false) === UInt16; end
+        for W in [17, 24, 32]; @test _bennett_arg_type(W; signed=false) === UInt32; end
+        for W in [33, 48, 64]; @test _bennett_arg_type(W; signed=false) === UInt64; end
+    end
+
+    @testset "_bennett_arg_type: out of range errors" begin
+        @test_throws ErrorException _bennett_arg_type(0)
+        @test_throws ErrorException _bennett_arg_type(-1)
+        @test_throws ErrorException _bennett_arg_type(65)
+        @test_throws ErrorException _bennett_arg_type(128)
+    end
+
+    @testset "oracle forwards signed kwarg without breaking W=2 regression" begin
+        # Regression: W=2 defaults to Int8 as before; signed=false runs too.
+        for signed in (true, false)
+            @context EagerContext() begin
+                x = QInt{2}(2)
+                y = oracle(x -> x + (signed ? Int8(1) : UInt8(1)), x; signed=signed)
+                @test Int(y) == 3
+            end
+        end
+    end
+
+    @testset "quantum(f) cache distinguishes signed=true vs signed=false" begin
+        qf = quantum(identity)
+        @context EagerContext() begin
+            x = QInt{2}(1)
+            y = qf(x; signed=true)
+            @test Int(y) == 1
+        end
+        @context EagerContext() begin
+            x = QInt{2}(1)
+            y = qf(x; signed=false)
+            @test Int(y) == 1
+        end
+        @test haskey(qf.cache, (2, true,  ()))
+        @test haskey(qf.cache, (2, false, ()))
+        @test length(qf.cache) == 2   # two distinct compilations, not one silently reused
     end
 end
 
