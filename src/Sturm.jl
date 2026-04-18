@@ -50,6 +50,7 @@ include("qecc/channel_encode.jl")
 
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
+include("library/arithmetic.jl")
 include("library/shor.jl")
 
 # Hamiltonian simulation
@@ -99,6 +100,9 @@ export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate
 export find, amplify, phase_flip!
+
+# Arithmetic (QFT-based, Draper 2000 + Beauregard 2003 chain)
+export add_qft!, sub_qft!
 
 # Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
 export oracle_table

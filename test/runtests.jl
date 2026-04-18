@@ -12,6 +12,7 @@ using Sturm
     include("test_rus.jl")
     include("test_qint.jl")
     include("test_patterns.jl")
+    include("test_arithmetic.jl")
     include("test_channel.jl")
     include("test_draw.jl")
     include("test_pixels.jl")
