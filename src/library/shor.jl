@@ -459,4 +459,331 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # Implementation C — controlled-U^{2^j} cascade (Box 5.2 literal)
 # ═══════════════════════════════════════════════════════════════════════════
-# (landed by Opus proposer subagent #2)
+#
+# The idiom: N&C Box 5.2 / Eq. 5.43 expands the modular exponentiation
+#
+#     x^z (mod N) = (x^{z_{t-1} 2^{t-1}} mod N) · … · (x^{z_1·2} mod N) · (x^{z_0} mod N)
+#
+# literally. Rather than invoking a single unitary U(y) = a·y mod N a total
+# of 2^{t}−1 times under nested `when()`s (impl B), we precompute
+#
+#     a_j = a^{2^{j-1}} mod N      (j = 1, …, t)
+#
+# **classically at compile time** — the "quantum squaring" Box 5.2 describes
+# becomes a plain Julia `powermod`. The quantum cost per shot drops from 2^t−1
+# mulmod invocations to exactly `t`: one controlled-"multiply-by-a_j-mod-N"
+# circuit per counter qubit.
+#
+# Circuit shape (N&C Fig. 5.4 bottom half, literal):
+#
+#     counter (t qubits) |0⟩ ─ superpose! ─────────────────── interfere! ─── measure
+#                                              │ … │
+#                                              │   │
+#     y = |1⟩_L ────────────────── M(a_1) ── M(a_2) ── … ── M(a_t) ── discard
+#
+# where M(a_j) is "multiply y by the classical constant a_j mod N, controlled
+# on counter[j]".
+#
+# ── Realising the controlled mulmod without impl-B's resource blow-up ──
+#
+# The naïve realisation — wrap `_shor_mulmod_a!` in `when(counter[j])` — produces
+# impl B's 25-qubit HWM: every gate inside the QROM becomes multi-controlled via
+# the control stack, and the L-qubit ancilla `z` plus the 2·(2^L) QROM rounds stay
+# at the same cost as impl B. The only saving (3 calls vs 7) is a 2.3× factor; still
+# minutes per shot.
+#
+# The optimisation that makes this impl a distinct resource datum is to
+# **fold the control wire *into* the QROM input**. Instead of emitting a forward
+# QROM for `y ↦ a_j·y mod N` under an outer `when(counter[j])`, we build the
+# packed table
+#
+#     f_j(packed)  :  (1+L) bits → L bits
+#                     (ctrl=0, y) ↦ y                    (identity)
+#                     (ctrl=1, y) ↦ (a_j · y) mod N      (multiply if ctrl=1)
+#
+# and emit a *single unconditional* QROM on that table — the control is just
+# another index bit. Same for the inverse. The compute-copy-uncompute shape is
+# preserved (fresh z, forward, XOR-inverse into y, half-swap, free z), but:
+#
+#   * Every gate runs with an empty control stack — no CCCX unrolling.
+#   * The QROM index width grows from L to L+1, so each QROM has
+#     2·(2^{L+1}−1) Toffoli vs impl B's 2·(2^L−1). Twice the Toffolis, but
+#     each one is a direct Orkan `orkan_ccx!` instead of multi-controlled.
+#   * Peak live qubits per call: t + L(y) + L(z) + QROM_tree_flags ≈ 17
+#     (vs impl B's 25), matching impl A's 18-qubit HWM.
+#
+# The "identity on y ≥ N" trick (N&C Eq. 5.36) is baked into the packed table
+# so the `(ctrl=1, y≥N) ↦ y` branch keeps every packed `(ctrl, y)` pair a
+# bijection on the 2^{1+L}-dim packed space — the circuit is unitary without
+# any tail-masking.
+#
+# ── Why this is still the Box 5.2 idiom, not impl A in disguise ──
+#
+# Impl A computes the *entire* modular exponential as a single value oracle
+# `k ↦ aᵏ mod N` — one table, 2^t entries, t+L input/output wires. The control
+# is implicit in the counter's amplitude basis and the QROM's index.
+#
+# Impl C keeps the **per-qubit cascade structure** from Box 5.2: t separate
+# (controlled-mulmod)-on-a-fresh-constant circuits, each multiplying the
+# *running* `y` register by `a_j`. The counter qubits stay independent; the
+# `y` register threads through a sequence of reversible mulmods. Swap one
+# `a_j` out for a different classical constant and you get a different circuit
+# without recompiling the whole exponential — exactly the modularity Box 5.2
+# exposes.
+
+"""
+    _shor_mulmod_packed_circuits(a::Int, N::Int, ::Val{L}) -> Tuple{ReversibleCircuit, ReversibleCircuit}
+
+Build the (forward, inverse) packed-QROM circuits for the controlled
+modular-multiplication bijection `(ctrl, y) ↦ (ctrl, ctrl ? a·y mod N : y)`.
+The forward circuit reads `[ctrl, y_1, …, y_L]` and XORs `f(ctrl, y)` into
+a fresh L-bit output; the inverse does the same with `a⁻¹` in place of `a`.
+Circuits are cached by content hash via `_ORACLE_TABLE_CACHE`.
+
+Bit layout (little-endian, matching Sturm's `QInt{W}` convention): the
+packed index has `ctrl` at bit L (the MSB of the (1+L)-bit word) and
+`y_1..y_L` at bits 0..L−1.
+
+Ref: Nielsen & Chuang §5.3.1, Eq. 5.36 (identity-on-y≥N extension), Box 5.2.
+"""
+function _shor_mulmod_packed_circuits(a::Int, N::Int, ::Val{L}) where {L}
+    gcd(a, N) == 1 || error("_shor_mulmod_packed_circuits: a=$a and N=$N must be coprime")
+    (1 << L) >= N || error("_shor_mulmod_packed_circuits: L=$L too small for N=$N")
+
+    ainv = invmod(a, N)
+    W_in = 1 + L
+    mask_y = (UInt64(1) << L) - UInt64(1)
+    mask_o = mask_y
+
+    # Packed tables: index is (ctrl << L) | y for y ∈ [0, 2^L), ctrl ∈ {0, 1}.
+    # Output is f(ctrl, y) = (ctrl && y < N) ? (a·y) mod N : y.
+    # The `y >= N` identity branch keeps the packed map a bijection.
+    data_f = Vector{UInt64}(undef, 1 << W_in)
+    data_g = Vector{UInt64}(undef, 1 << W_in)
+    @inbounds for packed in 0:((1 << W_in) - 1)
+        ctrl = (packed >> L) & 1
+        y    = packed & Int(mask_y)
+        if ctrl == 1 && y < N
+            data_f[packed + 1] = UInt64((a    * y) % N) & mask_o
+            data_g[packed + 1] = UInt64((ainv * y) % N) & mask_o
+        else
+            data_f[packed + 1] = UInt64(y) & mask_o
+            data_g[packed + 1] = UInt64(y) & mask_o
+        end
+    end
+
+    key_f = (hash(data_f), W_in, L)
+    key_g = (hash(data_g), W_in, L)
+
+    circuit_f = get!(_ORACLE_TABLE_CACHE, key_f) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, W_in)
+        data_out_b  = emit_qrom!(gates, wa, data_f, idx_wires_b, L)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [W_in], [L], Set{Int}())
+        bennett(lr)
+    end
+    circuit_g = get!(_ORACLE_TABLE_CACHE, key_g) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, W_in)
+        data_out_b  = emit_qrom!(gates, wa, data_g, idx_wires_b, L)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [W_in], [L], Set{Int}())
+        bennett(lr)
+    end
+    return circuit_f, circuit_g
+end
+
+"""
+    _shor_mulmod_controlled!(ctx, ctrl::WireID, y::QInt{L}, circuit_f, circuit_g)
+
+In-place controlled modular multiplication on the register `y`:
+
+    (ctrl, y) ↦ (ctrl, ctrl ? (a_j · y) mod N : y)
+
+Implements the compute-copy-uncompute pattern of [`_shor_mulmod_a!`](@ref)
+but with the `ctrl` wire **packed into the QROM input** (it becomes the MSB of
+the (1+L)-bit index), so every gate in the two QROMs runs at the empty control
+stack rather than being individually multi-controlled. The caller must supply
+the `(circuit_f, circuit_g)` pair from
+[`_shor_mulmod_packed_circuits`](@ref).
+
+Execution (ancilla `z` is fresh |0⟩^L, deallocated on exit):
+
+  1. Forward packed QROM:   `z ⊻= f(ctrl, y)`  ⇒  `z = f(ctrl, y)` (y preserved)
+  2. Inverse packed QROM:   `y ⊻= g(ctrl, z) = g(ctrl, f(ctrl, y)) = y`  ⇒  `y = 0`
+  3. Half-swap y ↔ z via 2L CNOTs (y side is known-zero after step 2):
+       first y ⊻= z  (y ← f(ctrl, y), z unchanged),
+       then  z ⊻= y  (z ← 0).
+  4. Deallocate z (guaranteed |0⟩).
+
+Preserves `y`'s WireIDs — the register handle passed in still points at the
+same physical wires on exit, now carrying the post-multiplication value.
+
+Ref: Nielsen & Chuang §5.3.1 Eq. 5.36, Box 5.2, and the Bennett-standard
+compute-copy-uncompute construction (Bennett 1973).
+"""
+function _shor_mulmod_controlled!(ctx::AbstractContext, ctrl_wire::WireID,
+                                  y_reg::QInt{L},
+                                  circuit_f::ReversibleCircuit,
+                                  circuit_g::ReversibleCircuit) where {L}
+    check_live!(y_reg)
+
+    # Fresh |0⟩ ancilla register z
+    z_wires = WireID[allocate!(ctx) for _ in 1:L]
+    y_wires = WireID[y_reg.wires[i] for i in 1:L]
+
+    # Packed input wire order: [ctrl, y_1, …, y_L] (ctrl = packed MSB, matching
+    # _shor_mulmod_packed_circuits's `(ctrl << L) | y` bit layout).
+    packed_input_wires = WireID[ctrl_wire; y_wires]
+    packed_input_for_g = WireID[ctrl_wire; z_wires]
+
+    # Run at the empty control stack — the `ctrl` wire is already folded into
+    # the QROM index, so any outer `when(...)` from the caller would only add
+    # spurious controls. with_empty_controls is the public API for this.
+    with_empty_controls(ctx) do
+        # Step A: z ⊻= f(ctrl, y) ⇒ z = f(ctrl, y)   (y preserved by QROM's
+        # compute-copy-uncompute index tree).
+        wm_f = build_wire_map(circuit_f, packed_input_wires, z_wires)
+        apply_reversible!(ctx, circuit_f, wm_f)
+
+        # Step B: y ⊻= g(ctrl, z) = g(ctrl, f(ctrl, y)) = y ⇒ y = 0.
+        wm_g = build_wire_map(circuit_g, packed_input_for_g, y_wires)
+        apply_reversible!(ctx, circuit_g, wm_g)
+
+        # Step C: half-swap y ↔ z (y side known |0⟩ after step B).
+        #   y ⊻= z  ⇒  y = f(ctrl, y_orig);
+        #   z ⊻= y  ⇒  z = 0.
+        for i in 1:L
+            apply_cx!(ctx, z_wires[i], y_wires[i])
+        end
+        for i in 1:L
+            apply_cx!(ctx, y_wires[i], z_wires[i])
+        end
+    end
+
+    # Step D: deallocate z (guaranteed |0⟩)
+    for w in z_wires
+        deallocate!(ctx, w)
+    end
+    return y_reg
+end
+
+"""
+    shor_order_C(a::Int, N::Int; t::Int=3, verbose::Bool=false) -> Int
+    shor_order_C(a::Int, N::Int, ::Val{t}) where {t}
+
+Order of `a` modulo `N` via the "controlled-U^{2^j} cascade" idiom — the
+literal reading of Nielsen & Chuang Box 5.2 / Eq. 5.43. Rather than invoking
+a single modular-multiplication unitary `2^t − 1` times under nested
+controls (impl B), we precompute the `t` classical constants
+
+    a_j = a^{2^{j-1}} mod N,     j = 1, …, t
+
+and emit **one** controlled-"multiply by a_j mod N" circuit per counter
+qubit. The quantum squaring Box 5.2 describes is replaced by a plain
+`powermod` at compile time.
+
+Algorithm (N&C §5.3.1, Box 5.2, Eqs. 5.40–5.43):
+  1. Counter `c = QInt{t}(0)` → `superpose!` → uniform.
+  2. `y = QInt{L}(1)` — Eq. 5.44 eigenstate, shared by all stages.
+  3. For j = 1, …, t:
+       * classical: `a_j = a^{2^{j-1}} mod N`
+       * quantum:   controlled-mulmod on `y` by `a_j`, control = `c.wires[j]`.
+  4. `interfere!(c)` — inverse QFT on the counter.
+  5. `discard!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
+
+Resource profile (N = 15, L = 4, t = 3):
+  * Peak live qubits per mulmod call: `t + 2L + O(log L) ≈ 17` (cf. impl B's 25)
+  * Packed QROM table size: `2^{1+L} = 32` entries (cf. impl B's 16).
+  * Unconditional QROM gates — no control-stack expansion (cf. impl B's CCCX).
+  * `t` mulmod calls per shot (cf. impl B's `2^t − 1`).
+  * Matches impl A's HWM envelope; retains the Box 5.2 per-qubit cascade.
+
+Ref: Nielsen & Chuang §5.3.1, Box 5.2 (modular-exponentiation expansion),
+Eq. 5.36 (identity-on-y≥N extension), Box 5.4 (N=15 worked example).
+See `docs/physics/nielsen_chuang_5.3.md`.
+"""
+function shor_order_C(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where {t}
+    gcd(a, N) == 1 || error("shor_order_C: a=$a and N=$N must be coprime")
+    1 <= a < N || error("shor_order_C: a=$a must satisfy 1 ≤ a < N=$N")
+    L = max(1, ceil(Int, log2(N)))
+
+    ctx = current_context()
+    verbose && @info "shor_order_C: a=$a, N=$N, t=$t, L=$L" live_qubits=_live_qubits(ctx)
+
+    # Classical precompute — N&C Box 5.2 replaces each quantum squaring with
+    # a plain powermod. For a=7, N=15, t=3: a_j = {7, 4, 1}.
+    a_js = [powermod(a, 1 << (j - 1), N) for j in 1:t]
+    verbose && @info "  classical precompute a_j" a_js=a_js
+
+    # Build + cache (forward, inverse) packed circuits, one pair per distinct
+    # a_j. Two counter qubits with the same a_j share both circuits via
+    # _ORACLE_TABLE_CACHE (data-hash keyed).
+    circuits = [_shor_mulmod_packed_circuits(a_j, N, Val(L)) for a_j in a_js]
+    verbose && @info "  packed circuits compiled/cached" n_pairs=length(circuits) live_qubits=_live_qubits(ctx)
+
+    # Counter register (t qubits) — Box 5.2 top half.
+    c_reg = QInt{t}(0)
+    superpose!(c_reg)
+    verbose && @info "  after superpose!(c_reg)" live_qubits=_live_qubits(ctx)
+
+    # Shared eigenstate y = |1⟩_L (Eq. 5.44). Persists across all t stages —
+    # the cascade multiplies the running y by a_j at stage j iff c[j] = 1.
+    y_reg = QInt{L}(ctx, 1)
+    verbose && @info "  after QInt{$L}(1) eigenstate" live_qubits=_live_qubits(ctx)
+
+    # Box 5.2 cascade: t controlled mulmods, one per counter qubit.
+    for j in 1:t
+        ctrl_wire = c_reg.wires[j]
+        cf, cg = circuits[j]
+        _shor_mulmod_controlled!(ctx, ctrl_wire, y_reg, cf, cg)
+        verbose && @info "  after controlled-mulby-a_$j mod N" a_j=a_js[j] live_qubits=_live_qubits(ctx) capacity=ctx.capacity
+    end
+    verbose && @info "  cascade complete" live_qubits=_live_qubits(ctx) peak_allocated=ctx.n_qubits capacity=ctx.capacity
+
+    # Inverse QFT on the counter — standard phase-estimation decode.
+    interfere!(c_reg)
+    verbose && @info "  after interfere!(c_reg)" live_qubits=_live_qubits(ctx)
+
+    discard!(y_reg)
+    verbose && @info "  after discard!(y_reg)" live_qubits=_live_qubits(ctx)
+
+    y_tilde = Int(c_reg)
+    verbose && @info "  measured ỹ=$y_tilde" live_qubits=_live_qubits(ctx)
+
+    r = _shor_period_from_phase(y_tilde, t, N)
+    verbose && @info "  continued-fraction decode" ỹ=y_tilde φ=(y_tilde//(1<<t)) r=r
+    return r
+end
+
+shor_order_C(a::Int, N::Int; t::Int=3, verbose::Bool=false) =
+    shor_order_C(a, N, Val(t); verbose=verbose)
+
+"""
+    shor_factor_C(N::Int; max_attempts::Int=16) -> Vector{Int}
+
+Factor composite `N` using order-finding implementation C. Identical
+classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref) and
+[`shor_factor_B`](@ref); differs only in the quantum order-finding
+subroutine — the controlled-`U^{2^j}` cascade from Box 5.2.
+"""
+function shor_factor_C(N::Int; max_attempts::Int=16)
+    N >= 2 || error("shor_factor_C: N=$N must be ≥ 2")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    for _ in 1:max_attempts
+        a = rand(2:(N - 1))
+        g = gcd(a, N)
+        if g > 1
+            return sort!([g, N ÷ g])
+        end
+
+        r = shor_order_C(a, N)
+        fs = _shor_factor_from_order(a, r, N)
+        !isempty(fs) && return fs
+    end
+    return Int[]
+end
