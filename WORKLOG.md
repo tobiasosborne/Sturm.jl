@@ -3745,3 +3745,74 @@ bash docs/literature/quantum_simulation/download_all.sh
 # Edit line 10 to match your local Playwright install path, then:
 node docs/literature/quantum_simulation/fetch_paywalled.mjs
 ```
+
+## 2026-04-18 — Session: Shor scaling benchmark preflight + OOM watchdog (Sturm.jl-8jx)
+
+### Context: previous session OOM-killed WSL
+
+The prior session (transcript `a79882ce`, commits `034312d`, `133e9df`, `3ebef5c`
+landing impls A/B/C for Shor) wrote `test/bench_shor_scaling.jl` and launched
+it to sweep L=4…18. It completed L=4…8 plus L=9 impl A (4.6M gates in 1.2s),
+then entered L=9 impl B and was killed with exit 144 (SIGKILL, OOM-killer)
+~4 minutes later. WSL crashed. Work stranded — file untracked, never
+committed, no WORKLOG entry (rule #0 violation by prior agent).
+
+Root cause: impl B's cost scales as `2^(t+L+1)` per the script's own comment;
+at L=9/t=18 that's 2^28 ≈ 268M `HotNode` records × 25 B × ~3× GC overhead
+≈ 20 GB. Plus a concurrent Julia process (Feynfeld, unrelated project) was
+also consuming RAM. WSL OOM-killed the Sturm process before allocation
+completed.
+
+### What landed
+
+Added to `test/bench_shor_scaling.jl`:
+
+1. **Cost estimator** per impl, calibrated against measured gate counts:
+   - A: `L · 2^(t+2) + 2·L·t`. Calibrated at L=4,5,6 (est/actual: 0.99×, 1.36×, 1.50×).
+   - B: `2^(t+L+1)`. From script's own scaling comment; no measurement survived.
+   - C: `20 · t · L · 2^(L+1)`. Calibrated at L=4,5,6 (est/actual: 2.47×, 2.91×, 3.31×).
+   All over-estimate slightly — safe direction.
+
+2. **Preflight guard**: before running each case, project gates × 25 B × 3×
+   overhead and compare to budget. If over budget → `SKIP`, not run. Prints a
+   global preflight table at startup showing every case's projected gates,
+   mem, and verdict.
+
+3. **Async OOM watchdog**: `Threads.@spawn` task samples `Sys.free_memory()`
+   every 1 s. If free drops below 4 GB, calls `exit(137)` — userspace kill
+   matching SIGKILL exit code, but from a process that can flush stderr
+   before dying (kernel OOM-killer truncates).
+
+4. **sizehint! to prevent Vector-doubling spikes**: pre-reserve DAG capacity
+   to the preflight estimate (capped at budget). Eliminates the 2× peak
+   overhead of `Vector` reallocation during growth.
+
+5. **Env overrides**: `STURM_BENCH_BUDGET_GB` (default 30% of free RAM),
+   `STURM_BENCH_WATCHDOG_GB` (default 4.0), `STURM_BENCH_ONLY` (filter impls),
+   `STURM_BENCH_MAX_L`, `STURM_BENCH_DRY_RUN`.
+
+### Dry-run verdict on 62.72 GB box (18.1 GB budget)
+
+- Impl B L=9/t=18 (the OOM case) → SKIP (1.04× over) ✓
+- Impl A runs up to L=11 (12.89 GB), skips L=12+ (56 GB)
+- Impl B skips from L=9 up (all oversized)
+- Impl C runs up to L=14 (17.94 GB), skips L=16+ (93 GB)
+
+### Gotchas
+
+- **Impl A's first estimator was 30-50% LOW** at small L (L=4: est 2048, actual
+  4204). Fixed by increasing exponent from `2^(t+1)` to `2^(t+2)`. Under-
+  estimating is the one direction you must never tolerate in a guard — fine-
+  tune the estimator against measured data, never derivation alone.
+- **`pgrep -f "julia --project"` matches across projects**. A Feynfeld
+  `--project=.` false-positives as a Sturm.jl julia. The serial-only rule is
+  a *per-project* rule (precache root = `--project=<path>`); update
+  `feedback_julia_serial_only.md` to reflect this. Blocking on any julia
+  process forces the user to override twice and erodes trust.
+- **`feedback_verbose_eager_flush`**: impl C's per-mulmod `[mulmod ctrl=…]`
+  lines are load-bearing — they made the L=6 trace visible stage-by-stage.
+  Keep them.
+- **Default budget 40% was too loose**: would greenlight 20 GB impl B on
+  60 GB box (24 GB budget). Tightened to 30% (18 GB budget) so the OOM
+  case actually skips. Plus 4 GB watchdog floor (WSL's OOM-killer fires
+  before `free` hits zero — kernel keeps reserve pages).
