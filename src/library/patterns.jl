@@ -160,6 +160,54 @@ function phase_estimate(unitary!::Function, eigenstate::QBool, ::Val{P}) where {
     return Int(prec)
 end
 
+"""
+    phase_estimate(unitary!::Function, eigenstate::QInt{L}, ::Val{P}) -> Int
+
+Multi-qubit-eigenstate variant of [`phase_estimate`](@ref). Identical shape to
+the `QBool` method, but `unitary!` is expected to take a `QInt{L}` register
+(e.g. Shor's modular multiplication `y ↦ a·y mod N`). The L-qubit eigenstate
+is preserved across `2^P − 1` invocations of `unitary!` and discarded at the
+end, exactly as in the single-qubit case.
+
+Used by Shor's order-finding (N&C §5.3.1) where the eigenstate |1⟩_L is an
+equal superposition of all `r` eigenstates of the modular-multiplication
+unitary U (Eq. 5.44), and phase estimation samples `s/r` for `s` uniform in
+`{0, ..., r−1}`.
+
+Ref: Nielsen & Chuang, §5.2 "Phase estimation" + §5.3 "Order-finding", Fig. 5.2 + Fig. 5.4.
+"""
+function phase_estimate(unitary!::Function, eigenstate::QInt{L}, ::Val{P}) where {L, P}
+    check_live!(eigenstate)
+    ctx = eigenstate.ctx
+
+    # Allocate P precision qubits, all |0⟩, then superpose
+    prec = QInt{P}(ctx, 0)
+    superpose!(prec)
+
+    # Controlled-U^{2^j} for each precision qubit j (MSB first after QFT ordering)
+    for j in 1:P
+        ctrl = QBool(prec.wires[j], ctx, false)
+        # Apply U^{2^{j-1}} controlled on precision qubit j.
+        # The `when(ctrl)` block routes every gate inside unitary! through the
+        # control stack, so the inner call auto-controls regardless of how deep
+        # the decomposition reaches (QROM, Toffoli cascades, ...).
+        power = 1 << (j - 1)
+        when(ctrl) do
+            for _ in 1:power
+                unitary!(eigenstate)
+            end
+        end
+    end
+
+    # Inverse QFT on precision register
+    interfere!(prec)
+
+    # Discard the eigenstate register — it is no longer needed and (for Shor's
+    # §5.3.1) would anyway collapse onto one of the `|u_s⟩` eigenstates.
+    discard!(eigenstate)
+    return Int(prec)
+end
+
 # ── Grover search & amplitude amplification ──────────────────────────────────
 # Ref: Grover (1996), "A fast quantum mechanical algorithm for database search",
 #      Proc. 28th STOC, pp. 212-219.

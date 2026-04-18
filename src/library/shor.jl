@@ -232,7 +232,229 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # Implementation B — phase-estimation higher-order (§5.3.1 verbatim)
 # ═══════════════════════════════════════════════════════════════════════════
-# (landed by Opus proposer subagent #1)
+#
+# Lifts Nielsen & Chuang §5.3.1 directly: write the modular-multiplication
+# unitary U|y⟩ = |a·y mod N⟩ (Eq. 5.36) as a plain Julia subroutine and hand
+# it to `phase_estimate(U!, |1⟩_L, Val(t))`. The HOF already handles the
+# controlled-U^{2^j} cascade (Fig. 5.4 / Eqs. 5.40–5.43) by invoking `U!`
+# exactly `2^{j-1}` times under each counter-qubit's control — that control
+# stack auto-propagates through `when(ctrl)` into every gate the mulmod emits
+# (QROM + CNOTs), so we never write an explicit controlled gate.
+#
+# The |1⟩_L initial state is the §5.3.1 trick (Eq. 5.44):
+#
+#     (1/√r) Σ_s |u_s⟩ = |1⟩_L,
+#
+# so phase estimation samples s uniform in {0, …, r−1}. The classical
+# continued-fractions decoder (shared with impl A) extracts r.
+#
+# ── _shor_mulmod_a!: reversible "multiply by a mod N" on a QInt{L} register ──
+#
+# The tricky bit is realising U reversibly *in-place* — i.e. leaving the
+# caller's register handle holding the transformed value on the same physical
+# wires. N&C Eq. 5.36 treats U as identity on y ∈ {N, …, 2^L−1}, which makes
+# y ↦ a·y mod N (augmented with identity outside {0, …, N−1}) a bijection on
+# the full 2^L-dimensional space and therefore unitary.
+#
+# Construction (compute-copy-uncompute with swap-through):
+#
+#   Let f(y) = (y < N) ? (a·y mod N) : y               (forward, bijection)
+#   Let g(z) = (z < N) ? (a⁻¹·z mod N) : z             (inverse, g ∘ f = id)
+#
+#   1. Allocate fresh |0⟩^L register z.
+#   2. QROM(f): z ⊻= f(y), giving state |y⟩|f(y)⟩.
+#   3. QROM(g): y ⊻= g(z) = g(f(y)) = y, giving state |0⟩|f(y)⟩.
+#   4. Half-swap wires z ↔ y_reg via 2L CNOTs (source known-zero, so full
+#      3-CNOT swap is unnecessary): state |f(y)⟩|0⟩ on (y_reg, z).
+#   5. Deallocate z (now |0⟩, guaranteed by step 4).
+#
+# Per call: L fresh ancillae momentarily (steps 1–4), 2L CNOTs for the
+# half-swap, plus the two QROM circuits (O(2^L) Toffoli each via
+# Babbush–Gidney unary iteration). Circuits are content-hash-cached in
+# `_ORACLE_TABLE_CACHE` so the 2^t − 1 invocations during phase estimation
+# compile them exactly twice (once f, once g).
+#
+# Auto-controls inside `when(ctrl) do … end`: every gate the QROM and the
+# CNOT half-swap emit goes through `apply_cx!`/`apply_ccx!` on the context,
+# which consults `ctx.control_stack`. The phase_estimate caller never
+# constructs a controlled gate explicitly; the control is a *side-effect* of
+# the surrounding `when` block.
+
+"""
+    _shor_mulmod_circuits(a::Int, N::Int, ::Val{L}) -> Tuple{ReversibleCircuit, ReversibleCircuit}
+
+Build (forward, inverse) QROM circuits for the `L`-bit modular-multiplication
+bijection `y ↦ a·y mod N` (identity on `y ≥ N`, per N&C Eq. 5.36) and its
+inverse `z ↦ a⁻¹·z mod N`. Circuits are cached by content hash via
+`_ORACLE_TABLE_CACHE` (see `src/bennett/bridge.jl`) — a second invocation
+with the same `(a, N, L)` returns the already-compiled circuits.
+"""
+function _shor_mulmod_circuits(a::Int, N::Int, ::Val{L}) where {L}
+    gcd(a, N) == 1 || error("_shor_mulmod_circuits: a=$a and N=$N must be coprime")
+    (1 << L) >= N || error("_shor_mulmod_circuits: L=$L too small for N=$N (need 2^L ≥ N)")
+
+    ainv = invmod(a, N)
+    mask = (UInt64(1) << L) - UInt64(1)
+
+    # Forward table: f(y) = y < N ? (a*y) % N : y (identity on the high tail).
+    data_f = Vector{UInt64}(undef, 1 << L)
+    data_g = Vector{UInt64}(undef, 1 << L)
+    @inbounds for y in 0:((1 << L) - 1)
+        data_f[y + 1] = (y < N ? UInt64((a * y) % N) : UInt64(y)) & mask
+        data_g[y + 1] = (y < N ? UInt64((ainv * y) % N) : UInt64(y)) & mask
+    end
+
+    key_f = (hash(data_f), L, L)
+    key_g = (hash(data_g), L, L)
+
+    circuit_f = get!(_ORACLE_TABLE_CACHE, key_f) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, L)
+        data_out_b  = emit_qrom!(gates, wa, data_f, idx_wires_b, L)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [L], [L], Set{Int}())
+        bennett(lr)
+    end
+    circuit_g = get!(_ORACLE_TABLE_CACHE, key_g) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, L)
+        data_out_b  = emit_qrom!(gates, wa, data_g, idx_wires_b, L)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [L], [L], Set{Int}())
+        bennett(lr)
+    end
+    return circuit_f, circuit_g
+end
+
+"""
+    _shor_mulmod_a!(y_reg::QInt{L}, circuit_f, circuit_g)
+
+Apply the in-place modular-multiplication unitary U : |y⟩ ↦ |a·y mod N⟩ on the
+L-qubit register `y_reg`, using the pre-compiled (forward, inverse) QROM
+circuits from `_shor_mulmod_circuits`. The register's WireIDs are preserved
+(same physical wires before and after), so calling this inside a `when(ctrl)`
+block and/or passing it to `phase_estimate` composes naturally.
+
+Ref: Nielsen & Chuang §5.3.1, Eq. 5.36, Fig. 5.4. The compute-copy-uncompute
+structure is Bennett-standard (cf. Markov & Saeedi 2012, Beauregard 2003).
+"""
+function _shor_mulmod_a!(y_reg::QInt{L},
+                         circuit_f::ReversibleCircuit,
+                         circuit_g::ReversibleCircuit) where {L}
+    check_live!(y_reg)
+    ctx = y_reg.ctx
+
+    # Fresh |0⟩ ancilla register z
+    z_wires = WireID[allocate!(ctx) for _ in 1:L]
+    y_wires = WireID[y_reg.wires[i] for i in 1:L]
+
+    # Step A: z ⊻= f(y)  ⇒  z = f(y)   (y preserved)
+    wm_f = build_wire_map(circuit_f, y_wires, z_wires)
+    apply_reversible!(ctx, circuit_f, wm_f)
+
+    # Step B: y ⊻= g(z) = g(f(y)) = y  ⇒  y = 0   (z preserved)
+    wm_g = build_wire_map(circuit_g, z_wires, y_wires)
+    apply_reversible!(ctx, circuit_g, wm_g)
+
+    # Step C: half-swap y_reg ↔ z (source known-zero, 2L CNOTs).
+    #   y ⊻= z  ⇒  y = f(y);   z ⊻= y  ⇒  z = 0.
+    for i in 1:L
+        apply_cx!(ctx, z_wires[i], y_wires[i])
+    end
+    for i in 1:L
+        apply_cx!(ctx, y_wires[i], z_wires[i])
+    end
+
+    # Step D: deallocate z (guaranteed |0⟩)
+    for w in z_wires
+        deallocate!(ctx, w)
+    end
+    return y_reg
+end
+
+"""
+    shor_order_B(a::Int, N::Int; t::Int=4, verbose::Bool=false) -> Int
+
+Order of `a` modulo `N` via the "phase-estimation higher-order" idiom
+(N&C §5.3.1 verbatim). Constructs the modular-multiplication unitary
+`U|y⟩ = |a·y mod N⟩` (Eq. 5.36) as a closure over `(a, N)` and hands it to
+[`phase_estimate`](@ref) with `|1⟩_L` as eigenstate (Eq. 5.44).
+
+The HOF fabricates the controlled-`U^{2^j}` cascade by invoking `U!`
+`2^{j-1}` times under each counter qubit's control; the control stack
+auto-propagates into every QROM gate emitted by `_shor_mulmod_a!`.
+
+Algorithm (N&C §5.3.1, Eqs. 5.36–5.44, Fig. 5.4):
+  1. Allocate `y = QInt{L}(1)` — Eq. 5.44 eigenstate.
+  2. `ỹ = phase_estimate(U!, y, Val(t))` where `U!` is `_shor_mulmod_a!`.
+  3. Continued-fractions decode of `ỹ / 2ᵗ` → candidate period.
+
+`t` counter qubits, `L = ⌈log₂ N⌉` register qubits. For `N = 15`, `L = 4`;
+`t = 3` resolves peaks at `{0, 2, 4, 6}` for `r = 4` and `{0, 4}` for `r = 2`.
+
+Ref: Nielsen & Chuang §5.3.1, Eqs. 5.36, 5.40–5.44, Fig. 5.4, Box 5.4.
+See `docs/physics/nielsen_chuang_5.3.md`.
+"""
+function shor_order_B(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where {t}
+    gcd(a, N) == 1 || error("shor_order_B: a=$a and N=$N must be coprime")
+    1 <= a < N || error("shor_order_B: a=$a must satisfy 1 ≤ a < N=$N")
+    L = max(1, ceil(Int, log2(N)))
+
+    ctx = current_context()
+    verbose && @info "shor_order_B: a=$a, N=$N, t=$t, L=$L" live_qubits=_live_qubits(ctx)
+
+    # Precompile the forward + inverse QROM circuits once (cached in
+    # _ORACLE_TABLE_CACHE — subsequent shots reuse both circuits).
+    circuit_f, circuit_g = _shor_mulmod_circuits(a, N, Val(L))
+    verbose && @info "  after _shor_mulmod_circuits (compiled/cached)" live_qubits=_live_qubits(ctx)
+
+    # Eq. 5.44 initial state |1⟩_L — phase_estimate handles the counter register
+    # internally (allocate, superpose, controlled-U^{2^j}, interfere, measure).
+    y = QInt{L}(ctx, 1)
+    verbose && @info "  after QInt{$L}(1) (eigenstate |1⟩)" live_qubits=_live_qubits(ctx)
+
+    # Wrap the mulmod in a closure that takes a QInt{L}. `phase_estimate`
+    # invokes this 1 + 2 + 4 + … + 2^{t-1} = 2^t − 1 times inside `when(ctrl)`
+    # blocks; each call momentarily allocates L ancillae (z), deallocates on
+    # exit, so the live-qubit HWM for the mulmod cascade stays at t + 2L.
+    U! = reg -> _shor_mulmod_a!(reg, circuit_f, circuit_g)
+    y_tilde = phase_estimate(U!, y, Val(t))
+    verbose && @info "  measured ỹ=$y_tilde after phase_estimate" live_qubits=_live_qubits(ctx) peak_allocated=ctx.n_qubits capacity=ctx.capacity
+
+    r = _shor_period_from_phase(y_tilde, t, N)
+    verbose && @info "  continued-fraction decode" ỹ=y_tilde φ=(y_tilde//(1<<t)) r=r
+    return r
+end
+
+shor_order_B(a::Int, N::Int; t::Int=4, verbose::Bool=false) =
+    shor_order_B(a, N, Val(t); verbose=verbose)
+
+"""
+    shor_factor_B(N::Int; max_attempts::Int=16) -> Vector{Int}
+
+Factor composite `N` using order-finding implementation B. Identical
+classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref); differs only
+in the quantum order-finding subroutine.
+"""
+function shor_factor_B(N::Int; max_attempts::Int=16)
+    N >= 2 || error("shor_factor_B: N=$N must be ≥ 2")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    for _ in 1:max_attempts
+        a = rand(2:(N - 1))
+        g = gcd(a, N)
+        if g > 1
+            return sort!([g, N ÷ g])
+        end
+
+        r = shor_order_B(a, N)
+        fs = _shor_factor_from_order(a, r, N)
+        !isempty(fs) && return fs
+    end
+    return Int[]
+end
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Implementation C — controlled-U^{2^j} cascade (Box 5.2 literal)
