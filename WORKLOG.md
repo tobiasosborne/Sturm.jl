@@ -4,6 +4,127 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24D: Close `xcu` (multi-controlled gates on DensityMatrixContext)
+
+`DensityMatrixContext` errored "not yet implemented" on every multi-controlled
+variant of `apply_ry!`/`apply_rz!`/`apply_cx!`/`apply_ccx!` (density.jl lines
+109/125/138/149). Consequence: any noise-circuit demo using nested `when()`
+was broken. This bead ports EagerContext's Toffoli cascade to DM, via a
+shared helper file.
+
+### Key insight (from 4 parallel Sonnet Explore agents)
+
+The bead's hint ("Toffoli cascade on density matrix via Kraus superop
+composition") was half-right. Orkan's gate ABI is **state-type-agnostic**:
+`orkan_ry!`, `orkan_cx!`, `orkan_ccx!` all dispatch internally on
+`state->type` (`ORKAN_PURE` vs `ORKAN_MIXED_PACKED` vs `ORKAN_MIXED_TILED`)
+and already compute `U ρ U†` on mixed states. There is no Kraus
+decomposition needed for coherent gates — they are single-Kraus unitary
+channels, and Orkan handles the `UρU†` conjugation internally.
+
+Confirmed via Orkan source inspection:
+
+- `gate.h` declares the full gate API without any density-specific variants.
+- `orkan_channel_1q!` exists for *noise* channels (1-qubit Kraus), but is
+  not needed for controlled unitaries.
+- Orkan has NO multi-controlled primitive on either state type — the ceiling
+  is `ccx` (1-target, 2-control Toffoli).
+
+So the cascade mirroring EagerContext exactly is correct on DM, with zero
+FFI changes.
+
+### Refactor: shared `multi_control.jl`
+
+Moved the 6 helpers (`_controlled_ry!`, `_controlled_rz!`,
+`_toffoli_cascade_forward!`, `_toffoli_cascade_reverse!`,
+`_multi_controlled_gate!`, `_multi_controlled_cx!`) out of `eager.jl` into a
+new file `src/context/multi_control.jl`, typed on
+`Union{EagerContext, DensityMatrixContext}` so both contexts dispatch to
+them. The file must be included AFTER both context types are defined
+(Julia cannot resolve a `Union{T, U}` type parameter until both are
+available) — registered in `Sturm.jl` as the third `context/` include.
+
+`eager.jl` and `density.jl` now have IDENTICAL `apply_ry!`/`apply_rz!`/
+`apply_cx!`/`apply_ccx!` dispatch shapes (nc=0 → raw; nc=1 → ABC or CCX;
+nc≥2 → cascade). No duplication.
+
+### Ground-truth check triggered by user prompt mid-session
+
+User asked "did you read the Nielsen and Chuang ground truth? are the
+equations matched?" I had NOT — I copied comments from eager.jl forward
+without verifying. Re-read `docs/physics/nielsen_chuang_4.3.md` and
+verified algebraically:
+
+- At ctrl=|0⟩: CX ≡ I, so `Ry(−θ/2)·Ry(θ/2) = I`. ✓
+- At ctrl=|1⟩: CX ≡ X on target, composed (right-to-left) =
+  `X·Ry(−θ/2)·X · Ry(θ/2)`. Using `X·Ry(α)·X = Ry(−α)`:
+  `Ry(θ/2)·Ry(θ/2) = Ry(θ)`. ✓
+
+Barenco et al. 1995 Lemma 7.2 had no local PDF — pre-existing docs gap
+from eager.jl. Wrote `docs/physics/toffoli_cascade.md` with a self-
+contained derivation (computational-basis induction on AND-reduction +
+linearity + single-Kraus density-matrix extension). Pointed
+`multi_control.jl`'s reference comment at the new local doc.
+
+**Lesson for future agents:** when extracting/copying code with docstring
+references, read the local physics doc before shipping. Do not copy the
+reference forward. This is a literal letter-of-rule-4 issue.
+
+### Tests — `test/test_density_matrix_mc.jl` (new)
+
+17 testsets covering:
+
+- Depth 2 nested-when CCRy / CCRz / CCX — deterministic cases on all
+  control-bit combinations.
+- Depth 2 `apply_cx!` inside nested-when — effective CCCX via cascade.
+- Depth 2 `apply_ccx!` inside `when()` — uses the path that pushes `c1`
+  onto the stack and runs multi-controlled CX with `c2`.
+- Depth 3 triple-nested `when()` — effective 4-way AND. Verifies the
+  Toffoli cascade allocates 2 workspace qubits and uncomputes them.
+- Superposition entanglement: `c1=|+⟩, c2=|1⟩, t=|0⟩` nested-when should
+  leave `c1` and `t` perfectly correlated across shots. 200/200 passed.
+- Workspace recycling: after a depth-3 cascade, `length(ctx.wire_to_qubit)`
+  reports 4 user qubits (c1, c2, c3, t), confirming the 2 workspace
+  ancillae were correctly deallocated.
+
+Registered in `test/runtests.jl` immediately after `test_density_matrix.jl`.
+
+### Verification
+
+- `test_density_matrix.jl` 1753/1753 (regression)
+- `test_density_matrix_mc.jl` 17/17 (new)
+- `test_noise.jl` 506/506 (regression)
+- `test_when.jl` 507/507 (regression after refactor)
+- Classicalise testset 12/12
+
+### Process notes
+
+The 4-parallel-Sonnet Explore pattern was effective for this bead: one
+afternoon's worth of disambiguation done in maybe 3 minutes of parallel
+exploration. Template for future big beads: spawn agents that each cover
+(a) the "before" state of a module, (b) the reference implementation to
+mirror, (c) existing test patterns, (d) the FFI / lower-layer surface.
+Keep each under 800 words with code excerpts; synthesise the convergent
+findings before reading ground truth in detail.
+
+### Files touched
+
+- `src/context/multi_control.jl` (new, 102 lines): shared cascade helpers.
+- `src/context/eager.jl`: removed helpers (−108 lines), kept the dispatch
+  in `apply_*!`.
+- `src/context/density.jl`: restructured `apply_ry!`/`apply_rz!`/`apply_cx!`
+  to mirror eager.jl's nc=0/1/≥2 tree; replaced four
+  `error("not yet implemented")` with cascade calls.
+- `src/Sturm.jl`: include `context/multi_control.jl` after both context
+  files.
+- `test/test_density_matrix_mc.jl` (new), `test/runtests.jl` (include).
+- `docs/physics/toffoli_cascade.md` (new): self-contained derivation of
+  the multi-controlled cascade, with the density-matrix extension
+  explicit.
+- `WORKLOG.md`: this entry.
+
+---
+
 ## 2026-04-18 — Session 24C: Close `f23` (P2 implicit quantum→classical cast warning)
 
 The P2 axiom says measurement is a cast with implied information loss, and
