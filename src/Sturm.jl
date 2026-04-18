@@ -9,6 +9,7 @@ include("types/wire.jl")
 include("context/abstract.jl")
 include("context/eager.jl")
 include("context/density.jl")
+include("context/multi_control.jl")  # shared cascade, needs both context types
 include("types/quantum.jl")
 include("types/qbool.jl")
 include("types/qint.jl")

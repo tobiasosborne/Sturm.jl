@@ -94,48 +94,45 @@ current_controls(ctx::DensityMatrixContext) = copy(ctx.control_stack)
 
 # ── Gate application (delegates to Orkan, same as EagerContext) ──────────────
 
+# Dispatch shape mirrors EagerContext exactly — Orkan's gate ABI dispatches
+# internally on state type, so the same nc=0/1/≥2 tree works for MIXED_PACKED.
+# Multi-control (nc ≥ 2) uses the shared Toffoli cascade in multi_control.jl.
+
 function apply_ry!(ctx::DensityMatrixContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_ry!(ctx.orkan.raw, target, angle)
-    elseif length(ctx.control_stack) == 1
-        ctrl = _resolve(ctx, ctx.control_stack[1])
-        tgt = target
-        orkan_ry!(ctx.orkan.raw, tgt, angle / 2)
-        orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-        orkan_ry!(ctx.orkan.raw, tgt, -angle / 2)
-        orkan_cx!(ctx.orkan.raw, ctrl, tgt)
+    elseif nc == 1
+        _controlled_ry!(ctx, ctx.control_stack[1], wire, angle)
     else
-        error("Multi-controlled Ry (>1 control) not yet implemented")
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_ry!)
     end
 end
 
 function apply_rz!(ctx::DensityMatrixContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_rz!(ctx.orkan.raw, target, angle)
-    elseif length(ctx.control_stack) == 1
-        ctrl = _resolve(ctx, ctx.control_stack[1])
-        tgt = target
-        orkan_rz!(ctx.orkan.raw, tgt, angle / 2)
-        orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-        orkan_rz!(ctx.orkan.raw, tgt, -angle / 2)
-        orkan_cx!(ctx.orkan.raw, ctrl, tgt)
+    elseif nc == 1
+        _controlled_rz!(ctx, ctx.control_stack[1], wire, angle)
     else
-        error("Multi-controlled Rz (>1 control) not yet implemented")
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_rz!)
     end
 end
 
 function apply_cx!(ctx::DensityMatrixContext, control_wire::WireID, target_wire::WireID)
     ctrl = _resolve(ctx, control_wire)
-    tgt = _resolve(ctx, target_wire)
-    if isempty(ctx.control_stack)
+    tgt  = _resolve(ctx, target_wire)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-    elseif length(ctx.control_stack) == 1
+    elseif nc == 1
         extra_ctrl = _resolve(ctx, ctx.control_stack[1])
         orkan_ccx!(ctx.orkan.raw, extra_ctrl, ctrl, tgt)
     else
-        error("Multi-controlled CX (>1 additional control) not yet implemented")
+        _multi_controlled_cx!(ctx, control_wire, target_wire)
     end
 end
 
@@ -143,10 +140,18 @@ function apply_ccx!(ctx::DensityMatrixContext, c1::WireID, c2::WireID, target::W
     q1 = _resolve(ctx, c1)
     q2 = _resolve(ctx, c2)
     qt = _resolve(ctx, target)
-    if isempty(ctx.control_stack)
+    nc = length(ctx.control_stack)
+    if nc == 0
         orkan_ccx!(ctx.orkan.raw, q1, q2, qt)
     else
-        error("Multi-controlled Toffoli (additional when() controls) not yet implemented for DensityMatrixContext")
+        # CCX inside when(): treat c2 as the cx-control and c1 as one more
+        # stack control, then run the generic multi-control CX path.
+        push!(ctx.control_stack, c1)
+        try
+            _multi_controlled_cx!(ctx, c2, target)
+        finally
+            pop!(ctx.control_stack)
+        end
     end
 end
 
