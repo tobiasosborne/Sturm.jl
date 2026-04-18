@@ -65,10 +65,61 @@ function pop_control!(ctx::AbstractContext)
     error("pop_control! not implemented for $(typeof(ctx))")
 end
 
-"""Return the current control stack as a vector of WireIDs."""
+"""Return the current control stack as a *copy* (callers may mutate safely)."""
 function current_controls(ctx::AbstractContext)::Vector{WireID}
     error("current_controls not implemented for $(typeof(ctx))")
 end
+
+"""
+    with_controls(f, ctx::AbstractContext, controls::Vector{WireID})
+
+Run `f()` with the context's control stack set to `controls`. The original
+stack is saved on entry and restored on exit, including on exception. Returns
+the value of `f()`.
+
+This is the public API for library code that needs to temporarily switch the
+active controls (e.g. LCU PREPARE/SELECT isolation, Pauli-exp basis change
+lifting). Prefer this over reaching into an implementation detail like
+`ctx.control_stack` directly, which is not part of the `AbstractContext`
+contract and may not exist on all backends (tensor-network / hardware
+contexts).
+
+Default implementation uses `current_controls` + `push_control!`/`pop_control!`,
+so any context that implements those methods gets this for free.
+"""
+function with_controls(f, ctx::AbstractContext, controls::Vector{WireID})
+    saved = current_controls(ctx)
+    # Clear the current stack via the public pop API.
+    for _ in 1:length(saved)
+        pop_control!(ctx)
+    end
+    # Push the requested controls.
+    for w in controls
+        push_control!(ctx, w)
+    end
+    try
+        return f()
+    finally
+        # Reverse: pop the pushed controls, then restore the original.
+        for _ in 1:length(controls)
+            pop_control!(ctx)
+        end
+        for w in saved
+            push_control!(ctx, w)
+        end
+    end
+end
+
+"""
+    with_empty_controls(f, ctx::AbstractContext)
+
+Run `f()` with the context's control stack cleared; restore on exit. Thin
+wrapper around `with_controls(f, ctx, WireID[])`. Used by operations whose
+inner pieces are provably unconditional (LCU's `PREPARE`/`PREPARE†`, the
+basis change + CNOT staircase in `pauli_exp!`) — clearing the stack avoids
+emitting spurious controls on gates the physics says are unconditional.
+"""
+with_empty_controls(f, ctx::AbstractContext) = with_controls(f, ctx, WireID[])
 
 # ── Context propagation via task-local storage ────────────────────────────────
 

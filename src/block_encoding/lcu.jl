@@ -69,29 +69,14 @@ function block_encode_lcu(H::PauliHamiltonian{N}) where {N}
     #
     # Ref: Laneve (2025), arXiv:2503.03026, Algorithm 2 + QSVT circuit.
     function oracle!(ancillas::Vector{QBool}, system::Vector{QBool})
-        controls = ancillas[1].ctx.control_stack
-        has_controls = !isempty(controls)
-        local saved
-        if has_controls
-            saved = copy(controls)
-            empty!(controls)
-        end
-        try
-            _prepare!(ancillas, H)            # unconditional
-            if has_controls
-                append!(controls, saved)
+        ctx = ancillas[1].ctx
+        saved = current_controls(ctx)
+        with_empty_controls(ctx) do
+            _prepare!(ancillas, H)                # unconditional
+            with_controls(ctx, saved) do
+                _select!(ancillas, system, H)      # controlled (if inside when)
             end
-            _select!(ancillas, system, H)     # controlled (if inside when)
-            if has_controls
-                empty!(controls)
-            end
-            _prepare_adj!(ancillas, H)        # unconditional
-        finally
-            # Always restore the control stack, even on exception
-            if has_controls
-                empty!(controls)
-                append!(controls, saved)
-            end
+            _prepare_adj!(ancillas, H)            # unconditional
         end
         return nothing
     end
@@ -99,28 +84,14 @@ function block_encode_lcu(H::PauliHamiltonian{N}) where {N}
     # U† = PREPARE · SELECT† · PREPARE† (temporal order)
     # Same control-stack isolation as oracle!.
     function oracle_adj!(ancillas::Vector{QBool}, system::Vector{QBool})
-        controls = ancillas[1].ctx.control_stack
-        has_controls = !isempty(controls)
-        local saved
-        if has_controls
-            saved = copy(controls)
-            empty!(controls)
-        end
-        try
-            _prepare!(ancillas, H)            # unconditional
-            if has_controls
-                append!(controls, saved)
+        ctx = ancillas[1].ctx
+        saved = current_controls(ctx)
+        with_empty_controls(ctx) do
+            _prepare!(ancillas, H)                # unconditional
+            with_controls(ctx, saved) do
+                _select_adj!(ancillas, system, H)  # controlled (if inside when)
             end
-            _select_adj!(ancillas, system, H) # controlled (if inside when)
-            if has_controls
-                empty!(controls)
-            end
-            _prepare_adj!(ancillas, H)        # unconditional
-        finally
-            if has_controls
-                empty!(controls)
-                append!(controls, saved)
-            end
+            _prepare_adj!(ancillas, H)            # unconditional
         end
         return nothing
     end

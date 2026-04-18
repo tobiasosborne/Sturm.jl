@@ -90,6 +90,7 @@ export with_silent_casts
 
 # Quantum control
 export when
+export current_controls, with_controls, with_empty_controls
 
 # Gates (standard library, not primitives)
 export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
