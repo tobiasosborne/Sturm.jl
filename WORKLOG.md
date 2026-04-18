@@ -4,6 +4,183 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24 END-OF-DAY HANDOFF
+
+**Stop reason:** user ended the session. Tree is clean; all work
+committed and pushed to `origin/main`. `bd stats` shows 0 in_progress,
+7 open.
+
+### Session 24 at a glance — 6 beads closed, 1 filed
+
+| Bead | Priority | What | Commit |
+|------|----------|------|--------|
+| `1f3` | P3 | QDrift/Composite RNG injection + vacuous-test fix | `bfa8f0f` |
+| `q93` | P2 | Width-fitting oracle arg type (`_bennett_arg_type`) | `dd2f680` |
+| `f23` | P2 | P2 axiom implicit-cast warning (`with_silent_casts`) | `0bd5289` |
+| `xcu` | P1 | Multi-controlled gates on DensityMatrixContext | `2f051e4` |
+| `1wv` | P1 | `with_empty_controls` / `with_controls` public API | `e1ace01` |
+| `rpq` | P1 | Arbitrary when() nesting in TracingContext | `180eee3` |
+| `5gz` | P2 | **Filed:** qsvt_phases sin polynomial returns 2d+1 phases (pre-existing) |
+
+### Major architectural changes this session
+
+1. **`src/context/multi_control.jl`** is now typed on `AbstractContext`
+   (was `Union{EagerContext, DensityMatrixContext}`) and routes through
+   the PUBLIC `apply_*!` API rather than raw `orkan_*!` pointer calls.
+   Every helper wraps itself in `with_empty_controls` to break recursion
+   when called from nc≥1. **Consequence:** EagerContext, DensityMatrixContext,
+   and TracingContext all use the SAME Toffoli cascade for arbitrary
+   when() nesting depth. Zero code per context.
+
+2. **`src/context/abstract.jl`** grew two default-implementation methods:
+   `with_controls(f, ctx, ctrls::Vector{WireID})` and
+   `with_empty_controls(f, ctx) = with_controls(f, ctx, WireID[])`.
+   Both built on the existing `push_control!`/`pop_control!`/
+   `current_controls` interface.
+
+3. **`src/types/qbool.jl` and `src/types/qint.jl`** now split the
+   constructor from `Base.convert`: `Bool(q)` / `Int(q)` hold the
+   measurement (silent), and `Base.convert(::Type{Bool/Int}, q)` emits
+   the P2 warning then delegates. Implicit `x::Bool = q` assignments
+   hit the convert path; explicit constructor calls do not.
+
+4. **`src/bennett/bridge.jl`** has a new `_bennett_arg_type(W;
+   signed=true)` helper that picks the narrowest Int/UInt fitting W.
+   Replaces the hardcoded `Int8` in `oracle(f, x::QInt{W})` and
+   `QuantumOracle`'s call operator. Cache key widens to
+   `(W, signed, kwargs)`.
+
+### Current ready queue — annotated
+
+```
+  bd ready
+  ○ Sturm.jl-870  P1   Steane syndrome extraction + correction (QECC)
+  ○ Sturm.jl-5gz  P2   [bug] qsvt_phases 2d+1 for sin polynomial
+  ○ Sturm.jl-di1  P2   Backend scaffolding (tensor-net + hardware)
+  ○ Sturm.jl-7ab  P2   Pass registry / DAG transformation API
+  ○ Sturm.jl-mt9  P2   QSVT/QSP linear algebra EPIC
+  ○ Sturm.jl-eiq  P3   CasesNode consumer policy (error on unhandled)
+  ○ Sturm.jl-zv1  P4   Docs refresh (CLAUDE.md + README.md)
+```
+
+**Recommended next pickup** for a fresh agent:
+
+- **`5gz` P2 bug** is worth triaging first — it's concrete, reproducible
+  (just run `test/test_qsvt_reflect.jl` lines 53-58), and may be a
+  test-assertion-vs-algorithm-convention mismatch rather than a real
+  physics bug. Quick win if so. See `docs/physics/` for QSP/QSVT
+  convention notes — the test expects `length(phi) == 2d` but the
+  sin-parity GSLW convention might legitimately yield `2d+1`.
+
+- **`eiq` P3** remains the obvious mechanical continuation if you want
+  a warm-up. `src/channel/channel.jl` compat constructor,
+  `src/channel/openqasm.jl:~112`, renderer warnings.
+
+- **`zv1` P4** has three concrete items queued up:
+  (a) Sturm-PRD.md has ~10 pedagogical `::Bool = q` / `::Int = qi`
+      examples that now trigger the f23 warning if copy-pasted; convert
+      to explicit form or note "this pattern warns".
+  (b) README lines ~146-200 advertise `strategy=:tabulate` as a Bennett
+      kwarg — confirmed NOT present in current Bennett
+      (`grep -r tabulate /home/tobiasosborne/Projects/Bennett.jl/src`).
+      Session 22 misreported, or it reverted upstream.
+  (c) CLAUDE.md phase 12 table is stale.
+
+- **`870`, `di1`, `7ab`, `mt9`** are substantial and design-first — save
+  for a fresh big session.
+
+### Cross-session patterns saved for the next agent
+
+1. **Rule 4 is strict about local PDFs.** When extracting or moving code
+   that carries a docstring reference to a paper, read the local
+   `docs/physics/<name>.md` BEFORE shipping. If no local file exists,
+   write a self-contained derivation (see
+   `docs/physics/toffoli_cascade.md` from Session 24D).
+
+2. **Bennett LLVM lowering hates closures that capture values.** A
+   boolean `signed` captured in `x -> x + (signed ? Int8(1) : UInt8(1))`
+   materialises as `StructType({ ptr, i8 })` in Julia IR — Bennett
+   errors with "Unsupported LLVM type for width". Use top-level
+   functions for oracle tests across parameters, not loop-body
+   closures. (Hit this during Session 24F's full-suite run.)
+
+3. **Test files can drift from the axioms.** Session 24C's f23 work
+   discovered 8 `::Bool = q` sites in test_bell, test_teleportation,
+   test_rus — the warning catching our own code validated the split.
+   Run the full suite after ANY axiom-level change to flush these out.
+
+4. **Don't copy forward unexamined references.** Session 24D's xcu work
+   copied the "Barenco 1995 Lemma 7.2" reference from eager.jl into the
+   new multi_control.jl without verifying the local PDF existed (it
+   didn't). User caught this mid-session with "did you read the
+   Nielsen and Chuang ground truth?" The fix was writing
+   `docs/physics/toffoli_cascade.md` inline.
+
+5. **When extracting helpers that touch context internals, flag the
+   abstract-interface candidate up front.** Session 24D's xcu extracted
+   `multi_control.jl` which used `ctx.control_stack` directly — then
+   Session 24E's 1wv had to migrate those accesses to the new API.
+   Would have been cleaner to do both in one pass.
+
+6. **Pre-existing test failures reproduce on previous commits.** Always
+   verify: `git stash && julia --project -e '<repro>' && git stash pop`.
+   Session 24F's 5gz qsvt_phases issue turned out to be pre-existing —
+   saved from chasing a regression caused by today's refactor.
+
+### Full test suite state (as of commit `180eee3`)
+
+- **12833 pass / 3 fail / 1 error / ~12837 total**
+- The 1 error (q93 closure test) was **fixed in commit `180eee3`** —
+  re-running the full suite now would produce 12836 / 3 / 0.
+- The 3 failures are `Sturm.jl-5gz` — see above.
+- **Full-suite runtime on this device: ~2h15m.** Dominant: OAA (61m),
+  Reflection QSVT (34m), qDRIFT (21m), Bennett E2E (5m). Do NOT run
+  the full suite casually — use targeted `julia --project -e '…'`
+  probes for verification work.
+
+### Environment gotchas, reminded
+
+- `LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so`
+  (memory entry lists `/home/tobias/…` — stale prefix on this device).
+- `Bennett.jl` is dev-pathed via `Pkg.develop(path="../Bennett.jl")`;
+  not registered. Fresh clones must do the develop before
+  `Pkg.instantiate`.
+- bd uses SSH; `bd dolt push` works non-interactively. Session close
+  protocol = `git pull --rebase && bd dolt push && git push`.
+- The `.beads/` permissions warning is cosmetic; `chmod 700 .beads`
+  fixes it but isn't blocking.
+
+### Physics docs referenced by this session's code
+
+- `docs/physics/nielsen_chuang_4.3.md` — controlled-Ry/Rz ABC
+  decomposition. Verified algebraically in Session 24D.
+- `docs/physics/toffoli_cascade.md` — Session 24D NEW, self-contained
+  derivation of the N-controlled cascade with density-matrix extension.
+  Referenced by `src/context/multi_control.jl`.
+
+### Files with significant changes today
+
+- `src/context/abstract.jl` — with_controls, with_empty_controls
+- `src/context/multi_control.jl` — unified cascade across all contexts
+- `src/context/eager.jl` — cascade helpers moved out
+- `src/context/density.jl` — multi-control dispatch added
+- `src/context/tracing.jl` — nc>2 routes to cascade
+- `src/types/quantum.jl` — _warn_implicit_cast, with_silent_casts
+- `src/types/qbool.jl`, `src/types/qint.jl` — constructor / convert split
+- `src/bennett/bridge.jl` — _bennett_arg_type helper
+- `src/simulation/pauli_exp.jl` — migrated to with_empty_controls
+- `src/block_encoding/lcu.jl` — migrated to with_empty_controls
+- `src/simulation/qdrift.jl`, `src/simulation/composite.jl` — rng kwarg
+- `src/Sturm.jl` — exports
+- `README.md` — with_silent_casts note
+- `docs/physics/toffoli_cascade.md` — NEW
+- `test/test_implicit_cast.jl`, `test/test_density_matrix_mc.jl`,
+  `test/test_control_api.jl`, `test/test_tracing_deep_when.jl` — NEW
+- Plus test fixes in test_bell, test_teleportation, test_rus, test_qdrift,
+  test_composite, test_bennett_integration.
+
+---
+
 ## 2026-04-18 — Session 24F: Close `rpq` (arbitrary when() nesting in TracingContext)
 
 TracingContext's `apply_ry!`/`apply_rz!`/`apply_cx!` errored at control-
