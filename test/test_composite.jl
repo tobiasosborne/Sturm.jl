@@ -307,23 +307,28 @@ using LinearAlgebra: eigen, Diagonal, kron
     # ─────────────────────────────────────────────────────────────────────
 
     @testset "Composite rng kwarg is stored and threaded to qDRIFT partition" begin
+        # cutoff=0.75 splits ising(J=1.0, h=0.5): ZZ → Trotter, X → qDRIFT.
+        # cutoff=0.5 would put all terms in Trotter (|hⱼ| ≥ cutoff), making RNG
+        # threading unobservable (test would pass vacuously).
         H = ising(Val(3), J=1.0, h=0.5)
-        alg = Composite(steps=2, qdrift_samples=10, cutoff=0.5,
+        alg = Composite(steps=2, qdrift_samples=10, cutoff=0.75,
                         trotter_order=2, rng=MersenneTwister(42))
         @test alg.rng isa MersenneTwister
         # End-to-end: identically-seeded runs yield identical amplitudes.
-        run_once() = @context EagerContext() begin
+        run_once(seed) = @context EagerContext() begin
             qs = [QBool(0.0) for _ in 1:3]
             evolve!(qs, H, 0.5,
-                    Composite(steps=2, qdrift_samples=10, cutoff=0.5,
-                              trotter_order=2, rng=MersenneTwister(42)))
+                    Composite(steps=2, qdrift_samples=10, cutoff=0.75,
+                              trotter_order=2, rng=MersenneTwister(seed)))
             a = [_amp(qs[1].ctx, i) for i in 0:7]
             for q in qs; discard!(q); end
             a
         end
-        amps_a = run_once()
-        amps_b = run_once()
-        @test amps_a == amps_b
+        amps_a = run_once(42)
+        amps_b = run_once(42)
+        amps_c = run_once(99)
+        @test amps_a == amps_b           # same seed → identical circuit
+        @test amps_a != amps_c           # different seed → different circuit (RNG is actually threaded)
     end
 
 end
