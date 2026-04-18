@@ -1,96 +1,108 @@
-# Multi-controlled gate decomposition shared by EagerContext and
-# DensityMatrixContext. Both contexts own an Orkan state handle plus a
-# control stack; Orkan's gate functions (ry, rz, cx, ccx) dispatch on the
-# state type at the C level (ORKAN_PURE / ORKAN_MIXED_PACKED), so the same
-# Toffoli cascade computes U |ψ⟩ on a statevector and U ρ U† on a density
-# matrix with no code duplication.
+# Multi-controlled gate decomposition — works on ANY AbstractContext.
+#
+# The cascade routes through the PUBLIC `apply_ry!`/`apply_rz!`/`apply_cx!`/
+# `apply_ccx!` API, wrapped in `with_empty_controls` to prevent infinite
+# recursion when a single-controlled decomposition is called from inside
+# `apply_ry!` at depth 1. Each context's `apply_*!` then handles the
+# unconditional (nc=0) case in whatever way is cheapest:
+#
+#   - EagerContext / DensityMatrixContext: direct `orkan_*!` calls (Orkan
+#     gate ABI dispatches on state type internally, so `ccx` works as
+#     `UρU†` on MIXED states with no special handling).
+#   - TracingContext: emits standard `RyNode`/`RzNode`/`CXNode` with the
+#     explicit control inlined — no new `DeepCtrlNode` type needed because
+#     the cascade fully lowers every deep-controlled op to depth-≤2 nodes.
 #
 # Refs:
-#   - Nielsen & Chuang §4.3, Eq. (4.6)–(4.7) — ABC decomposition of controlled
-#     rotations. Local derivation: docs/physics/nielsen_chuang_4.3.md.
-#   - Barenco et al. (1995) Phys. Rev. A 52(5):3457 — Lemma 7.2, Toffoli
-#     cascade for n-controlled gates with n−1 workspace qubits. Self-contained
-#     derivation (classical-basis + linearity + density-matrix extension):
-#     docs/physics/toffoli_cascade.md.
+#   - Nielsen & Chuang §4.3, Eq. (4.6)–(4.7) — ABC decomposition of
+#     controlled rotations. Local: docs/physics/nielsen_chuang_4.3.md.
+#   - Barenco et al. (1995) Phys. Rev. A 52(5):3457, Lemma 7.2 — Toffoli
+#     cascade for N-controlled gates with N−1 workspace qubits. Self-
+#     contained derivation: docs/physics/toffoli_cascade.md.
 
-const _MCTX = Union{EagerContext, DensityMatrixContext}
+# ── Controlled rotations (1 explicit control) ───────────────────────────────
 
-# ── Controlled rotations (1 control) ────────────────────────────────────────
+"""
+    _controlled_ry!(ctx, ctrl_wire, target_wire, angle)
 
-# C-Ry(θ) = Ry(θ/2) · CX · Ry(−θ/2) · CX
-function _controlled_ry!(ctx::_MCTX, ctrl_wire::WireID, target_wire::WireID, angle::Real)
-    ctrl = _resolve(ctx, ctrl_wire)
-    tgt  = _resolve(ctx, target_wire)
-    orkan_ry!(ctx.orkan.raw, tgt,  angle / 2)
-    orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-    orkan_ry!(ctx.orkan.raw, tgt, -angle / 2)
-    orkan_cx!(ctx.orkan.raw, ctrl, tgt)
+Single-controlled Ry via NC&C ABC: `C-Ry(θ) = Ry(θ/2)·CX·Ry(−θ/2)·CX`.
+
+Runs with an EMPTY stack so that inner `apply_ry!` / `apply_cx!` calls hit
+their `nc=0` fast paths (no recursive controlled-rotation expansion). The
+caller-supplied `ctrl_wire` is the single active control.
+"""
+function _controlled_ry!(ctx::AbstractContext, ctrl_wire::WireID,
+                         target_wire::WireID, angle::Real)
+    with_empty_controls(ctx) do
+        apply_ry!(ctx, target_wire,  angle / 2)
+        apply_cx!(ctx, ctrl_wire, target_wire)
+        apply_ry!(ctx, target_wire, -angle / 2)
+        apply_cx!(ctx, ctrl_wire, target_wire)
+    end
 end
 
-# C-Rz(θ) = Rz(θ/2) · CX · Rz(−θ/2) · CX
-function _controlled_rz!(ctx::_MCTX, ctrl_wire::WireID, target_wire::WireID, angle::Real)
-    ctrl = _resolve(ctx, ctrl_wire)
-    tgt  = _resolve(ctx, target_wire)
-    orkan_rz!(ctx.orkan.raw, tgt,  angle / 2)
-    orkan_cx!(ctx.orkan.raw, ctrl, tgt)
-    orkan_rz!(ctx.orkan.raw, tgt, -angle / 2)
-    orkan_cx!(ctx.orkan.raw, ctrl, tgt)
+"""
+    _controlled_rz!(ctx, ctrl_wire, target_wire, angle)
+
+Single-controlled Rz via NC&C ABC: `C-Rz(θ) = Rz(θ/2)·CX·Rz(−θ/2)·CX`.
+See `_controlled_ry!` for the empty-stack rationale.
+"""
+function _controlled_rz!(ctx::AbstractContext, ctrl_wire::WireID,
+                         target_wire::WireID, angle::Real)
+    with_empty_controls(ctx) do
+        apply_rz!(ctx, target_wire,  angle / 2)
+        apply_cx!(ctx, ctrl_wire, target_wire)
+        apply_rz!(ctx, target_wire, -angle / 2)
+        apply_cx!(ctx, ctrl_wire, target_wire)
+    end
 end
 
 # ── Toffoli cascade (N ≥ 2 controls) ────────────────────────────────────────
 #
-# AND-reduce N controls into a single workspace qubit via CCX ladder:
-#   CCX(c[1], c[2],  ws[1])
-#   CCX(ws[1], c[3], ws[2])
-#   …
-#   CCX(ws[N−2], c[N], ws[N−1])
-# The final ws[N−1] = ⋀ c[i]. Apply the single-controlled gate with ws[N−1]
-# as the control, then run the cascade in reverse to uncompute the workspace
-# (each CCX is its own inverse).
+# AND-reduce N controls onto workspace[N−1] via a CCX ladder. Each CCX runs
+# with the stack empty (the caller has already cleared it), so tracing
+# emits plain 2-control CXNodes and eager/DM dispatch straight to Orkan's
+# ccx.
 #
-# Cost: 2(N−1) Toffoli + one single-controlled gate; N−1 workspace qubits.
+# Preconditions: `controls` has length nc ≥ 2; `workspace` has length
+# nc − 1; all workspace wires start in |0⟩.
 
-function _toffoli_cascade_forward!(ctx::_MCTX, controls::Vector{WireID},
+function _toffoli_cascade_forward!(ctx::AbstractContext, controls::Vector{WireID},
                                    workspace::Vector{WireID})
     nc = length(controls)
-    c1 = _resolve(ctx, controls[1])
-    c2 = _resolve(ctx, controls[2])
-    w1 = _resolve(ctx, workspace[1])
-    orkan_ccx!(ctx.orkan.raw, c1, c2, w1)
+    apply_ccx!(ctx, controls[1], controls[2], workspace[1])
     for k in 2:nc-1
-        wp = _resolve(ctx, workspace[k - 1])
-        ck = _resolve(ctx, controls[k + 1])
-        wk = _resolve(ctx, workspace[k])
-        orkan_ccx!(ctx.orkan.raw, wp, ck, wk)
+        apply_ccx!(ctx, workspace[k - 1], controls[k + 1], workspace[k])
     end
 end
 
-function _toffoli_cascade_reverse!(ctx::_MCTX, controls::Vector{WireID},
+function _toffoli_cascade_reverse!(ctx::AbstractContext, controls::Vector{WireID},
                                    workspace::Vector{WireID})
     nc = length(controls)
     for k in nc-1:-1:2
-        wp = _resolve(ctx, workspace[k - 1])
-        ck = _resolve(ctx, controls[k + 1])
-        wk = _resolve(ctx, workspace[k])
-        orkan_ccx!(ctx.orkan.raw, wp, ck, wk)
+        apply_ccx!(ctx, workspace[k - 1], controls[k + 1], workspace[k])
     end
-    c1 = _resolve(ctx, controls[1])
-    c2 = _resolve(ctx, controls[2])
-    w1 = _resolve(ctx, workspace[1])
-    orkan_ccx!(ctx.orkan.raw, c1, c2, w1)
+    apply_ccx!(ctx, controls[1], controls[2], workspace[1])
 end
 
-function _multi_controlled_gate!(ctx::_MCTX, target_wire::WireID,
+function _multi_controlled_gate!(ctx::AbstractContext, target_wire::WireID,
                                  angle::Real, single_ctrl_fn!::Function)
-    controls = current_controls(ctx)
-    nc = length(controls)
+    saved = current_controls(ctx)
+    nc = length(saved)
     nc >= 2 || error("_multi_controlled_gate!: need ≥2 controls, got $nc")
 
+    # Workspace must be allocated BEFORE clearing the stack, because
+    # allocate!() on TracingContext emits a fresh WireID unaffected by
+    # controls, but on Eager/DM it touches Orkan state and should be
+    # unambiguously unconditional. We immediately enter with_empty_controls
+    # so every downstream `apply_*!` sees nc=0.
     workspace = WireID[allocate!(ctx) for _ in 1:(nc - 1)]
     try
-        _toffoli_cascade_forward!(ctx, controls, workspace)
-        single_ctrl_fn!(ctx, workspace[end], target_wire, angle)
-        _toffoli_cascade_reverse!(ctx, controls, workspace)
+        with_empty_controls(ctx) do
+            _toffoli_cascade_forward!(ctx, saved, workspace)
+            single_ctrl_fn!(ctx, workspace[end], target_wire, angle)
+            _toffoli_cascade_reverse!(ctx, saved, workspace)
+        end
     finally
         for ws in workspace
             deallocate!(ctx, ws)
@@ -98,19 +110,21 @@ function _multi_controlled_gate!(ctx::_MCTX, target_wire::WireID,
     end
 end
 
-function _multi_controlled_cx!(ctx::_MCTX, cx_ctrl_wire::WireID, target_wire::WireID)
-    controls = current_controls(ctx)
-    nc = length(controls)
+function _multi_controlled_cx!(ctx::AbstractContext, cx_ctrl_wire::WireID,
+                               target_wire::WireID)
+    saved = current_controls(ctx)
+    nc = length(saved)
     nc >= 2 || error("_multi_controlled_cx!: need ≥2 stack controls, got $nc")
 
     workspace = WireID[allocate!(ctx) for _ in 1:(nc - 1)]
     try
-        _toffoli_cascade_forward!(ctx, controls, workspace)
-        ws_out  = _resolve(ctx, workspace[end])
-        cx_ctrl = _resolve(ctx, cx_ctrl_wire)
-        tgt     = _resolve(ctx, target_wire)
-        orkan_ccx!(ctx.orkan.raw, ws_out, cx_ctrl, tgt)
-        _toffoli_cascade_reverse!(ctx, controls, workspace)
+        with_empty_controls(ctx) do
+            _toffoli_cascade_forward!(ctx, saved, workspace)
+            # CCX(workspace_out, cx_ctrl, target) — Toffoli at 2 controls,
+            # one from the reduced workspace, one the explicit cx-control.
+            apply_ccx!(ctx, workspace[end], cx_ctrl_wire, target_wire)
+            _toffoli_cascade_reverse!(ctx, saved, workspace)
+        end
     finally
         for ws in workspace
             deallocate!(ctx, ws)

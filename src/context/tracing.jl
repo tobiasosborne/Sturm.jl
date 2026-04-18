@@ -58,11 +58,14 @@ current_controls(ctx::TracingContext) = copy(ctx.control_stack)
 
 # ── Gate recording ───────────────────────────────────────────────────────────
 
-# Inline controls from the control stack — zero allocation.
-# Reads directly from the stack without copy().
+# Inline controls from the control stack — zero allocation at the hot path
+# (nc ≤ 2). Deeper nesting routes through the shared Toffoli cascade in
+# `multi_control.jl`, which lowers to depth-≤2 DAG nodes via workspace
+# qubits — no `DeepCtrlNode` is needed because the cascade fully expands
+# the deep-controlled op inside the trace.
 @inline function _inline_from_stack(stack::Vector{WireID})
     n = length(stack)
-    n > 2 && error("Maximum 2 when()-controls supported, got $n")
+    n > 2 && error("_inline_from_stack: internal invariant violated, expected nc ≤ 2 but got $n — caller should have routed to the cascade")
     nc = UInt8(n)
     c1 = n >= 1 ? stack[1] : _ZERO_WIRE
     c2 = n >= 2 ? stack[2] : _ZERO_WIRE
@@ -71,35 +74,59 @@ end
 
 function apply_ry!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
-    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, RyNode(Float64(angle), wire, c1, c2, nc))
+    nc = length(ctx.control_stack)
+    if nc <= 2
+        ncu, c1, c2 = _inline_from_stack(ctx.control_stack)
+        push!(ctx.dag, RyNode(Float64(angle), wire, c1, c2, ncu))
+    else
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_ry!)
+    end
 end
 
 function apply_rz!(ctx::TracingContext, wire::WireID, angle::Real)
     _resolve_tracing(ctx, wire)
-    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, RzNode(Float64(angle), wire, c1, c2, nc))
+    nc = length(ctx.control_stack)
+    if nc <= 2
+        ncu, c1, c2 = _inline_from_stack(ctx.control_stack)
+        push!(ctx.dag, RzNode(Float64(angle), wire, c1, c2, ncu))
+    else
+        _multi_controlled_gate!(ctx, wire, angle, _controlled_rz!)
+    end
 end
 
 function apply_cx!(ctx::TracingContext, control_wire::WireID, target_wire::WireID)
     _resolve_tracing(ctx, control_wire)
     _resolve_tracing(ctx, target_wire)
-    nc, c1, c2 = _inline_from_stack(ctx.control_stack)
-    push!(ctx.dag, CXNode(control_wire, target_wire, c1, c2, nc))
+    nc = length(ctx.control_stack)
+    if nc <= 2
+        ncu, c1, c2 = _inline_from_stack(ctx.control_stack)
+        push!(ctx.dag, CXNode(control_wire, target_wire, c1, c2, ncu))
+    else
+        _multi_controlled_cx!(ctx, control_wire, target_wire)
+    end
 end
 
 function apply_ccx!(ctx::TracingContext, c1::WireID, c2::WireID, target::WireID)
     _resolve_tracing(ctx, c1)
     _resolve_tracing(ctx, c2)
     _resolve_tracing(ctx, target)
-    # CCX(c1, c2, target) = CX(c2, target) controlled on c1 + stack controls
-    nc_stack, sc1, sc2 = _inline_from_stack(ctx.control_stack)
+    # CCX(c1, c2, target) = CX(c2, target) with c1 as an extra control on
+    # top of any stack controls.
+    nc_stack = length(ctx.control_stack)
     if nc_stack == 0
         push!(ctx.dag, CXNode(c2, target, c1, _ZERO_WIRE, UInt8(1)))
     elseif nc_stack == 1
+        sc1 = ctx.control_stack[1]
         push!(ctx.dag, CXNode(c2, target, sc1, c1, UInt8(2)))
     else
-        error("apply_ccx! inside >1 nested when(): would need 3+ controls, exceeds DAG inline limit")
+        # Deep nesting: push c1 onto the stack and route to the cascade
+        # (same pattern as eager/density.jl at apply_ccx!).
+        push!(ctx.control_stack, c1)
+        try
+            _multi_controlled_cx!(ctx, c2, target)
+        finally
+            pop!(ctx.control_stack)
+        end
     end
 end
 
