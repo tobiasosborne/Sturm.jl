@@ -12,6 +12,30 @@ using Bennett: ReversibleCircuit, ReversibleGate,
                NOTGate, CNOTGate, ToffoliGate, WireIndex,
                reversible_compile, gate_count, t_depth
 
+# Pick the narrowest Julia integer type that fits a W-bit quantum register,
+# so that Bennett extracts LLVM IR at the right numeric type. Hardcoding Int8
+# regardless of W forced every function to be compiled against 8-bit
+# semantics: for W > 8 the IR still gets uniformly narrowed to W bits by
+# Bennett, but constants, comparisons, and type-dispatch paths inside the
+# user function all see Int8, which is a type lie (q93).
+#
+# signed=true (default) matches Julia's native `Int` convention; set
+# signed=false when f's behaviour depends on unsigned reinterpretation.
+function _bennett_arg_type(W::Int; signed::Bool=true)
+    W >= 1 || error("_bennett_arg_type: W must be >= 1, got $W")
+    if W <= 8
+        return signed ? Int8  : UInt8
+    elseif W <= 16
+        return signed ? Int16 : UInt16
+    elseif W <= 32
+        return signed ? Int32 : UInt32
+    elseif W <= 64
+        return signed ? Int64 : UInt64
+    else
+        error("_bennett_arg_type: W=$W exceeds Int64/UInt64 (max 64 bits)")
+    end
+end
+
 """
     apply_reversible!(ctx, circuit, input_map)
 
@@ -145,15 +169,19 @@ end
 # Julia function and a quantum register, compiles via Bennett, and executes.
 
 """
-    oracle(f, x::QInt{W}; kw...) -> QInt{W}
+    oracle(f, x::QInt{W}; signed=true, kw...) -> QInt{W}
 
 Compile a plain Julia function `f` to a reversible quantum circuit via Bennett.jl
 and execute it on the quantum register `x`. Returns a new `QInt{W}` containing
 `f(x)`. The input register `x` is preserved (Bennett's construction keeps inputs
 intact).
 
-Any keyword arguments are forwarded to `Bennett.reversible_compile`. Strategy
-hints let the caller choose between Pareto-frontier arithmetic circuit
+The classical argument type handed to Bennett is selected to fit `W`: Int8 for
+W≤8, Int16 for W≤16, Int32 for W≤32, Int64 for W≤64. Pass `signed=false` to use
+the corresponding `UInt*` variant instead. Widths beyond 64 error out.
+
+Any other keyword arguments are forwarded to `Bennett.reversible_compile`.
+Strategy hints let the caller choose between Pareto-frontier arithmetic circuit
 families — for example `add ∈ {:ripple, :cuccaro, :qcla, :auto}` or
 `mul ∈ {:shift_add, :karatsuba, :qcla_tree, :auto}`:
 
@@ -173,11 +201,12 @@ If called inside `when()`, the oracle is automatically controlled.
 end
 ```
 """
-function oracle(f, x::QInt{W}; kw...) where W
+function oracle(f, x::QInt{W}; signed::Bool=true, kw...) where W
     check_live!(x)
     ctx = x.ctx
 
-    circuit = reversible_compile(f, Int8; bit_width=W, kw...)
+    arg_type = _bennett_arg_type(W; signed=signed)
+    circuit = reversible_compile(f, arg_type; bit_width=W, kw...)
 
     # Extract input wires from QInt (little-endian)
     input_wires = WireID[x.wires[i] for i in 1:W]
@@ -235,24 +264,27 @@ a classical function into a quantum-callable one.
 """
 quantum(f) = QuantumOracle(f, Dict{Any, ReversibleCircuit}())
 
-# Canonicalise (W, kwargs) into a stable cache key. Sorting by kwarg name
-# makes the key invariant under call-site ordering; including every kwarg
-# prevents silent reuse when strategy hints (add=, mul=, optimize=, …) change.
-function _oracle_cache_key(W::Int, kw)
-    isempty(kw) && return (W, ())
+# Canonicalise (W, signed, kwargs) into a stable cache key. Sorting by kwarg
+# name makes the key invariant under call-site ordering; including `signed`
+# and every other kwarg prevents silent reuse when the arg-type or strategy
+# hints (add=, mul=, optimize=, …) change between calls.
+function _oracle_cache_key(W::Int, signed::Bool, kw)
+    isempty(kw) && return (W, signed, ())
     kv = sort!(collect(pairs(kw)); by=first)
-    return (W, Tuple(kv))
+    return (W, signed, Tuple(kv))
 end
 
-function (qo::QuantumOracle)(x::QInt{W}; kw...) where W
+function (qo::QuantumOracle)(x::QInt{W}; signed::Bool=true, kw...) where W
     check_live!(x)
     ctx = x.ctx
 
-    # Cache lookup / compile — key on (W, sorted kwargs) so that callers
-    # switching strategy (e.g. mul=:qcla_tree) get a fresh compilation.
-    key = _oracle_cache_key(W, kw)
+    # Cache lookup / compile — key on (W, signed, sorted kwargs) so that
+    # callers switching strategy (e.g. mul=:qcla_tree) or signedness get a
+    # fresh compilation.
+    key = _oracle_cache_key(W, signed, kw)
+    arg_type = _bennett_arg_type(W; signed=signed)
     circuit = get!(qo.cache, key) do
-        reversible_compile(qo.f, Int8; bit_width=W, kw...)
+        reversible_compile(qo.f, arg_type; bit_width=W, kw...)
     end
 
     input_wires = WireID[x.wires[i] for i in 1:W]

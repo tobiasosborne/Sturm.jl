@@ -4,6 +4,93 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24B: Close `q93` (oracle arg-type inference from W)
+
+`bridge.jl` hardcoded `Int8` as the classical argument type Bennett compiles
+against, regardless of `QInt{W}` width. Bennett's `_narrow_ir` pass then
+uniformly rewrote widths to `W`, which papered over the mismatch for simple
+modular arithmetic — but it is still a type lie (constants, comparisons, and
+any Julia dispatch path inside `f` sees Int8 when the register is 16 bits).
+
+### Fix
+
+New helper `_bennett_arg_type(W; signed=true)` in `src/bennett/bridge.jl`
+picks the narrowest fitting `Int*` / `UInt*`: W≤8→Int8, W≤16→Int16,
+W≤32→Int32, W≤64→Int64; `signed=false` flips to the `UInt*` variant;
+W>64 errors. Both `oracle(f, x; signed=true, kw...)` and the `QuantumOracle`
+call operator route through the helper. The cache key on `QuantumOracle`
+widens from `(W, kwargs)` to `(W, signed, kwargs)` so switching signedness
+forces a recompile rather than silently reusing a stale circuit (the same
+discipline Session 20 applied for strategy kwargs).
+
+### Ground-truth probe results (not in the bead acceptance test)
+
+Bead's acceptance test was `oracle(x -> x * 1000, QInt{16}(v))`. This
+cannot run on this machine:
+
+1. `reversible_compile` with an IR containing a multiplication grows Orkan's
+   register above the 30-qubit `MAX_QUBITS` cap even at `W=4` — 69 qubits
+   for `estimate_oracle_resources(x -> x * 10, Int8; bit_width=4)`. At
+   `W=16` it would be far worse.
+2. The README (lines ~146-200) advertises `strategy=:tabulate` as a kwarg
+   on `reversible_compile`, supposedly landed by Bennett-cfjx per Session
+   22. It is NOT present in the current Bennett source — the signature is
+   `(bit_width, add, mul, optimize, max_loop_iterations, compact_calls)`
+   only. Either Session 22 misreported, or the feature was reverted
+   upstream. README is stale on this point. **Filed as a separate concern**
+   — not expanding q93 scope.
+
+Because of (1) + (2), q93 tests stay at `W=2` (the largest width that
+actually fits mul-bearing circuits today). The type-system fix is verified
+via direct unit tests on `_bennett_arg_type` plus regression on existing
+W=2 paths.
+
+### Test additions — `test/test_bennett_integration.jl`
+
+- `_bennett_arg_type` returns correct type across the full W range for both
+  `signed=true` and `signed=false`. 32 cases.
+- Out-of-range (`W ≤ 0` or `W > 64`) errors.
+- `oracle` at W=2 works with both `signed=true` (default) and
+  `signed=false`. Regression + new path.
+- `QuantumOracle` cache distinguishes `signed=true` from `signed=false`
+  with the same W — `length(qf.cache) == 2` after two calls.
+- The pre-existing `haskey(qf.cache, (W, ()))` tests in the
+  "caches circuit across calls" and "different widths use different cache
+  entries" testsets updated to the new `(W, signed, ())` shape. Two lines.
+
+### Files touched
+
+- `src/bennett/bridge.jl`: `_bennett_arg_type` helper; `oracle` +
+  `QuantumOracle` call operator take `signed::Bool=true`; cache key widens
+  to `(W, signed, kwargs)`.
+- `test/test_bennett_integration.jl`: new `@testset verbose=true "arg-type
+  selection by W"` block; two existing `haskey` asserts updated.
+- `WORKLOG.md`: this entry.
+
+### Lesson for future agents
+
+The README and WORKLOG Session 22 both claimed `strategy=:tabulate` was a
+Bennett-level kwarg. A quick `grep -r tabulate` on
+`/home/tobiasosborne/Projects/Bennett.jl` would have surfaced the
+discrepancy in seconds. Before writing any acceptance test that depends on
+an upstream feature, verify the feature still exists in upstream — session
+summaries and docs drift.
+
+### Stale README entries discovered
+
+1. Lines ~146-200 describe `strategy=:tabulate` as a live Bennett kwarg.
+   Not present. Would need either the Bennett kwarg to land, or the README
+   to stop advertising it.
+2. The bit_width=2 polynomial showcase claims 9 wires via `:auto →
+   :tabulate`. Today's `estimate_oracle_resources(x -> x^2 + 3x + 1,
+   Int8; bit_width=2)` would need confirming once we have a reliable
+   tabulate path.
+
+Not fixing in this session — filing under the existing `zv1` docs-refresh
+bead would be cleanest. Flagged in the bead's notes at close time.
+
+---
+
 ## 2026-04-18 — Session 24: Close `1f3` (QDrift / Composite RNG injection)
 
 Picked up Session 23's in-progress bead. Code for `rng::AbstractRNG` threading
