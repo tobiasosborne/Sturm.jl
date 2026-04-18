@@ -3950,3 +3950,46 @@ Paper already local: `docs/physics/beauregard_2003_2n3_shor.pdf`.
 Previous deleted beads `Sturm.jl-3ii` (Beauregard classical-operand
 adder) and `Sturm.jl-adj` (arithmetic inverse) covered subsets of this
 work; the new chain above restores them in cleaner form.
+
+### Sturm.jl-ar7: add_qft! (Draper QFT-adder) — shipped
+
+First concrete step in the polynomial-in-L Shor chain. `add_qft!(y::QInt{L}, a::Integer)`
+adds a classical integer to a Fourier-basis quantum register using exactly
+L Rz rotations (Draper 2000 §5 classical-constant specialisation).
+
+Gates: `for k in 1:L, apply Rz(2π·a/2^(L-k+1)) to wires[k]`. L gates,
+no ancillae. Full `superpose! → add_qft! → interfere!` sandwich is
+O(L²).
+
+### Gotcha: Sturm's superpose! does trailing bit-reversal
+
+First attempt mapped `wires[k] ↔ 2π·a/2^k`. Tests failed at ~80%.
+
+The fix: Sturm's `superpose!` (src/library/patterns.jl) ends with a
+bit-reversal SWAP, so AFTER superpose!:
+
+    wires[1]  holds |φ_L(y)⟩    (full precision, phase e^{2πi·y/2^L})
+    wires[L]  holds |φ_1(y)⟩    (just (-1)^y)
+
+Not `wires[k] ↔ φ_k` — the k indices are inverted by the bit-reversal.
+Correct angle for wires[k] is `2π·a / 2^(L-k+1)`, not `2π·a / 2^k`.
+
+Caught by TDD in 1 iteration. Docstring now explains the convention
+with an ASCII diagram of what each wire holds post-QFT.
+
+### Test coverage (test/test_arithmetic.jl, 809 tests)
+
+- Exhaustive L=2,3,4: every (y, a) pair, ~576 cases total
+- Random L=5, 6, 8: 50 cases each
+- Identity (a=0, a=2^L wraparound)
+- sub_qft! (L=4 exhaustive)
+- Associativity of chained adds
+- **Controlled add_qft! under when(ctrl=|+⟩)**: confirms the operation
+  composes coherently inside `when()` — crucial precondition for
+  Beauregard mulmod. Both branches (y unchanged, y+a) appear with
+  ~50/50 split, ±15% on 400 shots.
+
+All 809 pass. No global-phase-sensitive tests failed, suggesting the
+accumulated e^(-iπ·a·(1−2^(-L))) phase is correctly handled by the
+symmetric Rz convention (it's a global phase of the whole add_qft!,
+not a relative phase inside it).
