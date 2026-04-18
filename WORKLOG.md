@@ -4,6 +4,104 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24C: Close `f23` (P2 implicit quantum→classical cast warning)
+
+The P2 axiom says measurement is a cast with implied information loss, and
+implicit assignments (`x::Bool = q`) must warn. Prior to this session the
+codebase defined `Base.Bool(q::QBool) = convert(Bool, q)` — one path for
+both explicit constructor calls AND implicit annotated assignments — so
+nothing could distinguish them. This bead fixes that.
+
+### Design (from the conversation, not agent-proposed)
+
+Split the constructor from `convert`:
+
+- `Base.Bool(q::QBool)` / `Base.Int(q::QInt{W})` hold the actual
+  measurement. Silent, the blessed explicit path.
+- `Base.convert(::Type{Bool}, q::QBool)` / `convert(::Type{Int}, q::QInt{W})`
+  emit the P2 warning, then delegate to the constructor.
+
+Julia desugars `x::Bool = q` to `x = convert(Bool, q)`, so implicit
+assignments flow through the warning path; explicit `Bool(q)` calls skip
+it entirely. No macro rewriting, no special hooks — just the standard
+Julia conversion system doing what it already did, with the warning added
+on the convert side.
+
+### Warning helper (`src/types/quantum.jl`)
+
+- `_first_user_frame(frames)` walks the stacktrace and returns the first
+  frame whose `file` is outside `src/types/quantum.jl:_STURM_SRC_ROOT`
+  (= the parent of `src/types/`). That is the user's call site.
+- `_warn_implicit_cast(::Type{From}, ::Type{To})` emits
+  `@warn … maxlog=1 _id=(:sturm_implicit_cast, file, line)` with
+  `_file=file _line=line` so the reported location is the user's site, not
+  the Sturm internal line. `_id` tuples dedupe per source location: loop
+  iterations at one site share one warning; two different sites each get
+  their own.
+- `with_silent_casts(f)` flips `task_local_storage(:sturm_implicit_cast_silent, true)`
+  for the duration of `f()`, restoring the previous value in `finally`.
+  Nests correctly via save/restore, parallels the `@context` macro.
+
+### `if q`, `classicalise(ch)` — out of scope
+
+- `if q::QBool` currently hits Julia's runtime `TypeError: non-boolean
+  used in boolean context`. Julia's `if` does NOT auto-call `Bool(cond)` —
+  the runtime checks `isa(cond, Bool)` and errors otherwise. The PRD §P4
+  claim that `if q` emits the P2 warning + measures + branches is
+  unreachable without source-level macro rewriting. Deferred; not f23.
+- `classicalise(f)` has no implicit entry point (only invoked by name),
+  so the channel-level cast is already behaviorally "explicit". The bead's
+  "classicalise behaves the same way" acceptance criterion is satisfied
+  with no code change.
+
+### Regression: existing test code used implicit casts
+
+Running `test_bell.jl` / `test_teleportation.jl` / `test_rus.jl` after the
+fix surfaced eight `::Bool = q` / `::Int = qi` call sites in our own test
+code. That is exactly what the warning is supposed to flag — the tests
+were written in the pre-axiom style. Converted all eight to explicit
+`Bool(q)` / `Int(q)` forms. Same measurement semantics, now silent in
+the new logger output. The warning mechanism catching our own code is
+itself a validation that the dispatch split works.
+
+### Gotcha: `local _::Bool = q` is invalid Julia syntax
+
+First draft of `test_implicit_cast.jl` used `local _::Bool = q` to
+anonymise an unused measurement result. Julia rejects with
+`syntax: type declaration for global "_" not at top level` — `_` cannot
+carry a type annotation. Renamed to `local dummy::Bool = q`. Leaving this
+note because it is not an intuitive syntax error if you have not hit it.
+
+### Stale PRD examples (not fixing here — scope)
+
+`Sturm-PRD.md` contains ~10 `::Bool = q` / `::Int = qi` pedagogical
+examples. These now would trigger warnings if copy-pasted. Flagged on
+`zv1` (docs refresh) — not expanding f23's scope.
+
+### Verification
+
+- `test/test_implicit_cast.jl` (new): 14 passes. Covers explicit silent,
+  implicit warns, both QBool and QInt, message text includes the fix
+  suggestion, `with_silent_casts` suppresses + returns block value +
+  nests.
+- `test_bell.jl` 2002/2002, `test_teleportation.jl` 1002/1002,
+  `test_rus.jl` 205/205 — all green after the explicit-cast conversion.
+
+### Files touched
+
+- `src/types/quantum.jl`: `_first_user_frame`, `_warn_implicit_cast`,
+  `with_silent_casts`, P2 header comment.
+- `src/types/qbool.jl`: split `Base.Bool` / `Base.convert`.
+- `src/types/qint.jl`: split `Base.Int` / `Base.convert`.
+- `src/Sturm.jl`: export `with_silent_casts`.
+- `test/test_implicit_cast.jl` (new), `test/runtests.jl` (include).
+- `test/test_bell.jl`, `test/test_teleportation.jl`, `test/test_rus.jl`:
+  convert to explicit casts.
+- `README.md`: one-line note about `with_silent_casts` opt-out.
+- `WORKLOG.md`: this entry.
+
+---
+
 ## 2026-04-18 — Session 24B: Close `q93` (oracle arg-type inference from W)
 
 `bridge.jl` hardcoded `Int8` as the classical argument type Bennett compiles
