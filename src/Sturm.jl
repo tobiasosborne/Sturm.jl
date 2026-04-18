@@ -50,6 +50,7 @@ include("qecc/channel_encode.jl")
 
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
+include("library/shor.jl")
 
 # Hamiltonian simulation
 include("simulation/hamiltonian.jl")
@@ -98,6 +99,14 @@ export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate
 export find, amplify, phase_flip!
+
+# Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
+export oracle_table
+
+# Shor's algorithm (docs/physics/nielsen_chuang_5.3.md)
+export shor_order_A, shor_factor_A
+export shor_order_B, shor_factor_B
+export shor_order_C, shor_factor_C
 
 # Channel / tracing
 export Channel, trace, to_openqasm, to_ascii, to_pixels, to_png, ⊗, n_inputs, n_outputs
