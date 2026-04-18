@@ -470,16 +470,18 @@ end
         # End-to-end: two independently-seeded runs of evolve! on |0…0⟩ yield
         # identical amplitudes (circuit is determined by the sample sequence,
         # which is determined by the RNG state).
-        run_once() = @context EagerContext() begin
+        run_once(seed) = @context EagerContext() begin
             qs = [QBool(0.0) for _ in 1:3]
-            evolve!(qs, H, 0.5, QDrift(samples=10, rng=MersenneTwister(42)))
+            evolve!(qs, H, 0.5, QDrift(samples=10, rng=MersenneTwister(seed)))
             a = [_amp(qs[1].ctx, i) for i in 0:7]
             for q in qs; discard!(q); end
             a
         end
-        amps_a = run_once()
-        amps_b = run_once()
-        @test amps_a == amps_b
+        amps_a = run_once(42)
+        amps_b = run_once(42)
+        amps_c = run_once(99)
+        @test amps_a == amps_b           # same seed → identical circuit
+        @test amps_a != amps_c           # different seed → different circuit (RNG is actually threaded)
     end
 
 end

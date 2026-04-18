@@ -4,6 +4,104 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-18 — Session 24: Close `1f3` (QDrift / Composite RNG injection)
+
+Picked up Session 23's in-progress bead. Code for `rng::AbstractRNG` threading
+had already landed; what was outstanding was end-to-end verification of the
+`@context` closure pattern, and — discovered this session — a vacuous test.
+
+### Ground truth before coding
+
+Per the user's standing preference (`feedback_ground_truth_first`): read
+`src/simulation/qdrift.jl`, `src/simulation/composite.jl`,
+`test/test_qdrift.jl`, `test/test_composite.jl`, and the `@context` macro in
+`src/context/abstract.jl` BEFORE running anything. Confirmed:
+
+- QDrift: `rng::AbstractRNG` field, constructor kwarg, `_sample(dist, alg.rng)`
+  threaded at `qdrift.jl:122`.
+- Composite: `rng` field + kwarg, threaded in BOTH branches of
+  `_apply_composite!` (pure-qDRIFT degenerate case at `composite.jl:106` via
+  `QDrift(..., rng=alg.rng)`, and the interleaved loop at `composite.jl:123`
+  via `_sample(dist, alg.rng)`).
+- `@context` macro at `context/abstract.jl:93-107` returns the body's last
+  expression via `try ... finally`. The `run_once()` closure pattern is sound:
+  `a` as the trailing expression of the `begin...end` becomes the return
+  value.
+
+### Gotcha: the committed Composite test was vacuous
+
+The Session-23 committed test used
+`Composite(steps=2, qdrift_samples=10, cutoff=0.5, …)` with
+`ising(Val(3), J=1.0, h=0.5)`. At cutoff=0.5 both coefficients satisfy
+`|hⱼ| ≥ cutoff`, so `_partition` puts ALL terms in the Trotter partition and
+returns `B = nothing`. Control flow takes the degenerate branch
+(`composite.jl:99-102`) which never consults the RNG. The
+`amps_a == amps_b` assertion held, but only because the circuit is fully
+deterministic — not because the RNG was threaded.
+
+Probed via:
+
+```
+julia> _partition(ising(Val(3), J=1.0, h=0.5), 0.5)
+# A=nterms=5, B=nothing           ← vacuous at cutoff=0.5
+
+julia> _partition(ising(Val(3), J=1.0, h=0.5), 0.75)
+# A=nterms=2, B=nterms=3          ← 2 ZZ in Trotter, 3 X in qDRIFT
+```
+
+**Lesson for future tests on `Composite`**: pick the cutoff BY INSPECTING
+the Hamiltonian's coefficient magnitudes, not by mirroring whatever the
+construction docstring happens to default to. A `_partition(H, cutoff)` probe
+before committing an RNG-threading test catches this trivially.
+
+### Fix
+
+Both committed testsets hardened with an alt-seed sanity check
+(`amps_a != amps_c` where `a = seed 42`, `c = seed 99`). The Composite test
+also switches to `cutoff=0.75` with a rationale comment inline
+(`test_composite.jl:309-329`). Now:
+
+- If the RNG kwarg is stored but not threaded → same-seed equal still holds
+  (vacuous), alt-seed differ FAILS loudly. Test catches the bug.
+- If the RNG is threaded correctly → both assertions hold.
+
+### Verification (targeted probe, not full suite)
+
+```
+LIBORKAN_PATH=…/liborkan.so julia --project -e '…'
+[1/3] sample-sequence determinism: OK
+[2/3] QDrift end-to-end determinism: OK (same-seed equal, alt-seed differ)
+[3/3] Composite end-to-end determinism: OK (same-seed equal, alt-seed differ)
+ALL OK
+```
+
+Full `test_qdrift.jl` / `test_composite.jl` runs skipped per the
+`sturm-jl-test-suite-slow` memory — the modified testsets were exercised
+as-written by the probe.
+
+### Bead closure
+
+`Sturm.jl-1f3` closed. End-to-end verification done. The reproducibility
+contract (seeded `rng` → byte-identical Orkan amplitudes) now has a test
+that actually exercises the qDRIFT partition.
+
+### Environment note
+
+`LIBORKAN_PATH` is `/home/tobiasosborne/Projects/orkan/…` on this device.
+The memory entry `device-performance-do-not-run-full-test-suite` had
+`/home/tobias/Projects/orkan/…`; that path does not exist here. The correct
+prefix is `/home/tobiasosborne/`. (Not updating the memory this session;
+leaving as a known discrepancy.)
+
+### Files touched
+
+- `test/test_qdrift.jl` (lines 466-485): `run_once(seed)`, alt-seed assertion.
+- `test/test_composite.jl` (lines 309-329): `cutoff=0.5 → 0.75`,
+  `run_once(seed)`, alt-seed assertion, rationale comment.
+- `WORKLOG.md`: this entry.
+
+---
+
 ## 2026-04-17 — Session 23: Harmonise repo against PRD and vision
 
 Full-day session. Shape: (1) stocktake across the whole codebase (122 files, ~9.5k src LOC), (2) beads triage — delete the future-vision epics that no longer match direction, (3) file replacement beads covering the real state-based findings, (4) revise PRD/docs to match current code + the "four pillars" vision from user's blog draft, (5) execute a run of easy beads.
