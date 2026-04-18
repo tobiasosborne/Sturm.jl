@@ -3816,3 +3816,57 @@ Added to `test/bench_shor_scaling.jl`:
   60 GB box (24 GB budget). Tightened to 30% (18 GB budget) so the OOM
   case actually skips. Plus 4 GB watchdog floor (WSL's OOM-killer fires
   before `free` hits zero — kernel keeps reserve pages).
+
+### Calibration refinement (L=4..9, impls A and C)
+
+After the initial ship, ran L=4..9 for impls A and C (all safely under 1 GB
+each). Six data points per impl.
+
+Impl A — fit is nearly L-independent: actual/2^t is ~16.4–17.5 across L=4..9.
+Final formula: `(L + 1) · 2^(t+2)`. Ratios 1.22× (L=4) to 2.29× (L=9).
+
+Impl C — `(4L + 50) · t · 2^L` matches measurements to **within 2%** across
+all six data points. Shipped with 1.3× safety margin: `(5L + 65) · t · 2^L`,
+ratio a remarkably flat **1.31×** everywhere.
+
+Calibration table (all ratios ≥ 1, all measurements ≤ estimate):
+
+    L   t    A actual    A est     A ratio    C actual    C est     C ratio
+    4   8       4 204    5 120       1.22        8 305   10 880       1.31
+    5  10      15 173   24 576       1.62       21 961   28 800       1.31
+    6  12      65 742  114 688       1.74       55 609   72 960       1.31
+    7  14     270 605  524 288       1.94      136 641  179 200       1.31
+    8  16   1 114 458  2 359 296     2.12      328 289  430 080       1.31
+    9  18   4 587 953  10 485 760    2.29      774 937  1 013 760     1.31
+
+### New dry-run verdict (62.72 GB box, 18.1 GB budget)
+
+- Impl A: run to L=11 (14.06 GB), skip L=12+ (60.94 GB over 3.37×)
+- Impl B: skip from L=9 (18.75 GB, 1.04× over — the actual OOM case)
+- Impl C: run to L=14 (4.33 GB), skip L=16 (21.24 GB, 1.17× over)
+
+Impl C's L=14 / t=28 case is reachable on this box under the tighter
+calibration where it wasn't before. `STURM_BENCH_BUDGET_GB=22` would also
+admit impl C at L=16 (~21 GB) — worth trying once the default run settles.
+
+### Handoff for next session
+
+- `Sturm.jl-8jx` closed. Estimator is calibrated for L=4..9 on impl A/C.
+  **No impl B measurements exist** — it always OOMs with the current DAG
+  representation. If impl B matters, the prior work should be:
+    1. Reduce HotNode size (Sturm.jl-uod — sub-25 B/node via @sumtype/SoA).
+    2. Or add a streaming / chunked DAG so impl B doesn't hold all
+       2^(t+L+1) nodes resident (no beads issue yet — file one).
+- The "big run" after this session will produce real impl A up to L=11 and
+  impl C up to L=14. If anything surprises, the estimator may need another
+  pass; re-run with STURM_BENCH_MAX_L=9 and compare ratios before trusting.
+- Impl A at L=10/t=20 is 3.22 GB expected — watch. L=11/t=22 is 14 GB — closer
+  to budget; the watchdog will fire at 4 GB free if anything inflates beyond
+  projection.
+- If a case OOMs despite the guard, the most likely causes are: (a) a
+  concurrent julia process consuming RAM (pgrep for `--project=<Sturm root>`
+  before launching — cross-project is fine), (b) an estimator drift at
+  larger L that the L=4..9 calibration didn't capture, (c) classical QROM
+  precompute in impl A (8·2^t bytes of mod-N table) hit, which the formula
+  doesn't model. At t=36 that's 512 GB — but preflight already skips impl A
+  well before then.

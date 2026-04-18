@@ -55,33 +55,43 @@ over-estimating: the point is to skip cases that might OOM, so under-
 estimation is the dangerous direction.
 
   * Impl A — value-oracle lift: one QROM with 2^t entries, each L-bit
-    wide. `L · 2^(t+2)`. Calibration: measured (4 204, 15 173, 65 742)
-    at L=(4,5,6); formula gives (4 160, 20 580, 98 448) — all ≥ actual.
-    At L=9/t=18 measured 4.6M vs formula 9.4M — 2× conservative.
+    wide. Measured scaling across L=4..9/t=2L is ~17·2^t (nearly
+    L-independent; the per-output-bit CX fanout is dominated by internal
+    unary decoding). Formula: `(L + 1) · 2^(t+2)` — calibrated to stay
+    ≥ actual at every measured point, max ratio 2.3× at L=9.
 
   * Impl B — phase-estimation HOF: 2^t − 1 mulmod calls per shot, each
-    with a 2^(L+1)-entry QROM. `2^(t+L+1)`. This is the scaling that
-    killed the previous session at (L=9, t=18): 2^28 ≈ 268M nodes,
-    ~20 GB with overhead.
+    with a 2^(L+1)-entry QROM. `2^(t+L+1)`. No measurement survived
+    (this is the scaling that killed the previous session at L=9/t=18:
+    2^28 ≈ 268M nodes, ~20 GB with overhead).
 
   * Impl C — controlled-U^(2^j) cascade: t mulmod calls per shot, each
-    with forward+inverse QROM over 2^L entries and L-bit output. The
-    naïve `t · L · 2^(L+1)` under-counts by ~8× because each QROM entry
-    emits CX-fanout for each output bit (observed 6168 CX / 1984 Toffoli
-    at L=4/t=8). Calibrated constant: 20. Formula: `20 · t · L · 2^(L+1)`.
-    At L=4/t=8 predicts 10 240, actual 8305 — 1.23× conservative. At
-    L=9/t=18 predicts 3.3M.
+    with forward+inverse QROM over 2^L entries and L-bit output.
+    Empirical fit: `(4L + 50) · t · 2^L` matches L=4..9 measurements to
+    within 2% across all six data points. Formula uses 1.3× safety
+    margin: `(5L + 65) · t · 2^L` — min ratio 1.31× at every measured
+    point.
+
+  Calibration table (t=2L; ratios = est / actual, all ≥ 1):
+
+      L   t    A actual    A est     A ratio    C actual    C est     C ratio
+      4   8       4 204    5 120       1.22        8 305   10 880       1.31
+      5  10      15 173   24 576       1.62       21 961   28 800       1.31
+      6  12      65 742  114 688       1.74       55 609   72 960       1.31
+      7  14     270 605  524 288       1.94      136 641  179 200       1.31
+      8  16   1 114 458  2 359 296     2.12      328 289  430 080       1.31
+      9  18   4 587 953  10 485 760    2.29      774 937  1 013 760     1.31
 
 Used ONLY to decide whether to run a case; actual gate counts come from
 the trace and are reported in the summary as est-vs-actual ratio.
 """
 function estimate_gates(impl::Symbol, L::Int, t::Int)
     if impl === :A
-        L * (1 << (t + 2)) + 2 * L * t      # L · 2^(t+2) + 2·L·t for setup/QFT
+        (L + 1) * (1 << (t + 2))            # (L + 1) · 2^(t+2)
     elseif impl === :B
         1 << (t + L + 1)                    # 2^(t+L+1)
     elseif impl === :C
-        20 * t * L * (1 << (L + 1))         # 20 · t · L · 2^(L+1)
+        (5 * L + 65) * t * (1 << L)         # (5L + 65) · t · 2^L
     else
         error("unknown impl $impl")
     end
