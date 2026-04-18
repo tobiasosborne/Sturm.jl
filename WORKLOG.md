@@ -3870,3 +3870,83 @@ admit impl C at L=16 (~21 GB) — worth trying once the default run settles.
   precompute in impl A (8·2^t bytes of mod-N table) hit, which the formula
   doesn't model. At t=36 that's 512 GB — but preflight already skips impl A
   well before then.
+
+### Full benchmark run (2026-04-18 big run)
+
+With preflight + watchdog in place, ran the full L=4..18 × impl A/B/C sweep.
+
+Results that ran (gate counts):
+
+    impl  L    t    wires      gates          toffoli        wall_ms
+    A     4    8    33         4 204          1 020          1508
+    A     5    10   41         15 173         4 092          257
+    A     6    12   49         65 742         16 380         282
+    A     7    14   57         270 605        65 532         273
+    A     8    16   65         1 114 458      262 140        343
+    A     9    18   73         4 587 953      1 048 572      832
+    A     10   20   81         20 028 298     4 194 300      2 923
+    A     11   22   89         77 595 225     16 777 212     13 493
+    B     4    8    7 662      130 673        128 520        279
+    B     5    10   37 866     1 117 277      1 108 932      388
+    B     6    12   180 198    9 467 857      9 434 880      1 316
+    B     7    14   835 554    79 883 789     79 752 444     11 092
+    B     8    16   3 801 054  672 127 313    671 602 680    95 722
+    C     4    8    284        8 305          1 984          596
+    C     5    10   425        21 961         5 040          319
+    ...                                                      ...
+    C     14   28   2 954      47 712 281     7 339 808      4 259
+
+Skipped by preflight (as designed): A L=12+, B L=9+, C L=16+.
+
+### Critical finding: impl B estimator was 20× LOW
+
+The initial `2^(t+L+1)` formula under-counted the L+12 output-bit fanout
+factor. Measured ratios 0.05–0.06 (actual/est) across L=4..8 — the
+benchmark greenlit B at L=8/t=16 with a **2.34 GB projection** and the
+DAG was actually **15.74 GB**. We only didn't OOM because 60 GB was free.
+
+Fixed: `(L + 14) · 2^(t+L+1)` with +2 safety margin over the empirical
+`(L + 12)` fit (which was too tight at 0.997–1.003× ratio — one data
+point going under would have been unsafe). New formula: 1.05–1.13×
+conservative across all measured points.
+
+### Strategic: Shor DAGs are exponential because of QROM, not Shor
+
+All three impls use QROM-based modular multiplication:
+  - A: value-oracle lift via `oracle_table(k -> powermod(a,k,N), ...)` —
+    one QROM with 2^t entries. O(L·2^t) gates. With t=2L: O(L·4^L).
+  - B: 2^t-1 phase-estimation mulmod calls, each with a 2^(L+1) QROM.
+    O(L·2^(t+L+1)). With t=2L: O(L·2^(3L)).
+  - C: t controlled-U^(2^j) mulmod calls, each with a 2^(L+1) QROM.
+    O(L·t·2^L). With t=2L: O(L²·2^L).
+
+All exponential in L. For L=1024 (useful crypto) any of these needs
+>10^30 gates — the DAG cannot even be CONSTRUCTED, let alone executed.
+
+Source rationale (src/library/shor.jl:136-141, verbatim): "*oracle_table
+and not oracle? powermod's LLVM IR contains control flow and stdlib
+call edges that Bennett's symbolic lowering cannot resolve (Session 24:
+'Undefined SSA variable: %__v2'). For small t, classical evaluation +
+QROM is strictly cheaper than any symbolic path — idiomatic choice,
+not a workaround.*"
+
+**For small t. Not for useful Shor.**
+
+### Path forward: shor_order_D via Beauregard arithmetic
+
+Filed epic Sturm.jl-c6n + 4 subtasks:
+  - Sturm.jl-ar7 — QFT-adder (Draper 2000): `add_qft!(y, a)`
+  - Sturm.jl-dgy — Modular adder (Beauregard Fig. 5): `modadd!(y, a, N)`
+  - Sturm.jl-uf4 — Controlled mulmod (Beauregard Fig. 6): `mulmod_beauregard!`
+  - Sturm.jl-6kx — shor_order_D — Shor with arithmetic mulmod
+
+Expected scaling O(L^4) gates (t·L^3 = 2L·L^3). At L=14 predicts ~50k
+gates vs impl C's observed 47M — **1000× reduction**. At L=1024, ~10^12
+gates — big but POLYNOMIAL and cacheable, matching Gidney-Ekerå 2021's
+~3·10^9 Toffoli estimate for RSA-2048 with surface codes.
+
+Paper already local: `docs/physics/beauregard_2003_2n3_shor.pdf`.
+
+Previous deleted beads `Sturm.jl-3ii` (Beauregard classical-operand
+adder) and `Sturm.jl-adj` (arithmetic inverse) covered subsets of this
+work; the new chain above restores them in cleaner form.
