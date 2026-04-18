@@ -85,6 +85,7 @@ export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @con
 
 # Types
 export QBool, QInt, WireID, discard!, Quantum
+export with_silent_casts
 
 # Quantum control
 export when

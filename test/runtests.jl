@@ -36,4 +36,5 @@ using Sturm
     include("test_multi_path_arithmetic.jl")
     include("test_qint_bitwise.jl")
     include("test_qint_shifts.jl")
+    include("test_implicit_cast.jl")
 end

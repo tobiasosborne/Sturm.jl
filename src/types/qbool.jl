@@ -85,15 +85,23 @@ function Base.setproperty!(q::QBool, s::Symbol, val::_RotationApplied)
 end
 
 # ── Measurement via type boundary ─────────────────────────────────────────────
+#
+# P2: `Bool(q)` is the EXPLICIT cast (silent). `convert(Bool, q)` — which
+# Julia invokes for implicit `x::Bool = q` assignments — emits a one-per-site
+# warning then delegates to the constructor. See src/types/quantum.jl for
+# the warning helper + `with_silent_casts` opt-out, and bead Sturm.jl-f23.
 
-function Base.convert(::Type{Bool}, q::QBool)
+function Base.Bool(q::QBool)
     check_live!(q)
     result = measure!(q.ctx, q.wire)
     q.consumed = true
     return result
 end
 
-Base.Bool(q::QBool) = convert(Bool, q)
+function Base.convert(::Type{Bool}, q::QBool)
+    _warn_implicit_cast(QBool, Bool)
+    return Bool(q)
+end
 
 # ── Entanglement: a ⊻= b (CNOT: b controls, a target) ───────────────────────
 

@@ -16,7 +16,7 @@ function rus_T_prd!(target::QBool)
         anc = QBool(1//8)
         anc ⊻= target
         anc ⊻= target     # CX · CX = I — undoes the first CNOT
-        ok::Bool = anc
+        ok = Bool(anc)
         if ok; return iters; end
         target.φ -= π/4
     end

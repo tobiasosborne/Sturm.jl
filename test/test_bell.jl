@@ -10,8 +10,8 @@ using Sturm
                 a = QBool(0.5)   # |+>
                 b = QBool(0)     # |0>
                 b ⊻= a          # Bell pair: (|00> + |11>)/√2
-                ra::Bool = a
-                rb::Bool = b
+                ra = Bool(a)
+                rb = Bool(b)
                 @test ra == rb   # always perfectly correlated
             end
         end
@@ -26,9 +26,9 @@ using Sturm
                 c = QBool(0)
                 b ⊻= a
                 c ⊻= a
-                ra::Bool = a
-                rb::Bool = b
-                rc::Bool = c
+                ra = Bool(a)
+                rb = Bool(b)
+                rc = Bool(c)
                 @test ra == rb == rc  # all three must agree
             end
         end
@@ -43,8 +43,8 @@ using Sturm
                 a = QBool(0.5)
                 b = QBool(0)
                 b ⊻= a
-                ra::Bool = a
-                rb::Bool = b
+                ra = Bool(a)
+                rb = Bool(b)
                 if !ra && !rb
                     count_00 += 1
                 elseif ra && rb

@@ -19,6 +19,8 @@ q = QBool(result)       # explicit cast: preparation
 
 Because the cast loses information irreversibly, the compiler emits a **warning on implicit casts** — `x::Bool = q` without an explicit cast expression is flagged, just like implicit float-to-int truncation is flagged in sensible languages. The fix is always the same: wrap the RHS in an explicit cast. Information loss must be intentional.
 
+The warning fires once per source location. For tight loops where the intent is unambiguous, wrap the block in `with_silent_casts(() -> ...)` to suppress within the current task.
+
 **P3. Operations are operations.** No language-level distinction between unitaries, noise, preparation, or measurement. They are all channels.
 
 **P4. Quantum control is lexical scope.** `when(q) do ... end` = quantum control. `if x ... end` = classical branch. The distinction is enforced by types — `if q::QBool` never auto-lifts to `when(q)` (see *if vs when* below for the three reasons).

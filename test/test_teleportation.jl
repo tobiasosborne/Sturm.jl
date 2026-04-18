@@ -13,8 +13,8 @@ using Sturm
         # Bell measurement
         a ⊻= q
 
-        rq::Bool = q
-        ra::Bool = a
+        rq = Bool(q)
+        ra = Bool(a)
 
         # Classical corrections
         if ra; b.θ += π; end

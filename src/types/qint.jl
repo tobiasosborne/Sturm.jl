@@ -93,14 +93,19 @@ Prepare QInt{W} in the current context.
 QInt{W}(value::Integer) where {W} = QInt{W}(current_context(), value)
 
 # ── Type boundary: measurement ───────────────────────────────────────────────
+#
+# P2: `Int(q)` is the EXPLICIT cast (silent). `convert(Int, q)` — which Julia
+# invokes for implicit `x::Int = qi` assignments — emits a one-per-site
+# warning then delegates to the constructor. See src/types/quantum.jl for the
+# warning helper + `with_silent_casts` opt-out, and bead Sturm.jl-f23.
 
 """
-    Base.convert(::Type{Int}, q::QInt{W})
+    Base.Int(q::QInt{W}) -> Int
 
 Measure all W qubits, assemble the classical integer in little-endian order.
 Consumes the QInt (linear resource).
 """
-function Base.convert(::Type{Int}, q::QInt{W}) where {W}
+function Base.Int(q::QInt{W}) where {W}
     check_live!(q)
     result = 0
     for i in 1:W
@@ -113,7 +118,10 @@ function Base.convert(::Type{Int}, q::QInt{W}) where {W}
     return result
 end
 
-Base.Int(q::QInt{W}) where {W} = convert(Int, q)
+function Base.convert(::Type{Int}, q::QInt{W}) where {W}
+    _warn_implicit_cast(QInt{W}, Int)
+    return Int(q)
+end
 
 # ── Wire access ──────────────────────────────────────────────────────────────
 
