@@ -130,3 +130,90 @@ using Sturm
         end
     end
 end
+
+# ── Sturm.jl-dgy: modadd! (Beauregard 2003 Fig. 5) ─────────────────────────
+#
+# modadd!(y::QInt{L+1}, anc::QBool, a::Int, N::Int) computes
+#   y := Φ((a + b) mod N) on the (L+1)-qubit Fourier register carrying b,
+# leaving the ancilla anc in |0⟩.
+#
+# Preconditions: y is in Fourier basis; b < N; anc = |0⟩; a < N; N < 2^L.
+# Postconditions: y in Fourier basis carrying (a+b) mod N; anc = |0⟩.
+
+@testset "modadd!: Beauregard classical-constant modular addition" begin
+
+    # Exhaustive L=3 sweep — N ∈ {2..7}, all (a, b) with 0 ≤ a,b < N.
+    # 139 (N, a, b) triples total.
+    @testset "exhaustive L=3 (N=$N)" for N in 2:7
+        L = 3                    # y has L+1 = 4 qubits, plus 1 ancilla = 5
+        for a in 0:(N-1), b in 0:(N-1)
+            @context EagerContext() begin
+                y   = QInt{L + 1}(b)
+                anc = QBool(0)
+                superpose!(y)
+                modadd!(y, anc, a, N)
+                interfere!(y)
+                @test Int(y)    == (a + b) % N
+                @test Bool(anc) == false    # ancilla cleanly restored
+            end
+        end
+    end
+
+    # Spot-check at L=4 with representative N values.
+    @testset "spot-check L=4 (N=$N)" for N in (5, 11, 13, 15)
+        L = 4
+        # 30 random (a, b) per N
+        for _ in 1:30
+            a = rand(0:(N-1)); b = rand(0:(N-1))
+            @context EagerContext() begin
+                y   = QInt{L + 1}(b)
+                anc = QBool(0)
+                superpose!(y)
+                modadd!(y, anc, a, N)
+                interfere!(y)
+                @test Int(y)    == (a + b) % N
+                @test Bool(anc) == false
+            end
+        end
+    end
+
+    # Controlled modadd! under when(ctrl). When ctrl=|0⟩, operation must be
+    # identity on y and anc (Beauregard's §2.2 correctness argument for
+    # the doubly-controlled form — here with a single control for simplicity).
+    @testset "controlled modadd! under when(ctrl)" begin
+        L = 3; N = 5
+        # Test cases must have (a+b) mod N ≠ b, else bucketing can't distinguish
+        # the ctrl=|0⟩ (identity → b) and ctrl=|1⟩ ((a+b) mod N) branches.
+        for (a, b) in [(2, 3), (4, 1), (1, 4), (3, 3)]
+            # Control in |+⟩: expect 50/50 mixture (b unchanged, (a+b) mod N).
+            n_unchanged = 0; n_added = 0; n_other = 0
+            for _ in 1:400
+                @context EagerContext() begin
+                    y    = QInt{L + 1}(b)
+                    anc  = QBool(0)
+                    ctrl = QBool(1/2)
+                    superpose!(y)
+                    when(ctrl) do
+                        modadd!(y, anc, a, N)
+                    end
+                    interfere!(y)
+                    result = Int(y)
+                    anc_out = Bool(anc)
+                    _ = Bool(ctrl)
+                    @test anc_out == false       # ancilla MUST be clean both branches
+                    if result == b
+                        n_unchanged += 1
+                    elseif result == (a + b) % N
+                        n_added += 1
+                    else
+                        n_other += 1
+                    end
+                end
+            end
+            @test n_other == 0
+            @test 140 <= n_unchanged <= 260
+            @test 140 <= n_added     <= 260
+        end
+    end
+end
+

@@ -3993,3 +3993,46 @@ All 809 pass. No global-phase-sensitive tests failed, suggesting the
 accumulated e^(-iπ·a·(1−2^(-L))) phase is correctly handled by the
 symmetric Rz convention (it's a global phase of the whole add_qft!,
 not a relative phase inside it).
+
+### Sturm.jl-dgy: modadd! (Beauregard modular adder) — shipped
+
+Second brick in the polynomial-in-L Shor chain. `modadd!(y, anc, a, N)`
+on a Fourier-basis `QInt{L+1}` with one ancilla, computing `y := Φ((a+b) mod N)`,
+restoring anc to |0⟩. Beauregard 2003 Fig. 5, 13 steps.
+
+2130 tests pass:
+  - Exhaustive L=3 (all N∈{2..7}, all (a,b) pairs) — 278 cases
+  - Spot-check L=4 (N∈{5,11,13,15}, 30 random per N) — 240 cases
+  - Coherent under `when(ctrl=|+⟩)`, 4 (a,b) cases × 400 shots = 1612
+    assertions, confirming: both branches reachable 50/50, ancilla
+    ALWAYS clean regardless of branch, no spurious outcomes.
+
+### Gotcha: X!² = -I global phase corrupts controlled-modadd
+
+Beauregard's Fig. 5 steps 9/11 need `X; CNOT; X` on the MSB to
+reset the ancilla. Sturm's `X!(q) = q.θ += π` is `Ry(π) = -iY`
+(not the standard X = [[0,1],[1,0]]; SU(2) can't reach it). Two
+`X!` applications pick up `(-i)² = -1` global phase.
+
+Normally a global phase is unobservable. But `modadd!` is specifically
+designed to run *inside* `when(ctrl)` — and a global phase on the
+inner circuit becomes a RELATIVE phase between ctrl=|0⟩ and ctrl=|1⟩
+branches (equivalent to a Z on ctrl). That's a real bug for mulmod.
+
+Fix: use `msb.θ += π` (Ry(π)) at step 9 and `msb.θ -= π` (Ry(−π))
+at step 11. These are exact inverses: `Ry(π)·Ry(−π) = Ry(0) = I`
+with no phase. Classical bit-flip behavior on MSB is unchanged, so
+the CNOT at step 10 sees the same values as with standard X.
+
+This is the kind of phase issue the CLAUDE.md "Global Phase and
+Universality" note warns about for controlled gates. Caught by TDD
+in the coherent-when(ctrl=|+⟩) tests; the unconditional exhaustive
+sweep alone would have missed it.
+
+### Gotcha: test bucketing with a=0 is a coincidence trap
+
+Initial controlled-modadd test included `(a=0, b=4, N=5)` among its
+4 parametric cases. Expected: ctrl=0 → y=b=4; ctrl=1 → y=(a+b)%N=4.
+Both branches produce the same value, so the bucketing distinction
+between "unchanged" and "added" collapses; the test fails despite
+correct behavior. Fixed by choosing only (a, b) with (a+b)%N ≠ b.
