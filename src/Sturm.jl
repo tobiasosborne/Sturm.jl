@@ -102,7 +102,7 @@ export superpose!, interfere!, fourier_sample, phase_estimate
 export find, amplify, phase_flip!
 
 # Arithmetic (QFT-based, Draper 2000 + Beauregard 2003 chain)
-export add_qft!, sub_qft!
+export add_qft!, sub_qft!, modadd!
 
 # Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
 export oracle_table
