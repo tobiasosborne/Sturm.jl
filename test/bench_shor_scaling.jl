@@ -61,9 +61,19 @@ estimation is the dangerous direction.
     ≥ actual at every measured point, max ratio 2.3× at L=9.
 
   * Impl B — phase-estimation HOF: 2^t − 1 mulmod calls per shot, each
-    with a 2^(L+1)-entry QROM. `2^(t+L+1)`. No measurement survived
-    (this is the scaling that killed the previous session at L=9/t=18:
-    2^28 ≈ 268M nodes, ~20 GB with overhead).
+    with a 2^(L+1)-entry QROM producing an L-bit output. The naïve
+    `2^(t+L+1)` (previous ship) under-counts by 16–20× because each
+    QROM entry emits (L+12) gates for output fanout. Empirical exact
+    fit is `(L + 12) · 2^(t+L+1)` — ratio 0.997–1.003 across L=4..8
+    on the 2026-04-18 big run. Shipped with +2 safety margin:
+    `(L + 14) · 2^(t + L + 1)`, ratio 1.05–1.13× (conservative).
+
+    The previous bug (2^(t+L+1) alone) greenlit L=8/t=16 at 2.34 GB
+    projected memory. Actual DAG was 15.74 GB. We didn't OOM only
+    because 60 GB was free. Fixed here.
+
+    At L=9/t=18 this predicts 5.78 G gates = 433 GB — skipped on any
+    reasonable budget.
 
   * Impl C — controlled-U^(2^j) cascade: t mulmod calls per shot, each
     with forward+inverse QROM over 2^L entries and L-bit output.
@@ -89,7 +99,7 @@ function estimate_gates(impl::Symbol, L::Int, t::Int)
     if impl === :A
         (L + 1) * (1 << (t + 2))            # (L + 1) · 2^(t+2)
     elseif impl === :B
-        1 << (t + L + 1)                    # 2^(t+L+1)
+        (L + 14) * (1 << (t + L + 1))       # (L + 14) · 2^(t+L+1) — 10% safety margin
     elseif impl === :C
         (5 * L + 65) * t * (1 << L)         # (5L + 65) · t · 2^L
     else
