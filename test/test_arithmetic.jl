@@ -294,4 +294,94 @@ end
     end
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Sturm.jl-di9: X-basis coherence regression tests.
+#
+# A Z-basis measurement of a ctrl qubit that started as |+⟩ cannot
+# distinguish pure |+⟩ from a fully mixed state — both give 50/50. To catch
+# silent phase leaks on a controlled arithmetic sub-circuit, test that
+# `forward + inverse` applied under ctrl leaves ctrl as exactly |+⟩ (so
+# `Ry(-π/2) ; measure` returns FALSE deterministically).
+#
+# Any genuine bug (mis-folded Rz, un-cancelled global phase, control-stack
+# depth mismatch) shows up as a non-zero ctrl=|1⟩ measurement rate.
+
+@testset "di9: X-basis coherence of controlled arithmetic sub-circuits" begin
+
+    # Helper: prepare ctrl=|+⟩, run `build!(ctrl)`, apply Ry(-π/2) on ctrl,
+    # return the ctrl=true rate across `n_shots` shots.
+    function _ctrl_leak_rate(build!::Function; n_shots::Int=200)
+        n_true = 0
+        for _ in 1:n_shots
+            @context EagerContext() begin
+                ctrl = QBool(1/2)
+                build!(ctrl)
+                ctrl.θ -= π/2
+                if Bool(ctrl); n_true += 1; end
+            end
+        end
+        return n_true / n_shots
+    end
+
+    # ── add_qft ∘ sub_qft under ctrl: should be identity on y, phase-neutral ──
+    @testset "when(ctrl) add_qft(y, a); sub_qft(y, a)  — L=$L a=$a v=$v" for
+        (L, a, v) in [(1,1,0), (2,2,0), (3,3,1), (4,7,3), (4,2,5), (5,2,3), (5,4,7)]
+        rate = _ctrl_leak_rate(ctrl -> begin
+            y = QInt{L+1}(v)
+            superpose!(y)
+            when(ctrl) do
+                add_qft!(y, a)
+                sub_qft!(y, a)
+            end
+            interfere!(y)
+            discard!(y)
+        end)
+        @test rate < 0.05      # clean |+⟩ preserved
+    end
+
+    # ── modadd(a) ∘ modadd(N-a) under ctrls=(c,) — singly controlled ──
+    @testset "ctrls=(c,) modadd(a); modadd(N-a)  — L=$L N=$N a=$a b=$b" for
+        (L, N, a, b) in [(2,3,2,0), (3,5,2,0), (3,5,3,1), (3,5,4,3),
+                         (4,15,7,3), (4,15,2,5), (5,21,2,3), (5,21,4,7)]
+        rate = _ctrl_leak_rate(ctrl -> begin
+            y = QInt{L+1}(b)
+            anc = QBool(0)
+            superpose!(y)
+            modadd!(y, anc, a, N; ctrls=(ctrl,))
+            modadd!(y, anc, mod(N - a, N), N; ctrls=(ctrl,))
+            interfere!(y)
+            discard!(y); discard!(anc)
+        end)
+        @test rate < 0.05
+    end
+
+    # ── modadd(a) ∘ modadd(N-a) under ctrls=(c, |1⟩) — doubly controlled ──
+    @testset "ctrls=(c,|1⟩) modadd(a); modadd(N-a)  — L=$L N=$N a=$a b=$b" for
+        (L, N, a, b) in [(3,5,2,1), (4,15,7,3), (4,15,2,5), (5,21,2,3)]
+        rate = _ctrl_leak_rate(ctrl -> begin
+            xj = QBool(1)
+            y = QInt{L+1}(b)
+            anc = QBool(0)
+            superpose!(y)
+            modadd!(y, anc, a, N; ctrls=(ctrl, xj))
+            modadd!(y, anc, mod(N - a, N), N; ctrls=(ctrl, xj))
+            interfere!(y)
+            discard!(y); discard!(anc); discard!(xj)
+        end)
+        @test rate < 0.05
+    end
+
+    # ── mulmod(x, a) ∘ mulmod(x, a⁻¹): U_a · U_{a⁻¹} = I on x, both branches ──
+    @testset "mulmod(a) ∘ mulmod(a⁻¹)  — L=$L N=$N a=$a x0=$x0" for
+        (L, N, a, x0) in [(3,5,2,1), (3,5,2,3), (4,15,7,1), (4,15,7,11), (5,21,2,1)]
+        a_inv = invmod(a, N)
+        rate = _ctrl_leak_rate(ctrl -> begin
+            x = QInt{L}(x0)
+            mulmod_beauregard!(x, a, N, ctrl)
+            mulmod_beauregard!(x, a_inv, N, ctrl)
+            discard!(x)
+        end; n_shots=100)     # mulmod is expensive; 100 shots for regression
+        @test rate < 0.05
+    end
+end
 

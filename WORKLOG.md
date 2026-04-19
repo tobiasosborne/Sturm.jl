@@ -4,6 +4,138 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-19 — Session 28: Close `Sturm.jl-di9` (add_qft! angle-fold phase bug)
+
+P0 landed. Root cause of the "π/2 leak" flagged in Session 27 is the
+angle-fold in `add_qft!` — `mod(θ + π, 2π) - π` maps BOTH `θ = +π` and
+`θ = -π` to `-π`, breaking `Rz(θ) · Rz(-θ) = I` on any wire whose raw
+angle lands exactly on the boundary. Under `when(ctrl)` that -I per-wire
+becomes a relative π phase on `ctrl = |1⟩`, and across many modadds
+(Shor's PE cascade) the phases accumulate and scramble the counter
+register. Session 27's data was real; the **diagnosis** was partially
+misread (see below).
+
+### Grind method — first-diff-with-ground-truth
+
+1. Reproduced the 50% X-basis leak from `probe_mulmod_phase.jl`
+   (Session 27). Confirmed the leak is x-dependent as reported.
+2. Wrote a block-wise probe (`probe_di9_blockwise.jl`) testing
+   `when(ctrl) add_qft!(y, a)` with no inverse restore.
+   **Unexpected**: every block from single add_qft to full mulmod
+   showed ~50%. That "universal 50%" was the first clue the Session 27
+   diagnosis was off.
+3. Realised `when(ctrl) U |x⟩` on non-eigenstate `x` produces
+   `(|0⟩|x⟩ + |1⟩·U|x⟩)/√2` and tracing `x` decoheres ctrl to 50/50 in
+   ANY basis. The Session 27 probe was measuring inherent ctrl-target
+   entanglement, NOT a phase bug.
+4. Wrote `probe_di9_inverse.jl` with the correct protocol:
+   `when(ctrl) do U; U⁻¹ end`. Ctrl should come back to pure |+⟩
+   regardless of target state; any X-basis leak is a true global-phase
+   bug. This smoked out the real fold.
+5. Hand-traced the L=1 a=1 v=0 case (smallest reproducer):
+   - `add_qft(y=QInt{2}, +1)`: wire 2, jj=1, θ_raw=π → fold → Rz(-π).
+   - `sub_qft(y, 1) = add_qft(y, -1)`: `a_mod = mod(-1, 4) = 3`, wire 2,
+     θ_raw = 3π → fold → Rz(-π) (same folded angle!).
+   - Composed wire 2: Rz(-π) · Rz(-π) = Rz(-2π) = -I.
+   - Under ctrl: -I on ctrl=|1⟩ = relative phase π = 100% X-basis leak.
+   Observed: 100.0% in probe. ✓ First diff located, root cause identified.
+
+### Fix — `src/library/arithmetic.jl:59`
+
+Removed the fold entirely. `add_qft!` now emits `Rz(θ_raw)` per wire
+where `θ_raw = 2π · a / 2^jj`. Orkan computes `Rz(θ)` in double
+precision for any θ, so "keeping angles small" was never load-bearing.
+The `a_mod = mod(Int(a), 1<<L)` wrap was also dropped: Rz(θ) is
+periodic mod 4π as a gate action (period 2π on target states up to a -I
+factor that now cancels cleanly with the matching inverse), and the
+caller-side invariants (a ∈ [0, N), b ∈ [0, N), N < 2^L) keep θ
+bounded anyway.
+
+### Red-green TDD
+
+1. **RED**: added `@testset "di9: X-basis coherence of controlled
+   arithmetic sub-circuits"` to `test/test_arithmetic.jl` — 24 tests
+   covering add_qft∘sub_qft under when(ctrl), modadd∘modadd(N-a) with
+   ctrls=(c,) and ctrls=(c,|1⟩), and mulmod(a)∘mulmod(a⁻¹). Minimal
+   reproducer (L=1 a=1 v=0) RED-checked to confirm 100% leak pre-fix.
+2. **GREEN**: one-function fix in `add_qft!`. Minimal probe → 0% leak.
+3. **Full `test_arithmetic.jl` regression** (OMP_NUM_THREADS=1, 1m06s):
+   - add_qft!: 809/809
+   - modadd!: 2130/2130
+   - mulmod_beauregard!: 269/269
+   - di9 X-basis coherence: **24/24** (new)
+   Total: **3232/3232** green.
+4. **End-to-end Shor acceptance** (`probe_di9_shor_n21.jl`):
+   - N=15 a=7 r=4 t=3: 21/30 = **70%** hits (Session 26: 50%)
+   - N=15 a=2 r=4 t=3: 13/20 = **65%** hits
+   - N=21 a=2 r=6 t=6: 5/20 = **25%** hits (Session 27: 0/20 = 0%) ✓ ≥20%
+   - N=21 a=4 r=3 t=6: 6/10 = **60%** hits
+
+### Gotchas for future agents
+
+1. **`mod(θ+π, 2π) - π` is a LEAKY fold under control.** Any angle
+   canonicalisation that maps the boundary representatives
+   asymmetrically (+π ≠ -π under the map, but folds them together)
+   breaks `Rz(θ) · Rz(-θ) = I`. If you need to fold Rz angles for
+   display or optimisation, fold them INTO THE UNITARY itself using the
+   equality `Rz(θ + 2π) = −Rz(θ)` — i.e., keep a parity bit and apply a
+   compensating CP/CZ on the control stack. Or just don't fold.
+2. **`when(ctrl) U |x⟩` on non-eigenstate x looks like a phase bug on
+   an X-basis probe.** 50% measure-true is the signature of ctrl being
+   fully traced-out by the entangled target, NOT a phase leak. The
+   correct phase-bug probe is `when(ctrl) U; U⁻¹ end`: any leak there is
+   a genuine global-phase mismatch because U·U⁻¹ = I returns target
+   trivially on both ctrl branches. Session 27's probe was conflating
+   the two. If you're investigating a controlled-unitary, ALWAYS use
+   the forward-inverse pattern first.
+3. **Session-level "grind" workflow paid off again.** Reproducing with
+   a minimal L=1 single-Rz case + hand-tracing the 2-line arithmetic
+   localised the bug in < 5 minutes of reading after the inverse probe
+   fired. The multi-stage block-wise probe was useful to rule out
+   modadd-only / mulmod-only mechanisms, but the SMOKING GUN was
+   picking the smallest controlled example and working through the
+   folded angles by hand. "Find-first-diff-with-ground-truth" >
+   speculation.
+4. **X-basis inverse-pair regression tests are now part of the
+   acceptance surface for Shor arithmetic.** The 24 di9 tests added to
+   `test/test_arithmetic.jl` are the tripwire for the next silent-phase
+   bug in add_qft / modadd / mulmod. Run them on every change to
+   `src/library/arithmetic.jl`.
+5. **OMP_NUM_THREADS=1 during verification.** Without it, Orkan's
+   OpenMP parallelism spawns enough threads to saturate CPU time
+   counters but doesn't help small statevectors (3-13 qubits is too
+   small to parallelise usefully). With OMP=1 the 24-probe GREEN check
+   ran in 23s; without it the regression test_arithmetic.jl run
+   appeared to stall (high CPU but no output) because Julia's `@testset`
+   batch-prints. One-liner fix: always set OMP_NUM_THREADS=1 for
+   shor/arithmetic probes.
+
+### Files touched
+
+- `src/library/arithmetic.jl` — removed the fold, updated docstring.
+- `test/test_arithmetic.jl` — added `di9:` testset (24 assertions).
+- `test/probe_di9_blockwise.jl` (new) — block-wise forward-only probe
+  (kept as a reference for the "50% leak is inherent entanglement"
+  lesson).
+- `test/probe_di9_inverse.jl` (new) — canonical forward-inverse X-basis
+  harness.
+- `test/probe_di9_green.jl` (new) — verbose-eager-flush GREEN runner
+  for the same cases (used for fast iteration; `@testset` output is
+  batch-delayed).
+- `test/probe_di9_shor_n21.jl` (new) — Shor end-to-end acceptance at
+  N=15, N=21 with both a=2 (r=6) and a=4 (r=3).
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-di9` closed.
+- `Sturm.jl-6kx` (shor_order_D at N=15) stays closed but now genuinely
+  verified: N=21 r=6 Shor works at 25% hit rate.
+- `Sturm.jl-8b9` (semi-classical iQFT) still P1, still deferred. Would
+  now be safe to implement on top of the phase-clean arithmetic.
+
+---
+
 ## 2026-04-19 — Session 27: Hunt for N=21 failure uncovers P0 bug in uf4
 
 Session 26 closed `Sturm.jl-6kx` with shor_order_D green at N=15 (50%
