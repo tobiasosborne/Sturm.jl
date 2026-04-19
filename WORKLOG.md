@@ -4,6 +4,286 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-19 — Session 25: Close `Sturm.jl-uf4` (mulmod_beauregard! green-up)
+
+Picked up from Session 24 handoff: `mulmod_beauregard!` code committed on
+`15bf951` but never run to green because nested `when(ctrl) do when(xj) do
+modadd!(…) end end` PLUS modadd's own `when(anc) add_qft!(y, N)` = **3-deep
+control stack**, triggering `_multi_controlled_gate!` cascade on every
+primitive. At L=3 N=5 coherent shots, each shot was allocating workspace
+ancillae per primitive — astronomical.
+
+Closed bead with the Beauregard p.6 fix already foreshadowed in the
+handoff checklist.
+
+### Ground truth (read BEFORE coding, per rule 4)
+
+`docs/physics/beauregard_2003_2n3_shor.pdf` pp. 5–8. Three equations/figures
+load-bearing for the fix:
+
+- **Fig. 5** (doubly-controlled φADD(a)MOD(N)). The two outer control dots
+  `c1, c2` connect ONLY to the three φADD(a) gates (steps 1, 7, 13 in the
+  13-step expansion). QFT / QFT⁻¹ / CNOT / X-on-MSB / and the `anc`-
+  controlled ADD(N) are **unconditional** in the circuit — no `c1`/`c2`
+  control dot touches them.
+- **Text p.6:** "we will doubly control only the φADD(a) gates instead of
+  all the gates. If the φADD(a) gates are not performed, it is easy to
+  verify that the rest of the circuit implements the identity on all
+  qubits because b < N."  This is the correctness certificate for
+  pulling the controls down.
+- **Fig. 6** (CMULT(a)MOD(N)). The outer QFT/QFT⁻¹ sandwich on the b
+  register is **outside** the c-control region — `c`-control shrinks to
+  the n doubly-controlled modadds.
+- **Fig. 7** (c-U_a). Controlled-SWAP between x and b is singly controlled
+  by c only.
+
+### Refactor
+
+Two changes in `src/library/arithmetic.jl`, no other files touched.
+
+**modadd!: new `ctrls::Tuple` kwarg.**
+
+```julia
+modadd!(y, anc, a, N; ctrls = ())      # backward-compat: no change
+modadd!(y, anc, a, N; ctrls = (c,))    # singly controlled, Beauregard sense
+modadd!(y, anc, a, N; ctrls = (c1,c2)) # doubly controlled, Beauregard sense
+```
+
+Implemented via an inline `_apply_ctrls(f, ctrls)` helper that resolves
+each arity at compile time:
+
+```julia
+@inline _apply_ctrls(f, ::Tuple{}) = f()
+@inline _apply_ctrls(f, c::Tuple{QBool}) = when(c[1]) do; f(); end
+@inline _apply_ctrls(f, c::Tuple{QBool,QBool}) =
+    when(c[1]) do; when(c[2]) do; f(); end; end
+```
+
+Only steps 1, 7, 13 (the three `add_qft!(y, a)` / `sub_qft!(y, a)` calls)
+get wrapped. Steps 2–6, 8–12 run unconditionally — matches Fig. 5 exactly.
+
+**mulmod_beauregard!: pull QFTs out, push controls down.**
+
+Old (3-deep cascade):
+
+```julia
+when(ctrl) do
+    superpose!(b)                          # ctrl-controlled QFT
+    for j in 1:L
+        when(xj) do                         # (ctrl, xj)-controlled
+            modadd!(b, anc, c_j, N)        # inside: when(anc) push → 3 deep
+        end
+    end
+    interfere!(b)                          # ctrl-controlled QFT⁻¹
+    for j in 1:L; swap!(xj, bj); end        # ctrl-controlled SWAP
+    superpose!(b)
+    …inverse CMULT same pattern…
+    interfere!(b)
+end
+```
+
+New (max-2 fast path):
+
+```julia
+superpose!(b)                              # UNCONDITIONAL QFT
+for j in 1:L
+    modadd!(b, anc, c_j, N; ctrls=(ctrl, xj))  # push controls into modadd
+end
+interfere!(b)                              # UNCONDITIONAL QFT⁻¹
+
+when(ctrl) do                              # singly-controlled SWAP
+    for j in 1:L; swap!(xj, bj); end
+end
+
+superpose!(b)                              # UNCONDITIONAL QFT
+for j in 1:L
+    modadd!(b, anc, (N - c_j) mod N, N; ctrls=(ctrl, xj))
+end
+interfere!(b)                              # UNCONDITIONAL QFT⁻¹
+```
+
+### Correctness sketch (ctrl=0 branch)
+
+- Unconditional `superpose!(b)` on `|0⟩` → `|Φ(0)⟩`.
+- All modadds in forward CMULT have `ctrls=(ctrl=0, …)` — every internal
+  `_apply_ctrls` body skipped. modadd runs its QFT/sub/CNOT/X pattern
+  internally, which per Beauregard's correctness argument collapses to
+  identity because `b < N`. So `b` stays `|Φ(0)⟩`.
+- `interfere!(b)` inverts the outer QFT → `b = |0⟩`.
+- `when(ctrl=0) do swap! end` — SWAP skipped. `x` unchanged.
+- Second QFT sandwich: same argument, `b` returns to `|0⟩`.
+
+Net: `x` unchanged, `b = |0⟩`, `anc = |0⟩`. ✓ Identity on ctrl=0.
+
+ctrl=1 branch: every modadd fires, forward CMULT computes
+`b = (a·x) mod N` in Fourier basis, QFT⁻¹ brings it to computational
+basis, SWAP puts `(a·x) mod N` on x wires and `x_orig` on b wires,
+reverse CMULT with `a⁻¹` zeros b.  Result: `x = (a·x_orig) mod N`.
+
+### Max control depth after refactor
+
+| Site                                 | Old | New |
+|--------------------------------------|----:|----:|
+| modadd step 1 (ADD(a))               | 3   | 2   |
+| modadd step 6 (anc-ADD(N))           | 3   | 1   |
+| modadd step 7 (SUB(a))               | 3   | 2   |
+| modadd step 13 (ADD(a))              | 3   | 2   |
+| modadd steps 2-5, 8-12 (all others) | 2   | 0   |
+| mulmod QFT on b                      | 1   | 0   |
+| mulmod SWAP                          | 1   | 1   |
+
+All primitives now hit Sturm's nc≤2 inline HotNode fast path. Zero
+workspace ancilla allocation, zero Toffoli-cascade reverse passes.
+
+### Verification
+
+Before committing, two-phase verification per WORKLOG's uf4 handoff
+checklist plus `feedback_verbose_eager_flush.md` discipline.
+
+**Phase 1** — minimal probe (`test/probe_uf4_minimal.jl`, new). Eight
+stages, per-case `println(stderr, …) + flush(stderr)` with wall-ms and
+free-RAM on every log line:
+
+- Stage 1: `modadd!` no-kwarg — L=2 N=3 a=2 b=1 → 0. GREEN.
+- Stage 2, 2b: `modadd!(…; ctrls=(c,))` — c=|1⟩ acts, c=|0⟩ identity. GREEN.
+- Stage 3, 3b, 3c: `modadd!(…; ctrls=(c1,c2))` — 11→act, 01/10 identity. GREEN.
+- Stage 4, 4b: `mulmod_beauregard!` L=2 N=3 a=2 x=1 → 2 (ctrl=1) / 1 (ctrl=0). GREEN.
+- Stage 5: L=2 N=3 sweep 12 cases. GREEN.
+- Stage 6: L=3 exhaustive ctrl=|1⟩ across N∈{3,5,7}, 68 cases. 0 fail, 41 s.
+- Stage 7: L=3 exhaustive ctrl=|0⟩ identity across N∈{5,7}, 62 cases. 0 fail, 5.6 s.
+- Stage 8: coherent ctrl=|+⟩ at L=3, 3 cases × 400 shots = 1200 shots.
+  Results 197/203, 204/196, 193/207 — all within ±15% of 200/200.
+  **0 spurious outcomes across 1200 shots.**
+
+Peak RAM usage 60.16 GiB free (of 60.41 at start). Zero blowup — the
+physics-motivated depth reduction eliminated the cascade entirely.
+
+**Phase 2** — registered test file. `julia --project -e
+'include("test/test_arithmetic.jl")'` (targeted, not full `Pkg.test()`
+per `sturm-jl-test-suite-slow` memory):
+
+| Testset                                     | Pass/Total   | Time     |
+|---------------------------------------------|--------------|----------|
+| `add_qft!`                                  | 809 / 809    |  2.2 s   |
+| `modadd!`                                   | 2130 / 2130  |  0.7 s   |
+| `mulmod_beauregard!`                        | 269 / 269    |  1m19 s  |
+
+All 3208 arithmetic tests green on the first run after the refactor.
+modadd's backward-compatible path (`ctrls = ()` default) preserved the
+2130-pass modadd sweep unchanged.
+
+### Soft-scope gotcha (Julia 1.12)
+
+Initial Stage 6 draft used `n_cases = 0; … for …; n_cases += 1; end`
+pattern. Julia 1.12 warned "Assignment to `n_cases` in soft scope is
+ambiguous" and then **errored** with `UndefVarError: n_cases not defined
+in local scope` when the `@context` macro body tried to increment.
+The `@context` expansion introduces a function barrier; assignments to
+names declared in the enclosing soft scope (a script top level) are
+treated as new locals inside the function, shadowing the outer name,
+and the initial `n_cases = 0` doesn't propagate in.
+
+**Fix:** wrap each stage in `let … end` and use `Ref(0)` for counters:
+
+```julia
+let
+    n_cases = Ref(0); n_fail = Ref(0)
+    for …
+        @context EagerContext() begin
+            …
+            n_cases[] += 1
+        end
+    end
+end
+```
+
+Session 12 WORKLOG (~L2602) flagged the same problem with a slightly
+different workaround ("wrap test bodies in functions"). Either works;
+Ref is shorter for probes.
+
+### Files touched
+
+- `src/library/arithmetic.jl` — `_apply_ctrls` helper, `modadd!` ctrls
+  kwarg, `mulmod_beauregard!` refactor (pull QFTs, push ctrls down).
+- `test/probe_uf4_minimal.jl` (new) — 8-stage verbose-flush probe, kept
+  as a dev tool.  Not registered in runtests.jl (the existing
+  `test/test_arithmetic.jl` covers the same cases under `@testset`).
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-uf4` closed.
+
+### Handoff — `Sturm.jl-6kx` unblocked
+
+`shor_order_D` can now be built on top of `mulmod_beauregard!`.
+Expected scaling per Session 8jx analysis: O(L⁴) gates (t·L³ = 2L·L³).
+At L=14 the prediction is ~50k gates vs impl C's measured 47M → **1000×
+reduction** if the scaling holds. Benchmark plumbing already exists in
+`test/bench_shor_scaling.jl` (Sturm.jl-8jx closed): preflight + watchdog
+accept a new impl via env var filtering. A new impl D = "shor with
+arithmetic mulmod" can plug in the same way A/B/C do.
+
+Work not yet done on 6kx, flagged:
+
+1. Classical preprocessing: `a_js = [(a^(2^j)) mod N for j in 0:(t-1)]`
+   — already present in impls A/B/C.
+2. Loop body: `when(phase_qubits[j]) do mulmod_beauregard!(x, a_js[j],
+   N, ctrl=…) end` — but the outer `when(phase_qubits[j])` adds a third
+   control to every primitive inside mulmod. To stay on the 2-deep
+   fast path, `mulmod_beauregard!` needs a `ctrls=` kwarg too, pushing
+   `phase_qubits[j]` into modadd's `(ctrl, xj, phase_j)` — but that is
+   3 controls, which Sturm's inline HotNode doesn't support. Options:
+   (a) pre-AND `phase_j AND ctrl` into a workspace ancilla, then call
+   `mulmod_beauregard!(x, a_js[j], N, and_ancilla)` — 2-deep max,
+   single workspace Toffoli per mulmod amortised over 2L modadds.
+   (b) extend modadd's `ctrls::Tuple` to accept 3 QBools (adds one more
+   `_apply_ctrls` method, triggers a 3-deep nested when — cascade on
+   the 3 φADD(a) gates only, not on every primitive; still much cheaper
+   than today's impls).
+   Picking between (a) and (b) is a measurement question for the 6kx
+   session.
+3. Semi-classical iQFT on a single phase qubit (Beauregard §2.4, fig.
+   8). Measurement-driven corrections (X^{m_i}, R_{2i} phase gate
+   depending on all prior measurements). This is clean classical
+   feedback through P2 casts; low risk.
+
+### Gotchas saved for future sessions
+
+1. **Beauregard p.6 correctness for "doubly control only φADD(a)" is
+   easy to miss.** The figure (Fig. 5) shows c1, c2 dots on every
+   horizontal run of the controlled register, but only three vertical
+   lines actually drop INTO the φADD(a) blocks.  The verbal statement
+   in the prose (p.6) is the load-bearing part: "the rest of the circuit
+   implements the identity on all qubits because b < N."  A naive
+   transcription that copies the figure literally misses this, and the
+   resulting code has 3-deep control nesting = cascade explosion.
+
+2. **Pulling unconditional QFT/QFT⁻¹ out of a `when(ctrl)` block is
+   correct because QFT·(any state)·QFT⁻¹ = any state.**  With ctrl=0
+   the modadds between the QFT sandwich all skip, so the net transform
+   on `b` is identity whether the QFTs run or not.  Running them
+   unconditionally saves depth without changing the channel.  Not every
+   unitary has this property — e.g. a `Hadamard·X·Hadamard` sandwich
+   around a ctrl-guarded block would NOT be safe to lift because
+   `Hadamard² ≠ I` up to a global phase that becomes relative under
+   an outer `when`.  QFT·QFT⁻¹ = I exactly, no phase.
+
+3. **Ref-based counters dodge Julia 1.12 soft-scope inside `@context`.**
+   Script-level counter++ inside `for … @context … n_cases += 1 … end`
+   errors at run time.  Wrap the stage in `let … end`, declare counters
+   as `Ref(0)`, increment via `n_cases[] += 1`.  Two lines of ceremony,
+   no warning noise.
+
+4. **Per-stage `println(stderr, …) + flush(stderr)` with free-RAM on
+   every line is how you keep verbose-eager-flush (`feedback_…`)
+   honoured.**  A single `_log(s)` helper that formats `[ms] [free=X
+   GiB] s` and flushes makes this a 1-line cost per stage.  The
+   blank-screen-wait that caused Session 24's interrupt would have been
+   impossible to miss with this pattern.
+
+---
+
 ## 2026-04-18 — Session 24 END-OF-DAY HANDOFF
 
 **Stop reason:** user ended the session. Tree is clean; all work
