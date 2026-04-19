@@ -853,18 +853,6 @@ end
     shor_order_D(a::Int, N::Int; t::Int=3, verbose::Bool=true) -> Int
     shor_order_D(a::Int, N::Int, ::Val{t}) where {t}
 
-!!! warning "Known correctness issue — Sturm.jl-di9 (P0)"
-    `mulmod_beauregard!` leaks a π/2 phase on its `ctrl=|1⟩` branch
-    whenever `x > 0`, decohering the counter qubit inside the PE
-    cascade. This breaks `shor_order_D` for L ≥ 5 (N ≥ 21). It
-    happens to work at N=15 because only 2 of 3 mulmods fire (order
-    saturation gives a_j = [a, a², 1, 1, …]) and the accumulated
-    decoherence aligns with PE peaks by coincidence. Do NOT use
-    `shor_order_D` for factoring larger N until di9 is fixed. The
-    polynomial-in-L DAG structure stands (bench_shor_scaling.jl :D
-    entries remain valid for trace-size measurement), but the
-    end-to-end simulation is only trustworthy at N=15.
-
 Order of `a` modulo `N` via the "controlled-U^{2^j} cascade" idiom (Box
 5.2 / Eq. 5.43), lifting **arithmetic** modular multiplication
 ([`mulmod_beauregard!`](@ref), Beauregard 2003 Fig. 7) instead of a
@@ -977,6 +965,187 @@ function shor_factor_D(N::Int; max_attempts::Int=16)
         end
 
         r = shor_order_D(a, N)
+        fs = _shor_factor_from_order(a, r, N)
+        !isempty(fs) && return fs
+    end
+    return Int[]
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Implementation D-semi — single-qubit recycled counter (Beauregard §2.4 Fig. 8)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The `shor_order_D` implementation uses `t` counter qubits + `2L+2` arithmetic
+# qubits, total `t + 2L + 2`. At `t = 2L` that's `4L + 2` — Beauregard's
+# §2.3 peak. §2.4 (p. 8) sharpens this to `2L + 3` by observing:
+#
+#   1. All `c-U_{a^{2^j}}` gates commute (they all act on the same y register,
+#      each conditional on a different counter qubit).
+#   2. The inverse QFT on the counter register can be applied **semi-
+#      classically** — one counter qubit at a time, with the Rz corrections
+#      for cross-terms computed from *measurement outcomes* of previously-
+#      measured counter qubits.
+#
+# Combining (1) + (2): process the counter one qubit at a time, recycling the
+# same physical qubit. At iteration `i = 1, …, t`:
+#
+#   a. Fresh `c = QBool(0)`, H to |+⟩.
+#   b. Classical phase correction `Rz(θ_i)` using bits measured at iterations
+#      `1 … i−1` — the Griffiths-Niu / Parker-Plenio 2000 formula
+#         θ_i  =  −2π · Σ_{j<i, bit_j = 1}  2^{-(i − j + 1)}
+#      (equivalent to the cross-term `R_{2i}` phase rotations that would have
+#      been applied between counter qubits in a non-measured iQFT circuit).
+#   c. `mulmod_beauregard!(y, a^{2^(t-i)}, N, c)` — controlled-U with the
+#      HIGHEST remaining power. Iter 1 uses `2^(t-1)`, iter t uses `2^0`.
+#      With this order, iter i's counter phase (on |1⟩) is exactly
+#      `2π · ỹ / 2^i` where `ỹ` is the t-bit PE output — the top bit of
+#      ỹ shows up as a π phase at iter 1 (clean measurement of bit_0 = LSB)
+#      and successive iters extract progressively higher bits after the
+#      cross-term correction from `b` has removed the lower-bit contributions.
+#   d. H then `Bool(c)` — measure bit `m_i` (= bit `i−1` of ỹ).
+#
+# After all `t` iterations, `ỹ = Σ m_i · 2^{i−1}` (little-endian — iteration
+# 1 produces the LSB), passed through the same continued-fractions post-
+# processing as every other impl.
+#
+# # Peak wires
+#
+# Counter region: 1 (reused across t iterations).
+# y register (eigenstate): L.
+# `mulmod_beauregard!` interior: L+1 (b) + 1 (anc), per uf4/6kx.
+# Cascade workspace (doubly-controlled Rz inside modadd's φADD(a) calls):
+#   nc=2 in EagerContext goes through `_multi_controlled_gate!` with
+#   1 workspace ancilla, allocated/freed per primitive. Charges +1 live
+#   qubit at cascade time (concurrent with the other live qubits).
+#
+# Total peak = 1 + L + (L+1) + 1 + 1 = **2L + 4**, independent of `t`.
+# Matches Beauregard's "2n+3" bound plus the 1-workspace cascade cost
+# introduced by Sturm's multi-controlled Rz lowering — see
+# `src/context/multi_control.jl`. At L=13 that's 30 wires (Orkan's
+# statevector cap); at L=14 it's 32 wires, tracing-only. DAG-level
+# tracing remains unconstrained.
+#
+# # Reference
+#   Beauregard 2003 §2.4 (p. 8) Fig. 8 — the "one controlling-qubit trick".
+#   Griffiths & Niu 1996 (quant-ph/9511007) — original semi-classical iQFT
+#   Parker & Plenio 2000 (quant-ph/0001104) §II — efficient factoring with
+#   few qubits, concrete Rz phase correction formula.
+#   `docs/physics/beauregard_2003_2n3_shor.pdf`.
+
+"""
+    shor_order_D_semi(a::Int, N::Int; t::Int=3, verbose::Bool=false) -> Int
+    shor_order_D_semi(a::Int, N::Int, ::Val{t}) where {t}
+
+Order of `a` modulo `N` via the Beauregard §2.4 (Fig. 8) "one controlling
+qubit" trick — identical outer cascade to [`shor_order_D`](@ref) but with
+the `t`-wide counter register collapsed to a single recycled `QBool` via
+semi-classical inverse QFT. Same post-processing (continued fractions)
+returns the candidate period.
+
+Total live wires at peak: **`2L + 4`**, independent of `t`. Matches
+Beauregard's "2n+3 qubits" bound plus a 1-workspace charge from
+Sturm's doubly-controlled Rz Toffoli-cascade lowering.
+
+Arguments are as in [`shor_order_D`](@ref). See there for the definition
+of `L`, the choice of `t`, and the correctness regime.
+"""
+function shor_order_D_semi(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where {t}
+    gcd(a, N) == 1 || error("shor_order_D_semi: a=$a and N=$N must be coprime")
+    1 <= a < N || error("shor_order_D_semi: a=$a must satisfy 1 ≤ a < N=$N")
+    L = max(1, ceil(Int, log2(N)))
+
+    ctx = current_context()
+    t0 = time_ns()
+    lq() = _live_qubits(ctx)
+    ms() = round((time_ns() - t0) / 1e6, digits=1)
+    verbose && _shor_log("[shor_D_semi t=+0.0ms] start a=$a N=$N t=$t L=$L  live=$(lq())")
+
+    # Parker-Plenio 2000 §II: measure LSB-first, using c-U^{2^(t-i)} at iter
+    # i. So iter 1 uses the *highest* power 2^(t-1), iter t uses 2^0.
+    # Pre-compute in the order we'll consume them: a_js[i] = a^{2^(t-i)}.
+    a_js = [powermod(a, 1 << (t - i), N) for i in 1:t]
+    verbose && _shor_log("[shor_D_semi t=+$(ms())ms] classical a_j=$(a_js)")
+
+    # Shared eigenstate across all t stages — |1⟩_L is Eq. 5.44 of N&C §5.3.1.
+    y_reg = QInt{L}(ctx, 1)
+    verbose && _shor_log("[shor_D_semi t=+$(ms())ms] y = QInt{$L}(1) eigenstate   live=$(lq())")
+
+    bits = Bool[]
+    sizehint!(bits, t)
+    for i in 1:t
+        a_j = a_js[i]
+
+        # (a) Fresh counter qubit, H → |+⟩.
+        c = QBool(0)
+        H!(c)
+
+        # (b) Classical phase correction from prior-measured bits.
+        #     θ_i = -2π · Σ_{j<i, bits[j]} 2^{-(i-j+1)}
+        corr = 0.0
+        for j in 1:(i - 1)
+            if bits[j]
+                corr -= 2π / (1 << (i - j + 1))
+            end
+        end
+        if corr != 0.0
+            c.φ += corr
+        end
+
+        # (c) Skip the mulmod if a_j == 1 — identity, 2L modadds saved.
+        #     The Rz correction and H/measure still fire (they commute
+        #     with identity on y so the measurement statistics are preserved).
+        if a_j != 1
+            verbose && _shor_log("[shor_D_semi t=+$(ms())ms] iter $i: mulby a_$i=$a_j  live=$(lq()) cap=$(ctx.capacity)")
+            t_stage = time_ns()
+            mulmod_beauregard!(y_reg, a_j, N, c)
+            stage_ms = round((time_ns() - t_stage) / 1e6, digits=1)
+            verbose && _shor_log("[shor_D_semi t=+$(ms())ms] iter $i: mulmod done in $(stage_ms)ms  live=$(lq())")
+        else
+            verbose && _shor_log("[shor_D_semi t=+$(ms())ms] iter $i: SKIP mulby a_$i=1 (identity)")
+        end
+
+        # (d) H then measure → bit m_i.
+        H!(c)
+        m_i = Bool(c)
+        push!(bits, m_i)
+        verbose && _shor_log("[shor_D_semi t=+$(ms())ms] iter $i: m_$i = $(m_i)")
+    end
+
+    # Reconstruct ỹ with iter-i bit at position 2^{i-1} (LSB-first convention).
+    y_tilde = 0
+    for (idx, b) in enumerate(bits)
+        b && (y_tilde |= (1 << (idx - 1)))
+    end
+    verbose && _shor_log("[shor_D_semi t=+$(ms())ms] ỹ = $(y_tilde) (bits = $(bits))")
+
+    discard!(y_reg)
+    r = _shor_period_from_phase(y_tilde, t, N)
+    verbose && _shor_log("[shor_D_semi t=+$(ms())ms] decoded φ=$y_tilde/$(1<<t) r=$r   (total=$(ms())ms)")
+    return r
+end
+
+shor_order_D_semi(a::Int, N::Int; t::Int=3, verbose::Bool=false) =
+    shor_order_D_semi(a, N, Val(t); verbose=verbose)
+
+"""
+    shor_factor_D_semi(N::Int; max_attempts::Int=16) -> Vector{Int}
+
+Factor composite `N` using the Beauregard 2003 `2n+3`-qubit pipeline
+([`shor_order_D_semi`](@ref)). Identical classical post-processing to
+[`shor_factor_D`](@ref).
+"""
+function shor_factor_D_semi(N::Int; max_attempts::Int=16)
+    N >= 2 || error("shor_factor_D_semi: N=$N must be ≥ 2")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    for _ in 1:max_attempts
+        a = rand(2:(N - 1))
+        g = gcd(a, N)
+        if g > 1
+            return sort!([g, N ÷ g])
+        end
+
+        r = shor_order_D_semi(a, N)
         fs = _shor_factor_from_order(a, r, N)
         !isempty(fs) && return fs
     end
