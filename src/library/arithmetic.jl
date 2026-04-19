@@ -86,8 +86,22 @@ computes `(y − a) mod 2^L` in the computational basis after `interfere!`.
 """
 sub_qft!(y::QInt{L}, a::Integer) where {L} = add_qft!(y, -Int(a))
 
+# ── Internal: nested `when`s from a tuple of controls ─────────────────────
+#
+# `_apply_ctrls(f, ())`            ≡ f()
+# `_apply_ctrls(f, (c1,))`         ≡ when(c1) do f() end
+# `_apply_ctrls(f, (c1, c2))`      ≡ when(c1) do when(c2) do f() end end
+#
+# Hot-path helper for modadd!'s ctrls kwarg. Stays @inline so Julia elides
+# the Tuple dispatch at the call site.
+@inline _apply_ctrls(f, ::Tuple{}) = f()
+@inline _apply_ctrls(f, c::Tuple{QBool}) = when(c[1]) do; f(); end
+@inline _apply_ctrls(f, c::Tuple{QBool,QBool}) =
+    when(c[1]) do; when(c[2]) do; f(); end; end
+
 """
-    modadd!(y::QInt{Lplus1}, anc::QBool, a::Integer, N::Integer) -> y
+    modadd!(y::QInt{Lplus1}, anc::QBool, a::Integer, N::Integer;
+             ctrls::Tuple = ()) -> y
 
 Modular addition of classical constant `a` into a Fourier-basis register
 `y`, using one ancilla qubit that is returned clean. Beauregard 2003 Fig. 5.
@@ -103,34 +117,46 @@ Modular addition of classical constant `a` into a Fourier-basis register
   * `y` is in Fourier basis, representing `(a + b) mod N`.
   * `anc` is `|0⟩`.
 
-# Controlled use
+# Controlled use — the `ctrls` kwarg
 
-When this function is called inside `when(ctrl) do … end` (or nested
-whens), every primitive inherits those controls. If `ctrl = |0⟩`, the
-entire circuit evaluates to the identity on `(y, anc)` — this follows
-from Beauregard's invariance argument in §2.2: the unconditional QFT,
-subtract-N, CNOT, X-on-MSB, X-on-MSB, subtract-a, …
-pattern collectively cancels to the identity on `(y, anc)` when the
-three `add_qft!(y, a)` / `sub_qft!(y, a)` calls are skipped.
+Pass `ctrls = (c1,)` or `ctrls = (c1, c2)` to make the gate
+doubly/singly controlled *in the Beauregard sense*: only the three
+`add_qft!(y, a)` / `sub_qft!(y, a)` calls at steps 1, 7, 13 inherit the
+controls; everything else runs unconditionally. Beauregard 2003 p. 6
+("we will doubly control only the φADD(a) gates instead of all the
+gates") proves this is correct — if the three φADD(a) gates are
+skipped, the remaining QFT/sub-N/CNOT/X pattern collapses to identity
+on `(y, anc)` because `b < N`.
 
-In our case the SKIP is implicit (every primitive is under `when(ctrl)`,
-so ctrl=0 skips everything). Simpler, same correctness.
+This is **not** equivalent to `when(c1) do modadd!(y, anc, a, N) end`.
+The `when`-wrapped form puts `c1` on the control stack for *every*
+primitive inside modadd, including the `when(anc) add_qft!(y, N)` at
+step 6 — producing a depth-2 control (c1, anc) on each Rz.  With
+`ctrls`, step 6 still sees only `[anc]` → depth 1.  The saving is
+dramatic in nested callers: `mulmod_beauregard!` goes from a 3-deep
+multi-controlled cascade (which triggers
+`_multi_controlled_gate!` workspace allocation for every primitive) to
+a 2-deep fast path.
+
+Backward compatibility: with `ctrls = ()` (the default) and an outer
+`when(ctrl) do modadd!(...) end` wrapper, every primitive inherits
+`ctrl` as before.  All existing call sites keep working.
 
 # Circuit (13 steps, Beauregard Fig. 5)
 
-     1. add_qft!(y, a)               — y := Φ(a + b)
-     2. sub_qft!(y, N)               — y := Φ(a + b − N)
-     3. interfere!(y)                — y to computational basis
-     4. anc ⊻= MSB(y)                — flip anc iff a+b < N
-     5. superpose!(y)                — y back to Fourier
-     6. when(anc) add_qft!(y, N)     — if we overshot, add N back
-     7. sub_qft!(y, a)               — y := Φ((a+b) mod N − a)
-     8. interfere!(y)                — to computational basis
-     9. MSB.θ += π                   — Ry(π): flip MSB
-    10. anc ⊻= MSB(y)                — un-flip anc (works since b < N)
-    11. MSB.θ -= π                   — Ry(-π): un-flip MSB, phases cancel
-    12. superpose!(y)                — to Fourier
-    13. add_qft!(y, a)               — y := Φ((a+b) mod N)
+     1. add_qft!(y, a)               — y := Φ(a + b)                [under ctrls]
+     2. sub_qft!(y, N)               — y := Φ(a + b − N)             (unconditional)
+     3. interfere!(y)                — y to computational basis       (unconditional)
+     4. anc ⊻= MSB(y)                — flip anc iff a+b < N           (unconditional)
+     5. superpose!(y)                — y back to Fourier              (unconditional)
+     6. when(anc) add_qft!(y, N)     — if we overshot, add N back     (anc-controlled)
+     7. sub_qft!(y, a)               — y := Φ((a+b) mod N − a)        [under ctrls]
+     8. interfere!(y)                — to computational basis         (unconditional)
+     9. MSB.θ += π                   — Ry(π): flip MSB                (unconditional)
+    10. anc ⊻= MSB(y)                — un-flip anc                    (unconditional)
+    11. MSB.θ -= π                   — Ry(-π): un-flip MSB            (unconditional)
+    12. superpose!(y)                — to Fourier                     (unconditional)
+    13. add_qft!(y, a)               — y := Φ((a+b) mod N)            [under ctrls]
 
 # Gate-phase note
 
@@ -147,26 +173,27 @@ CNOT at step 10 is unchanged.
   Beauregard 2003 §2.2 "The modular adder gate", p. 5–6, Fig. 5.
   `docs/physics/beauregard_2003_2n3_shor.pdf`.
 """
-function modadd!(y::QInt{Lp1}, anc::QBool, a::Integer, N::Integer) where {Lp1}
+function modadd!(y::QInt{Lp1}, anc::QBool, a::Integer, N::Integer;
+                 ctrls::Tuple = ()) where {Lp1}
     check_live!(y); check_live!(anc)
     ctx = y.ctx
     msb = QBool(y.wires[Lp1], ctx, false)
 
-    add_qft!(y, a)                 # 1.  Φ(b)     → Φ(a+b)
-    sub_qft!(y, N)                 # 2.           → Φ(a+b−N)
-    interfere!(y)                  # 3.  Fourier  → computational
-    anc ⊻= msb                     # 4.  anc = 1 iff a+b < N
-    superpose!(y)                  # 5.  comp.    → Fourier
-    when(anc) do                   # 6.  if overshoot, add N back
+    _apply_ctrls(() -> add_qft!(y, a), ctrls)  # 1.  Φ(b)     → Φ(a+b)
+    sub_qft!(y, N)                             # 2.           → Φ(a+b−N)
+    interfere!(y)                              # 3.  Fourier  → computational
+    anc ⊻= msb                                 # 4.  anc = 1 iff a+b < N
+    superpose!(y)                              # 5.  comp.    → Fourier
+    when(anc) do                               # 6.  if overshoot, add N back
         add_qft!(y, N)
     end
-    sub_qft!(y, a)                 # 7.           → Φ((a+b) mod N − a)
-    interfere!(y)                  # 8.
-    msb.θ += π                     # 9.  flip MSB (Ry(π))
-    anc ⊻= msb                     # 10. un-flip anc: correlated with flipped-MSB
-    msb.θ -= π                     # 11. un-flip MSB (Ry(−π)) — phases cancel
-    superpose!(y)                  # 12.
-    add_qft!(y, a)                 # 13. final Φ((a+b) mod N)
+    _apply_ctrls(() -> sub_qft!(y, a), ctrls)  # 7.           → Φ((a+b) mod N − a)
+    interfere!(y)                              # 8.
+    msb.θ += π                                 # 9.  flip MSB (Ry(π))
+    anc ⊻= msb                                 # 10. un-flip anc
+    msb.θ -= π                                 # 11. un-flip MSB (Ry(−π))
+    superpose!(y)                              # 12.
+    _apply_ctrls(() -> add_qft!(y, a), ctrls)  # 13. final Φ((a+b) mod N)
 
     return y
 end
@@ -190,30 +217,56 @@ Controlled modular multiplication by a classical constant:
 
 # Gate count
 
-  `mulmod_beauregard!` uses `2L` calls to [`modadd!`](@ref), each with a
-  classical constant smaller than N, plus one L-qubit controlled-SWAP.
-  Each `modadd!` is O(L) gates (dominated by the QFT + add_qft pair).
-  Total: **O(L²) gates** per mulmod, **O(L² log L)** if counting
-  approximate-QFT optimisations. Polynomial in L — compare QROM-based
+  `mulmod_beauregard!` uses `2L` calls to [`modadd!`](@ref) (with
+  `ctrls = (ctrl, xj)` doubly controlled), plus two unconditional QFT
+  sandwiches on the `(L+1)`-qubit accumulator and a single
+  `ctrl`-controlled SWAP of L qubits. Each `modadd!` is O(L) gates.
+  Total: **O(L²) gates** per mulmod. Polynomial in L — compare QROM-based
   impls (A/B/C in `src/library/shor.jl`) which are O(2^L).
 
-# Method (Fig. 7)
+# Control-depth optimisation (the fix for the 3-deep cascade)
 
-Allocate an (L+1)-qubit accumulator `b := |0⟩` and one ancilla.
-Under `when(ctrl)`:
+The naive transcription of Fig. 7 wraps *everything* in
+`when(ctrl) do … end`, and each CMULT inner loop adds a second
+`when(xj)`. Combined with modadd's own `when(anc) add_qft!(y, N)` at
+step 6 this yields depth 3 — every primitive goes through Sturm's
+`_multi_controlled_gate!` cascade (2 workspace qubits allocated per
+gate). At L=3 this is thousands of gates per mulmod.
 
-  1. `CMULT(a) MOD(N)` : for each bit j of x, doubly-controlled
-     modular addition of `(a · 2^j) mod N` into `b`. Result: `b = (a·x) mod N`.
-  2. Controlled-SWAP(x, b[1..L]): swaps x with the first L qubits of b.
-     After: `x = (a·x_orig) mod N`, `b[1..L] = x_orig`, `b[L+1] = 0`.
-  3. `CMULT(a⁻¹) MOD(N)⁻¹` : inverse of forward CMULT with a⁻¹ — for
-     each bit j of x (the NEW x = (a·x_orig) mod N), controlled
-     modular SUBTRACTION of `(a⁻¹ · 2^j) mod N` from `b`. This
-     computes `b := b − a⁻¹·x mod N = x_orig − a⁻¹·(a·x_orig) mod N = 0`.
+Per Beauregard 2003 p. 6, the φADD(a) calls inside modadd are the
+*only* ones that need the external (c, xj) control: "If the φADD(a)
+gates are not performed, it is easy to verify that the rest of the
+circuit implements the identity on all qubits because b < N." We pass
+`ctrls = (ctrl, xj)` via `modadd!`'s kwarg so only those three calls
+pick up the extra controls — the 10 non-ADD(a) primitives inside
+modadd stay unconditional (or anc-controlled at step 6). Depth caps
+at 2 on the ADD(a) calls and 1 elsewhere: Sturm fast path, no cascade.
+
+The outer QFT / QFT⁻¹ on `b` are also lifted out of `when(ctrl)`:
+with ctrl=0 all modadds are skipped, so `b` stays in the state produced
+by the forward QFT, and the closing QFT⁻¹ inverts it — net identity on
+`b`. Same for the inverse CMULT sandwich.
+
+# Method (Fig. 7, with Beauregard p. 6 optimisation)
+
+Allocate an (L+1)-qubit accumulator `b := |0⟩` and one ancilla, both
+unconditional.
+
+  1. `QFT(b)` — unconditional (identity when paired with closing QFT⁻¹
+     even if ctrl=0 because modadds all skip).
+  2. CMULT(a)MOD(N) forward sweep: for each bit j of x, call
+     `modadd!(b, anc, (a·2^j) mod N, N; ctrls=(ctrl, xj))`.  Result
+     (ctrl=1): `b = (a·x) mod N` in Fourier basis.
+  3. `QFT⁻¹(b)` — unconditional.  b is now in computational basis.
+  4. Controlled-SWAP(x, b[1..L]) under `when(ctrl)`: single control,
+     depth 1, fast path.
+  5. `QFT(b)` — unconditional.
+  6. CMULT(a⁻¹)MOD(N)⁻¹ reverse sweep: same pattern as step 2 but with
+     `(N − a⁻¹·2^j) mod N` as the classical constant (modular subtract
+     via add-of-negation). Zeroes `b` by `b := b − a⁻¹·x_new = 0`.
+  7. `QFT⁻¹(b)` — unconditional.
 
 `a⁻¹ = invmod(a, N)` computed classically via extended Euclid.
-Modular subtraction of `c` is implemented as `modadd!(b, …, N − c, N)`
-since `(b + (N − c)) mod N = (b − c) mod N`.
 
 # Reference
   Beauregard 2003 §2.3 "The controlled multiplier gate", p. 7–8,
@@ -232,51 +285,62 @@ function mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer,
 
     ctx = x.ctx
 
-    # Allocate work registers UNCONDITIONALLY (outside when(ctrl)) so that
-    # allocation/deallocation is not itself controlled. When ctrl = 0, the
-    # body is skipped and these stay at |0⟩; when ctrl = 1, the circuit
-    # restores them to |0⟩.
+    # Work registers allocated unconditionally: b is the (L+1)-qubit
+    # Fourier accumulator, anc is modadd's 1-qubit overflow flag.  Both
+    # return to |0⟩ on either ctrl branch and get clean-discarded.
     b   = QInt{L + 1}(0)
     anc = QBool(0)
 
-    when(ctrl) do
-        # ── 1. CMULT(a)MOD(N): b ← b + a·x mod N ─────────────────────
-        superpose!(b)
-        for j in 1:L
-            xj = QBool(x.wires[j], ctx, false)
-            c  = (a_mod * (1 << (j - 1))) % Int(N)
-            c == 0 && continue
-            when(xj) do
-                modadd!(b, anc, c, N)
-            end
-        end
-        interfere!(b)
-        # state: |ctrl=1⟩|x⟩|b = a·x mod N⟩|anc=0⟩
+    # ── 1. QFT on b (unconditional) ──────────────────────────────────
+    superpose!(b)
 
-        # ── 2. Controlled SWAP(x, b[1..L]) ────────────────────────────
+    # ── 2. CMULT(a)MOD(N) forward: b ← b + a·x mod N ────────────────
+    # Each modadd doubly controlled by (ctrl, xj) via the ctrls kwarg —
+    # the φADD(a) gates inside modadd pick up depth 2, everything else
+    # stays unconditional (Beauregard p. 6).
+    for j in 1:L
+        xj = QBool(x.wires[j], ctx, false)
+        c  = (a_mod * (1 << (j - 1))) % Int(N)
+        c == 0 && continue
+        modadd!(b, anc, c, N; ctrls=(ctrl, xj))
+    end
+
+    # ── 3. QFT⁻¹ on b ────────────────────────────────────────────────
+    interfere!(b)
+    # state (ctrl=1): |ctrl⟩|x⟩|b = a·x mod N⟩|anc=0⟩
+    # state (ctrl=0): |ctrl⟩|x⟩|b = 0⟩|anc=0⟩  (QFT·QFT⁻¹ on |0⟩ = |0⟩)
+
+    # ── 4. Controlled-SWAP(x, b[1..L]) ──────────────────────────────
+    # Single control: depth 1, fast path.  3 CNOTs per bit via swap!.
+    when(ctrl) do
         for j in 1:L
             xj = QBool(x.wires[j], ctx, false)
             bj = QBool(b.wires[j], ctx, false)
             swap!(xj, bj)
         end
-        # state: |ctrl=1⟩|a·x_orig mod N⟩|b[1..L]=x_orig, b[L+1]=0⟩|anc=0⟩
+    end
+    # state (ctrl=1): |a·x_orig mod N⟩|b[1..L]=x_orig, b[L+1]=0⟩|anc=0⟩
+    # state (ctrl=0): unchanged
 
-        # ── 3. CMULT(a⁻¹)MOD(N)⁻¹: b ← b − a⁻¹·x mod N = 0 ───────────
-        superpose!(b)
-        for j in 1:L
-            xj = QBool(x.wires[j], ctx, false)
-            c  = (a_inv * (1 << (j - 1))) % Int(N)
-            c == 0 && continue
-            when(xj) do
-                # inverse of "add c": subtract c mod N  ≡  add (N − c) mod N
-                modadd!(b, anc, mod(Int(N) - c, Int(N)), N)
-            end
-        end
-        interfere!(b)
-        # state: |ctrl=1⟩|a·x_orig mod N⟩|b=0⟩|anc=0⟩
+    # ── 5. QFT on b (unconditional) ──────────────────────────────────
+    superpose!(b)
+
+    # ── 6. CMULT(a⁻¹)MOD(N)⁻¹ reverse: b ← b − a⁻¹·x mod N = 0 ──────
+    # x now holds (a·x_orig) mod N on the ctrl=1 branch.  Subtracting
+    # a⁻¹·x = a⁻¹·(a·x_orig) = x_orig from the SWAPped register
+    # b[1..L] = x_orig gives b = 0.  Modular subtract via add-of-negation.
+    for j in 1:L
+        xj = QBool(x.wires[j], ctx, false)
+        c  = (a_inv * (1 << (j - 1))) % Int(N)
+        c == 0 && continue
+        modadd!(b, anc, mod(Int(N) - c, Int(N)), N; ctrls=(ctrl, xj))
     end
 
-    # Work registers are in |0⟩ on both ctrl branches — clean discard.
+    # ── 7. QFT⁻¹ on b ────────────────────────────────────────────────
+    interfere!(b)
+    # state: |a·x_orig mod N⟩|b=0⟩|anc=0⟩    (ctrl=1)
+    #        |x_orig⟩|b=0⟩|anc=0⟩              (ctrl=0)
+
     discard!(b)
     discard!(anc)
 
