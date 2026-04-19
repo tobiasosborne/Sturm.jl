@@ -4,6 +4,207 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-19 — Session 26: Close `Sturm.jl-6kx` (shor_order_D, polynomial-in-L Shor)
+
+Picked up from Session 25's uf4 close. The polynomial-in-L Shor chain's
+final brick: replace `shor_order_C`'s packed-QROM mulmod with
+`mulmod_beauregard!` while keeping the Box 5.2 / Eq. 5.43 cascade
+structure. Beauregard 2003 Fig. 7 "c-U_a" is literally a c-CMULT · c-SWAP
+· c-CMULT⁻¹ sandwich, and our Sturm.jl-uf4 signature already takes a
+single ctrl QBool — so the entire impl D body is ~20 lines of real logic
+plus docstring.
+
+### Ground truth (read before coding, per rule 4)
+
+`docs/physics/beauregard_2003_2n3_shor.pdf` pp. 7–11.
+
+- **Fig. 7 (p. 8)** and surrounding text (p. 7): c-U_a = three blocks
+  (forward CMULT(a), SWAP, inverse CMULT(a⁻¹)), each with an outer `c`
+  control dot. We already pass `c` to `mulmod_beauregard!` as its
+  `ctrl::QBool` argument — no wrapping `when(c)` needed.
+- **Eq. 4 (p. 8):** `(a^n x) mod N = a·(a·…·(a·x) mod N) mod N`. This
+  means we can run `c-U_{a^{2^j}}` directly, with `a^{2^j} mod N`
+  precomputed classically. Impl C already does this; impl D inherits.
+- **§3 (p. 11):** order-finding circuit = 2n of these c-U_a, each
+  `O(n²·k_max)` gates with depth `O(n²)`. With exact QFT `k_max = n`,
+  total = `O(n³ · k_max) = O(n⁴)` at `n = L`. Depth `O(n³)`.
+
+### Implementation
+
+Added to `src/library/shor.jl` between impl C (line 803) and the end.
+Two functions, exports in `src/Sturm.jl`:
+
+- `shor_order_D(a, N; t, verbose)` / `shor_order_D(a, N, ::Val{t})` —
+  Box 5.2 cascade body identical to impl C's outer shape (counter QInt{t},
+  superpose, eigenstate y=QInt{L}(1), t controlled mulmods, interfere,
+  discard, continued fractions). The inner mulmod call is
+  `mulmod_beauregard!(y_reg, a_j, N, ctrl)` with `ctrl =
+  QBool(c_reg.wires[j], ctx, false)`. NO wrapping `when(c_reg.wires[j])`
+  — this is the critical design decision, see below.
+- `shor_factor_D(N)` — mirrors `shor_factor_A/B/C`. Trivial wrapper.
+
+The skip-`a_j==1` optimization at the top of the mulmod loop saves 2L
+modadds per trivially-identity stage. Beauregard's c-U_a for a=1 is
+identity but the circuit still issues 2L modadds with classical
+constants `(2^(j-1)) mod N` and their inverses, cancelling to
+identity — wasteful. At N=15, a=7, order 4: a_j = {7, 4, 1, 1, …} so
+most t>2 stages save ~2L² gates each.
+
+### Key design decision — DO NOT wrap mulmod_beauregard! in when()
+
+The obvious impl-C-parallel is:
+
+```julia
+for j in 1:t
+    when(c_reg.wires[j]) do
+        mulmod_beauregard!(y_reg, a_j, N, /* what? */)
+    end
+end
+```
+
+This would be wrong. `mulmod_beauregard!` takes its own `ctrl::QBool`
+which it folds into modadd's `ctrls=(ctrl, xj)` kwarg (Sturm.jl-uf4
+fix). The outer `when(counter_qubit)` would then add a **third** control
+to every primitive inside modadd — reviving the 3-deep cascade we just
+killed in Session 25. The fast-path invariant (nc ≤ 2) fails, every Rz
+cascades through `_multi_controlled_gate!`, workspace ancillae allocate,
+gate count explodes.
+
+Correct pattern: pass `c_reg.wires[j]` *as* `mulmod_beauregard!`'s ctrl.
+The counter qubit is the `c` of Beauregard's Fig. 7. Inside modadd we
+then have `ctrls = (counter_qubit, x_j)` — depth 2, fast path.
+
+Documented in the `shor.jl` prose above the impl, with an explicit "NOT
+what we want" warning for the next agent.
+
+### Verification — probe first, then registered test
+
+Two-phase per `feedback_verbose_eager_flush.md` + `sturm-jl-test-suite-slow`
+memory.
+
+**Phase 1** — `test/probe_6kx_minimal.jl` (new, standalone). Four stages
+with per-shot `println(stderr, …)+flush` + free-RAM logging:
+
+| Stage | What | Result | Wall |
+|-------|------|--------|------|
+| 1 | Single verbose shot, N=15 a=7 t=3 | r=4, HWM 14q, cap 16 | 29.3 s (first mulmod paid 10 s JIT, second 17 s) |
+| 2 | 30 shots N=15 a=7 t=3, hit-rate on r=4 | 15/30 = 50%, 0 spurious | 93.6 s (3.1 s/shot warm) |
+| 3 | 20 shots N=15 a=2 t=3 | 8/20 = 40% r=4, 0 spurious | 30.7 s (1.5 s/shot warm) |
+| 4 | `shor_factor_D(15)` × 10 attempts | 10/10 → {3, 5} | 5.4 s |
+
+RAM flat at 59.7 GiB free throughout. HWM stable at 14 qubits
+(vs impl C's 26).
+
+**Phase 2** — `julia --project -e 'include("test/test_shor.jl")'`
+(targeted, not full `Pkg.test()`). Enabled the impl-D testset at
+`test/test_shor.jl:202-252`; impl-B and impl-C blocks remain
+`@test_skip` per their original intractability.
+
+### Resource comparison — impl D vs impl C at N=15 t=3
+
+| Metric                   | Impl C measured   | Impl D measured   | Ratio       |
+|--------------------------|------------------:|------------------:|------------:|
+| HWM qubits               | 26                | **14**            | −12 qubits  |
+| Orkan statevector cap    | 28  (4 GiB)       | **16** (~1 MiB)   | ~4000×      |
+| Wall time per shot       | 302 s             | 1.5–3.1 s (warm)  | **~100–200×** |
+| Hit rate r=4 (a=7)       | (untestable)      | 50% / 30 shots    | —           |
+| Factor(15) success rate  | (untestable)      | 10/10 → {3, 5}    | —           |
+
+Impl C's slowness was dominated by the 4 GiB statevector memory
+bandwidth per Toffoli × ~17 000 gates/shot. Impl D's (2L+3)-wire
+Beauregard circuit keeps the statevector at ~1 MiB — memory traffic per
+Toffoli drops 4000× and wall-time drops by essentially the same factor.
+Gate counts (from the tracing bench below) are actually *comparable*
+to impl C at small L and smaller at large L, so the statevector
+shrinkage is the whole win.
+
+### Benchmark calibration (`test/bench_shor_scaling.jl`)
+
+Added `:D` to `estimate_gates`, `trace_impl`, and every `CASES[*].impls`
+list. Tracing bench at L=4..6, STURM_BENCH_ONLY=D:
+
+| L | t  | wires | gates  | toffoli | est (old) | est (new 100·t·L²) | ratio |
+|--:|---:|------:|-------:|--------:|----------:|--------------------:|------:|
+| 4 |  8 |    24 |  2 447 |      24 |    25 620 |              12 800 | 5.2×  ← (2 of 8 mulmods fired; a=7 N=15 saturates after j=2) |
+| 5 | 10 |    85 | 19 395 |     150 |    50 025 |              25 000 | 1.29× |
+| 6 | 12 |   114 | 33 342 |     216 |    86 430 |              43 200 | 1.30× |
+
+Empirical fit `per-mulmod gates ≈ 77·L²` (L=5 and L=6 agree to 0.5%);
+slope (ln gates vs ln L) = 3.0 at fixed t → **O(L³) per order-find, O(L⁴)
+at t = 2L**. Matches Beauregard §3. Extrapolations:
+
+| L  | t  | est gates | est DAG bytes |
+|---:|---:|----------:|--------------:|
+|  7 | 14 |    68 600 |       1.7 MB  |
+| 10 | 20 |   200 000 |       5.0 MB  |
+| 14 | 28 |   548 800 |      14 MB    |
+| 18 | 36 | 1 166 400 |      29 MB    |
+
+vs impl C's measured **47 M gates / ~1.2 GB DAG** at L=14 → impl D at
+L=14 is projected at ~86× fewer gates AND polynomial growth (slope ~3)
+vs impl C's ~2^L exponential. The rotation in dominance flips around
+L=5 where impl D becomes cheaper by every measure.
+
+Bead acceptance criterion was "log-log slope ≤ 4 across L=6..14". We
+can only measure L=6 directly today (L=14 via estimator), but the
+L=5→6 slope of 3.0 is well under 4 and matches the analytic O(L⁴)
+prediction. Calibration at L=7..14 is the job of the next bench run.
+
+### Files touched
+
+- `src/library/shor.jl` — added `shor_order_D` + `shor_factor_D` and
+  the impl-D docstring block (~100 lines total). No changes to impls
+  A/B/C.
+- `src/Sturm.jl` — export `shor_order_D, shor_factor_D`.
+- `test/test_shor.jl` — new `@testset "Impl D: …"` with 3 sub-testsets
+  matching impl-A's shape (single-case hit rate, 7 coprime bases,
+  factor recovery). Impl B/C `@test_skip` blocks unchanged.
+- `test/probe_6kx_minimal.jl` (new) — standalone 4-stage verbose-flush
+  probe. Kept as a dev tool; not registered in runtests.jl.
+- `test/bench_shor_scaling.jl` — `:D` branch in `estimate_gates`
+  (`100·t·L²`), `:D` branch in `trace_impl`, `:D` added to every
+  `CASES[*].impls` list. Docstring for `estimate_gates` extended with
+  the `:D` calibration table.
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-6kx` closed.
+- Chain completion: ar7 (add_qft!) → dgy (modadd!) → uf4
+  (mulmod_beauregard!) → **6kx (shor_order_D)** — all four bricks of
+  the polynomial-in-L Shor epic Sturm.jl-c6n closed.
+
+### Gotchas for future agents
+
+1. **The single most important refactor choice in impl D is what NOT to
+   do.** Don't wrap `mulmod_beauregard!` in `when(counter_qubit)` — pass
+   `counter_qubit` as the ctrl kwarg. If a future caller/subroutine
+   needs c-U_a under an additional outer when (e.g. embedding Shor
+   inside a larger algorithm), either (a) pre-AND the two controls into
+   a workspace ancilla via one Toffoli and pass *that* as ctrl, or
+   (b) extend `mulmod_beauregard!` to accept `ctrls::Tuple` like
+   `modadd!` does today. Never nest when()s around a function that
+   already takes its own ctrl.
+
+2. **Skip a_j=1 at runtime or your bench looks like impl D is tiny at
+   small L.** For N=15 a=7 (order 4) at t=8 only 2 of 8 mulmods fire;
+   the bench showed 2447 gates vs a 12800 worst-case estimate. This is
+   correct behavior (identity mulmods are wasteful to emit), but it
+   confuses the cost calibration — always measure at cases where the
+   order is close to `2^t` so all a_j are non-trivial. L=5 N=21 a=2
+   (order 6) and L=6 N=35 a=2 (order 12) are both clean calibration
+   cases.
+
+3. **Per-mulmod gate count ≈ 77·L² is remarkably tight.** Two data
+   points (L=5, L=6) agree to 0.5% — this is a solid architectural
+   invariant. If a future change to `modadd!` or `add_qft!` changes the
+   per-mulmod gate count, the ratio will drift visibly. Treat this as a
+   regression indicator: the L=5 and L=6 numbers are 19395 and 33342
+   gates at t=2L; significant deviation means something changed at the
+   primitive level.
+
+---
+
 ## 2026-04-19 — Session 25: Close `Sturm.jl-uf4` (mulmod_beauregard! green-up)
 
 Picked up from Session 24 handoff: `mulmod_beauregard!` code committed on

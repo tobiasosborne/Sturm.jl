@@ -196,6 +196,68 @@ using Sturm
         @test_skip shor_order_C(7, 15; t=3) == 4
     end
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # Implementation D — Beauregard arithmetic mulmod (polynomial in L)
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # Measured resource profile (N=15, t=3, test/probe_6kx_minimal.jl, 2026-04-19):
+    #
+    #     HWM qubits:              14         (vs impl C's 26)
+    #     Orkan capacity:          16         (vs impl C's 28)
+    #     statevector size:        ~1 MiB     (vs impl C's 4 GiB)
+    #     per-shot wall (warm):    1.5–3 s    (vs impl C's 302 s — ~100× faster)
+    #     hit rate r=4:            50%  (30 shots a=7)
+    #     factor_D(15) recovery:   10/10 → {3, 5}
+    #
+    # The Beauregard c-U_a replaces the packed (L+1)-bit QROM index with a
+    # (2L+3)-qubit in-place arithmetic pattern — no QROM ancilla tree, no
+    # statevector-sized QROM tables. Memory traffic per Toffoli drops by
+    # ~4000×, which wins the wall-time race even though gate counts are
+    # comparable.
+    @testset "Impl D: Beauregard arithmetic mulmod (polynomial in L)" begin
+
+        @testset "order_D(7, 15; t=3) ≈ 4 with probability ≥ 0.3" begin
+            @context EagerContext() begin
+                N_shots = 30
+                hits = 0
+                for _ in 1:N_shots
+                    r = shor_order_D(7, 15; t=3, verbose=false)
+                    if r == 4; hits += 1; end
+                end
+                @test hits / N_shots >= 0.3
+            end
+        end
+
+        @testset "order_D on all 7 coprime bases for N=15" begin
+            # Same tolerance as impl A (≥ 0.2): t=3 is minimal and some bases
+            # have r=2 which fewer peaks resolve to.  Shots reduced to 20/base
+            # to keep the registered test within ~10 min.
+            expected = [(2, 4), (4, 2), (7, 4), (8, 4), (11, 2), (13, 4), (14, 2)]
+            for (a, r_exp) in expected
+                @context EagerContext() begin
+                    hits = 0
+                    N_shots = 20
+                    for _ in 1:N_shots
+                        if shor_order_D(a, 15; t=3, verbose=false) == r_exp; hits += 1; end
+                    end
+                    @test hits / N_shots >= 0.2
+                end
+            end
+        end
+
+        @testset "shor_factor_D(15) returns {3, 5}" begin
+            @context EagerContext() begin
+                N_attempts = 10
+                successes = 0
+                for _ in 1:N_attempts
+                    fs = shor_factor_D(15)
+                    if Set(fs) == Set([3, 5]); successes += 1; end
+                end
+                @test successes / N_attempts >= 0.5
+            end
+        end
+    end
+
     # ─── Old impl-C testsets preserved for reference ONLY (do not execute) ───
     # Re-enable if/when someone lands a permutation-synthesis mulmod that
     # keeps HWM at impl-A's envelope (~18 qubits) on Orkan.

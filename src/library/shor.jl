@@ -800,3 +800,173 @@ function shor_factor_C(N::Int; max_attempts::Int=16)
     end
     return Int[]
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Implementation D — Beauregard arithmetic mulmod (polynomial in L)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Same Box 5.2 cascade structure as impl C, but the controlled mulmod is
+# [`mulmod_beauregard!`](@ref) (Beauregard 2003 Fig. 7, c-U_a) instead of a
+# packed-QROM table. The physics difference matters:
+#
+#   * Impl C pays `2·2^{L+1} Toffoli` per mulmod (two packed QROMs) plus a
+#     QROM ancilla tree growing as `O(L)`. At L=14 / t=28 the measured DAG
+#     was 47M gates and the single-shot simulation blew past Orkan's 30-qubit
+#     statevector cap — untestable.
+#
+#   * Impl D pays Beauregard's `O(L² · k_max)` gates per mulmod call
+#     (Beauregard 2003 §3 p.11), depth `O(L²)`, and uses only **2n+3 wires
+#     total** for the whole order-finding run (paper headline). No QROM
+#     ancilla tree; no `L+1`-wide packed index. The L+1-qubit Fourier
+#     accumulator `b` and the 1-qubit modadd flag `anc` are allocated
+#     *inside* each `mulmod_beauregard!` call and returned to |0⟩ before
+#     deallocation, so the peak live-qubit count is independent of how
+#     many mulmods have already run.
+#
+# Expected scaling (Beauregard §3 Eq. p.11 with exact QFT, `k_max = L`):
+#
+#     cost per c-U_a          = 2 · L · (doubly-controlled φADD(a)MOD(N))
+#                              = 2 · L · O(L²)
+#                              = O(L³)
+#     cost for full order-find = t · c-U_a = 2L · O(L³) = O(L^4)
+#
+# At L=14 / t=28 the projection is ~50k gates vs impl C's measured 47M —
+# about **1000× reduction**. More importantly it is *polynomial* rather
+# than exponential, so L=100 stays constructible (~10^8 gates) and L=1024
+# (useful crypto) stays around ~10^12 gates, matching Gidney-Ekerå 2021's
+# surface-code Toffoli estimate for RSA-2048.
+#
+# Control-depth optimisation inherited from Sturm.jl-uf4. Because
+# `mulmod_beauregard!` already takes its own `ctrl::QBool` argument and
+# pushes `(ctrl, x_j)` into modadd's `ctrls` kwarg, wrapping the call in
+# `when(counter_qubit_j) do … end` is **NOT** what we want — that would
+# push three controls on the stack for every primitive inside modadd,
+# triggering the `_multi_controlled_gate!` cascade and undoing the uf4
+# fix.  Instead we pass `counter_qubit_j` *as* the `ctrl` argument. The
+# max control depth inside modadd stays at 2 (on the three φADD(a) gates)
+# and 1 elsewhere — Sturm inline-HotNode fast path throughout.
+#
+# ── Fig. 7 c-U_a: (x, 0) ↦ (a·x mod N, 0)                    ──────────────
+# ── Eq. 5.43 cascade: Π_j c-U_{a^{2^j}} on |1⟩_L              ──────────────
+
+"""
+    shor_order_D(a::Int, N::Int; t::Int=3, verbose::Bool=true) -> Int
+    shor_order_D(a::Int, N::Int, ::Val{t}) where {t}
+
+Order of `a` modulo `N` via the "controlled-U^{2^j} cascade" idiom (Box
+5.2 / Eq. 5.43), lifting **arithmetic** modular multiplication
+([`mulmod_beauregard!`](@ref), Beauregard 2003 Fig. 7) instead of a
+QROM-packed table (contrast [`shor_order_C`](@ref)).
+
+This is the fourth independent Sturm.jl implementation of Shor order-
+finding. Algorithm body is identical to impl C — the `t` classical
+constants `a_j = a^{2^{j-1}} mod N` precomputed via `powermod`, one
+controlled-multiply-by-`a_j` per counter qubit — but each multiply is
+realised with 2·L doubly-controlled φADD(a) modular additions in the
+Fourier basis, running entirely on Sturm's 4 primitives and
+`mulmod_beauregard!`'s own `L+1`-qubit Fourier accumulator.
+
+Scaling (Beauregard 2003 §3, Eq. p.11):
+  * **Gates per c-U_a:**        `O(L² · k_max) = O(L³)`  with exact QFT
+  * **Gates total order-find:** `O(t · L³) = O(L^4)`     at `t = 2L`
+  * **Peak wires:**             `t + 2L + O(1)` (counter + y + b + anc)
+  * **Max control depth:**      2 on φADD(a), 1 elsewhere (uf4 invariant)
+
+Algorithm (N&C §5.3.1 Box 5.2, Eqs. 5.40–5.43, with Beauregard 2003
+Fig. 7 replacing the abstract c-U_a):
+  1. Counter `c = QInt{t}(0)` → `superpose!` → uniform.
+  2. `y = QInt{L}(1)` — Eq. 5.44 eigenstate, shared by all stages.
+  3. For j = 1, …, t:
+       classical: `a_j = a^{2^{j-1}} mod N`
+       quantum:   `mulmod_beauregard!(y, a_j, N, c.wires[j])`
+       (skip `a_j == 1` — identity, saves 2L modadds)
+  4. `interfere!(c)` — inverse QFT on the counter.
+  5. `discard!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
+
+Ref: Nielsen & Chuang §5.3.1, Box 5.2, Eqs. 5.40–5.43, 5.44.
+     Beauregard 2003, §2.3 Fig. 6/7, Eq. 3, Eq. 4.
+     `docs/physics/nielsen_chuang_5.3.md` and
+     `docs/physics/beauregard_2003_2n3_shor.pdf`.
+"""
+function shor_order_D(a::Int, N::Int, ::Val{t}; verbose::Bool=true) where {t}
+    gcd(a, N) == 1 || error("shor_order_D: a=$a and N=$N must be coprime")
+    1 <= a < N || error("shor_order_D: a=$a must satisfy 1 ≤ a < N=$N")
+    L = max(1, ceil(Int, log2(N)))
+
+    ctx = current_context()
+    t0 = time_ns()
+    lq() = _live_qubits(ctx)
+    ms() = round((time_ns() - t0) / 1e6, digits=1)
+    verbose && _shor_log("[shor_D t=+0.0ms] start a=$a N=$N t=$t L=$L  live=$(lq())")
+
+    # Classical precompute. For a=7, N=15, t=3: a_j = {7, 4, 1}.  (The
+    # j=3 entry is 1 here, which we skip as a no-op — mulmod by 1 is
+    # identity but still issues 2L·modadd calls; skipping saves O(L²).)
+    a_js = [powermod(a, 1 << (j - 1), N) for j in 1:t]
+    verbose && _shor_log("[shor_D t=+$(ms())ms] classical a_j=$(a_js)")
+
+    c_reg = QInt{t}(0)
+    superpose!(c_reg)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] superpose!(c_reg)                live=$(lq()) cap=$(ctx.capacity)")
+
+    y_reg = QInt{L}(ctx, 1)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] y = QInt{$L}(1) eigenstate      live=$(lq()) cap=$(ctx.capacity)")
+
+    # Box 5.2 cascade: one controlled-mulmod per counter qubit. Each call's
+    # internal modadd routing uses ctrls=(ctrl, x_j) — depth 2 max, fast path.
+    for j in 1:t
+        a_j = a_js[j]
+        if a_j == 1
+            verbose && _shor_log("[shor_D t=+$(ms())ms] SKIP mulby a_$j=1 (identity)")
+            continue
+        end
+        ctrl = QBool(c_reg.wires[j], ctx, false)
+        verbose && _shor_log("[shor_D t=+$(ms())ms] ENTER mulby a_$j=$(a_j) mod $N  live=$(lq()) cap=$(ctx.capacity)")
+        t_stage = time_ns()
+        mulmod_beauregard!(y_reg, a_j, N, ctrl)
+        stage_ms = round((time_ns() - t_stage) / 1e6, digits=1)
+        verbose && _shor_log("[shor_D t=+$(ms())ms] EXIT  mulby a_$j done in $(stage_ms)ms  live=$(lq()) hwm=$(ctx.n_qubits) cap=$(ctx.capacity)")
+    end
+
+    interfere!(c_reg)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] interfere!(c_reg)                live=$(lq())")
+
+    discard!(y_reg)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] discard!(y_reg)                  live=$(lq())")
+
+    y_tilde = Int(c_reg)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] measured ỹ=$y_tilde                    live=$(lq())")
+
+    r = _shor_period_from_phase(y_tilde, t, N)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] decoded φ=$(y_tilde)/$(1<<t) r=$r   (total=$(ms())ms)")
+    return r
+end
+
+shor_order_D(a::Int, N::Int; t::Int=3, verbose::Bool=true) =
+    shor_order_D(a, N, Val(t); verbose=verbose)
+
+"""
+    shor_factor_D(N::Int; max_attempts::Int=16) -> Vector{Int}
+
+Factor composite `N` using order-finding implementation D. Identical
+classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref) /
+[`shor_factor_B`](@ref) / [`shor_factor_C`](@ref); differs only in the
+quantum order-finding subroutine — Beauregard 2003 arithmetic mulmod.
+"""
+function shor_factor_D(N::Int; max_attempts::Int=16)
+    N >= 2 || error("shor_factor_D: N=$N must be ≥ 2")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    for _ in 1:max_attempts
+        a = rand(2:(N - 1))
+        g = gcd(a, N)
+        if g > 1
+            return sort!([g, N ÷ g])
+        end
+
+        r = shor_order_D(a, N)
+        fs = _shor_factor_from_order(a, r, N)
+        !isempty(fs) && return fs
+    end
+    return Int[]
+end

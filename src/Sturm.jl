@@ -111,6 +111,7 @@ export oracle_table
 export shor_order_A, shor_factor_A
 export shor_order_B, shor_factor_B
 export shor_order_C, shor_factor_C
+export shor_order_D, shor_factor_D
 
 # Channel / tracing
 export Channel, trace, to_openqasm, to_ascii, to_pixels, to_png, ⊗, n_inputs, n_outputs
