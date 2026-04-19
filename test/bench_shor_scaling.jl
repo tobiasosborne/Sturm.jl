@@ -82,6 +82,18 @@ estimation is the dangerous direction.
     margin: `(5L + 65) · t · 2^L` — min ratio 1.31× at every measured
     point.
 
+  * Impl D — Beauregard arithmetic mulmod cascade: same t mulmod calls
+    as impl C, but each is Beauregard 2003 Fig. 7 c-U_a instead of a
+    packed QROM. Empirical fit: per-mulmod gates ≈ `77·L²` (L=5/L=6
+    measurements agree to 0.5%), slope = 3.0 → O(L^3) per order-find at
+    fixed t, O(L^4) at t = 2L. Formula uses 1.30× safety margin:
+    `100 · t · L^2`. Mulmods with classical constant a_j = 1 are
+    skipped at runtime (identity op), so the est/actual ratio can
+    inflate for cases where many a_j's saturate to 1 (e.g. N=15 with
+    `a=7` has order 4, so a_j ∈ {7,4,1,1,1,1,1,1} at t=8 — only 2
+    non-trivial, ratio ≈5×). This is fine: over-estimation for
+    preflight is safe.
+
   Calibration table (t=2L; ratios = est / actual, all ≥ 1):
 
       L   t    A actual    A est     A ratio    C actual    C est     C ratio
@@ -102,6 +114,20 @@ function estimate_gates(impl::Symbol, L::Int, t::Int)
         (L + 14) * (1 << (t + L + 1))       # (L + 14) · 2^(t+L+1) — 10% safety margin
     elseif impl === :C
         (5 * L + 65) * t * (1 << L)         # (5L + 65) · t · 2^L
+    elseif impl === :D
+        # Beauregard arithmetic mulmod, O(L^4) at t = 2L.
+        # Calibrated from L=5..6 all-non-trivial runs (2026-04-19):
+        #   per-mulmod gates ≈ 77·L² (L=5: 1940/mulmod, L=6: 2779/mulmod;
+        #   ratio fits 77·L² to 0.5%).  Empirical slope (ln gates vs ln L)
+        #   = 3.0 at fixed t, i.e. O(L^3) per order-find for fixed t, or
+        #   O(L^4) at t = 2L — matches Beauregard §3 "O(n^3 k_max)" with
+        #   exact QFT (k_max = L).
+        # Formula `100·t·L²` applies 1.30× safety margin over the fit.
+        # L=4 N=15 a=7 is NOT representative: only 2 of 8 mulmods fire
+        # (a_j = 7,4,1,1,1,1,1,1 skipped after order saturation), so the
+        # est-vs-actual ratio inflates to 5× at L=4. Preflight erring on
+        # the high side is correct — never under-budget.
+        100 * t * L * L
     else
         error("unknown impl $impl")
     end
@@ -233,6 +259,11 @@ function trace_impl(impl::Symbol, a::Int, N::Int, t::Int, L::Int;
             r_out = Sturm.@context ctx begin
                 shor_order_C(a, N; t=t, verbose=false)
             end
+        elseif impl === :D
+            LOG("  [+$(_ms(wall0))ms] impl D: shor_order_D — starting")
+            r_out = Sturm.@context ctx begin
+                shor_order_D(a, N; t=t, verbose=false)
+            end
         else
             error("unknown impl $impl")
         end
@@ -270,19 +301,19 @@ end
 # only a hint — preflight will skip any case whose projected memory exceeds
 # the budget regardless of what's requested here.
 const CASES = [
-    (L=4,  t=8,  N=15,     a=7,  impls=[:A, :B, :C]),
-    (L=5,  t=10, N=21,     a=2,  impls=[:A, :B, :C]),
-    (L=6,  t=12, N=35,     a=2,  impls=[:A, :B, :C]),
-    (L=7,  t=14, N=65,     a=2,  impls=[:A, :B, :C]),
-    (L=8,  t=16, N=129,    a=2,  impls=[:A, :B, :C]),
-    (L=9,  t=18, N=257,    a=2,  impls=[:A, :B, :C]),
-    (L=10, t=20, N=527,    a=2,  impls=[:A, :B, :C]),
-    (L=11, t=22, N=1025,   a=2,  impls=[:A, :B, :C]),
-    (L=12, t=24, N=4095,   a=2,  impls=[:A, :B, :C]),
-    (L=13, t=26, N=8193,   a=2,  impls=[:A, :B, :C]),
-    (L=14, t=28, N=16383,  a=2,  impls=[:A, :B, :C]),
-    (L=16, t=32, N=65535,  a=2,  impls=[:A, :B, :C]),
-    (L=18, t=36, N=262143, a=2,  impls=[:A, :B, :C]),
+    (L=4,  t=8,  N=15,     a=7,  impls=[:A, :B, :C, :D]),
+    (L=5,  t=10, N=21,     a=2,  impls=[:A, :B, :C, :D]),
+    (L=6,  t=12, N=35,     a=2,  impls=[:A, :B, :C, :D]),
+    (L=7,  t=14, N=65,     a=2,  impls=[:A, :B, :C, :D]),
+    (L=8,  t=16, N=129,    a=2,  impls=[:A, :B, :C, :D]),
+    (L=9,  t=18, N=257,    a=2,  impls=[:A, :B, :C, :D]),
+    (L=10, t=20, N=527,    a=2,  impls=[:A, :B, :C, :D]),
+    (L=11, t=22, N=1025,   a=2,  impls=[:A, :B, :C, :D]),
+    (L=12, t=24, N=4095,   a=2,  impls=[:A, :B, :C, :D]),
+    (L=13, t=26, N=8193,   a=2,  impls=[:A, :B, :C, :D]),
+    (L=14, t=28, N=16383,  a=2,  impls=[:A, :B, :C, :D]),
+    (L=16, t=32, N=65535,  a=2,  impls=[:A, :B, :C, :D]),
+    (L=18, t=36, N=262143, a=2,  impls=[:A, :B, :C, :D]),
 ]
 
 # ── Env parsing ────────────────────────────────────────────────────────────
