@@ -4,6 +4,79 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-19 — Session 30: Close `Sturm.jl-i0j` (Shor resource benchmark + diagrams)
+
+Point estimate for "what idiomatic Shor actually costs in Sturm":
+trace each of the five `shor_order_*` implementations under
+`TracingContext` on N=15, a=7, t=3, count DAG nodes, render ASCII
+and PNG. Writes `docs/shor_benchmark.md` + selected examples.
+
+### Results
+
+| Impl | Wires | Gates | CX | CCX | Ry | Rz | Depth | DAG KB |
+|------|------:|------:|---:|----:|---:|---:|------:|-------:|
+| `A` (oracle lift) | 18 | 148 | 98 | 28 | 10 | 12 | 137 | 4.1 |
+| `B` (phase_estimate HOF) | 217 | 3609 | 6 | 3528 | 63 | 12 | 3605 | 93.4 |
+| `C` (c-U^{2^j} cascade, QROM) | 109 | 3097 | 2310 | 744 | 31 | 12 | 2702 | 78.3 |
+| `D` (Beauregard arithmetic) | 19 | 2385 | 470 | 24 | 399 | 1492 | 1264 | 58.7 |
+| `D_semi` (Beauregard + semi-classical iQFT) | 19 | 2373 | 464 | 24 | 399 | 1486 | 1264 | 58.4 |
+
+Wire counts are monotone `_wire_counter[]` deltas — every allocation
+increments, deallocate! does NOT decrement. So this table's "wires"
+is closer to "distinct horizontal lines in the rendered circuit"
+than to HWM of concurrent live wires.
+
+### Takeaways worth remembering
+
+- **`D` vs `D_semi` on a static trace looks near-identical.** Same
+  gate count (± 12, from skipped `a_j=1` mulmods), same depth. The
+  D_semi saving is the counter qubits — `t` in impl D, `1` in impl
+  D_semi. At t=3 that saves 2; the compile-time gate count barely
+  notices. At t=28 (L=14) the counter saving is the whole point.
+- **Impl B is QROM-dominated, not mulmod-count-dominated.** It fires
+  only `2^t − 1 = 7` mulmod calls but each carries a 2^(L+1)-entry
+  Babbush-Gidney QROM. 217 wires is a log-depth QROM ancilla tree
+  opened and closed 7×. Impl B is the polynomial-in-2^L cautionary
+  tale — idiomatic, not scalable.
+- **Impl A is the lean surprise.** 148 gates on a single QROM is
+  shorter than impl D's arithmetic mulmod at this size. It's not
+  scalable in t (exponential table), but for N=15 demonstrations it's
+  the cleanest circuit.
+- **Impl C is bimodal.** At N=15 t=3 it prints as 3097 gates / 109
+  wires — similar order as impl B. At N=36 L=6 (from
+  `bench_shor_scaling.jl`) it balloons to ~47M gates / ~1.2GB DAG.
+  The QROM packed-index grows 2^L; don't use impl C past L=5 in
+  simulation.
+- **`_draw_schedule_compact` is the cheapest `depth` proxy we have
+  today.** No critical-path pass, but the ASAP-scheduled column count
+  lines up with what a reader of the PNG would count.
+
+### Gitability
+
+Some outputs (B.png 2.5 MB, B.txt 10 MB, C.txt 3.5 MB) are too big
+to commit. `render_case` now `rm`s any artefact > 800 KB after
+writing; `docs/shor_benchmark.md` documents the commit threshold and
+shows *(regen)* for dropped cells. The bench script regenerates
+everything in ~7 seconds on this box — cheap to re-run.
+
+### Files touched
+
+- `test/bench_shor_i0j.jl` (new) — TracingContext → node_breakdown
+  + render + markdown emit. ~180 lines.
+- `docs/shor_benchmark.md` (new, auto-generated).
+- `examples/shor_N15_{A,C,D,D_semi}.png` + `{A,D,D_semi}.txt` —
+  committed (all ≤ 800 KB).
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-i0j` closed.
+- Remaining Shor work: `Sturm.jl-eud` EPIC (largely delivered —
+  all 5 impls exist, benchmarks landed, N=15 + N=21 end-to-end
+  correctness verified via di9 fix + 8b9 semi-classical).
+
+---
+
 ## 2026-04-19 — Session 29: Close `Sturm.jl-8b9` (semi-classical iQFT for Shor)
 
 Beauregard 2003 §2.4 Fig. 8 — the "one controlling-qubit trick" —
