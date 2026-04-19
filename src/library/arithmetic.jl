@@ -41,12 +41,14 @@ Gate count: exactly L Rz rotations. No ancillae.
     relative phase between |1⟩ and |0⟩ is `e^(iδ)`, so `δ = 2π·a/2^k`
     produces the desired relative phase `e^(2πi·a/2^k)` on qubit k.
 
-  * A global phase of `e^(-iπ·a·(1 − 2^(-L)))` accumulates over all L
-    rotations. Invisible for an isolated `add_qft!`; observable when
-    the call is inside `when(ctrl) do … end` (it becomes a relative
-    phase on `ctrl`). The Beauregard modular adder compensates by
-    composing an add-followed-by-subtract pattern that cancels the
-    global phase — see Sturm.jl-dgy.
+  * `sub_qft!(y, a)` dispatches to `add_qft!(y, -a)` and the two calls
+    compose to identity exactly — `Rz(θ)·Rz(−θ) = I`. This requires that
+    `add_qft!` emit the **raw angle** `θ_raw = 2π·a/2^jj` per wire rather
+    than folding into `(-π, π]`: the fold maps both `θ_raw = +π` and
+    `θ_raw = -π` to `-π`, breaking the inverse property and leaking a
+    `−I` global phase per wire. When the call is inside `when(ctrl)`,
+    that global phase becomes a relative `π` phase on `ctrl=|1⟩` — the
+    root cause of Sturm.jl-di9.
 
 # Reference
 
@@ -59,18 +61,19 @@ Gate count: exactly L Rz rotations. No ancillae.
 function add_qft!(y::QInt{L}, a::Integer) where {L}
     check_live!(y)
     ctx = y.ctx
-    # Negative a and a ≥ 2^L both wrap cleanly via mod.
-    a_mod = mod(Int(a), 1 << L)
-    a_mod == 0 && return y
+    a_int = Int(a)
+    a_int == 0 && return y
     for k in 1:L
         # wires[k] holds |φ_{L-k+1}(y)⟩; its phase denominator is 2^(L-k+1).
         jj = L - k + 1
-        θ = 2π * a_mod / (1 << jj)
-        θ = mod(θ + π, 2π) - π      # fold into (-π, π] to keep angles small
-        if θ != 0
-            qk = QBool(y.wires[k], ctx, false)
-            qk.φ += θ
-        end
+        θ = 2π * a_int / (1 << jj)
+        # No fold. `add_qft(+a) ∘ add_qft(-a)` must reduce to Rz(θ)·Rz(−θ)=I
+        # per wire as unitaries; any canonicalisation (mod into a half-open
+        # interval) breaks this when θ_raw hits the interval boundary.
+        # Orkan computes Rz(θ) in double precision for any θ — no need to
+        # keep the angle small.
+        qk = QBool(y.wires[k], ctx, false)
+        qk.φ += θ
     end
     return y
 end
