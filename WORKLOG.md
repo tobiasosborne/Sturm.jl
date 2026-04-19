@@ -4,6 +4,221 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-19 — Session 27: Hunt for N=21 failure uncovers P0 bug in uf4
+
+Session 26 closed `Sturm.jl-6kx` with shor_order_D green at N=15 (50%
+r=4 hit rate, 10/10 factor_D(15) → {3,5}).  User asked to extend
+verification to N=21 and N=35 per the 6kx acceptance criteria.  The
+extension **FAILED** — and the root cause is a P0 phase leak in
+`mulmod_beauregard!` (Sturm.jl-uf4), which Session 25's all-green
+3208-test suite **did not catch** because every test was Z-basis on
+ctrl.  Honest status: **we do not have a working Shor algorithm yet**
+for any N larger than 15.
+
+### Trail
+
+**Stage 1 — N=21 end-to-end fails.** `test/probe_shor_larger_N.jl`
+20 shots of `shor_order_D(2, 21; t=6)`: **0/20 r=6 hits** (expected
+~33% per PE theory), 14/20 "other" r values.
+
+**Stage 2 — ỹ histogram is scattered, not peaked.**
+`test/probe_N21_ytilde.jl` took 40 shots of the same cascade and
+dumped ỹ distribution.  Result: 30 distinct ỹ values out of 64,
+only 10 shots at the 6 theoretical peaks {0, 11, 21, 32, 43, 53}.
+Expected (PE theory) mass at peaks ≈ 24/40 (60%).  Observed 25%.
+Top 3 values (30, 32, 33) each with 3 shots show a triple-wide
+cluster around 32 — PE amplitudes are smeared, not peaked.
+
+**Stage 3 — mulmod itself is correct.**
+`test/probe_shor_bug_hunt.jl` ran:
+
+- EXP-A: `mulmod_beauregard!` at L=5 N=21 exhaustive, all 252
+  (a, x₀) cases with ctrl=|1⟩: **0 fail**.  Arithmetic correct.
+- EXP-B: `shor_order_D(7, 15; t=4)` 20 shots: 11/20 r=4 (55%).
+- EXP-C: `shor_order_D(7, 15; t=6)` 10 shots: 8/10 r=4 (80%).
+
+  So the primitive is right, the PE machinery works at N=15 at all
+  tested t, but the cascade breaks at larger N.
+
+**Stage 4 — PE machinery itself is correct.**
+`test/probe_pe_bug.jl` Q1: `phase_estimate(Z!, QBool(1), Val(t))`
+at t ∈ {3, 4, 5, 6}: 20 shots each, **all return the exact expected
+ỹ** (ỹ = 2^(t-2), since Z! = Rz(π) has eigenphase 1/4 — a correct
+eigenphase I briefly thought was 1/2 before re-reading CLAUDE.md's
+"Global Phase and Universality" note).  Rule 9 check on my own
+assumption.  phase_estimate is fine.
+
+  Q2: same probe ran `shor_order_D(2, 21; t=3..6)` — period-factor
+hit rate stuck at **6.7%** for t=3, 4, 5 (single lucky r=2 shot per
+15), then 20% at t=6.  N=21 is broken at every t; this is not a
+resolution issue.
+
+**Stage 5 — X-basis test on ctrl exposes the π/2 phase leak.**
+`test/probe_mulmod_phase.jl` runs the minimal protocol:
+
+    ctrl = QBool(1/2)          # prepare |+⟩ via Ry(π/2)|0⟩
+    mulmod_beauregard!(x, a, N, ctrl)
+    ctrl.θ -= π/2              # Ry(-π/2) = inverse of the |+⟩ prep
+    m = Bool(ctrl)             # should be FALSE if ctrl preserved
+
+If `mulmod_beauregard!` preserves ctrl as a pure |+⟩, Ry(-π/2)
+brings ctrl back to |0⟩ and `m = false` every shot.  Any `m = true`
+rate above 0 indicates ctrl was disturbed; rate = sin²(ξ/2) gives
+the effective leaked phase ξ on ctrl=|1⟩.
+
+**Measured across L=4 N=15 and L=5 N=21, 80 shots per case:**
+
+| config                       | x₀ = 0 | x₀ > 0 (any)     |
+|------------------------------|-------:|-----------------:|
+| L=4 N=15 a ∈ {2, 7}          |  0%    | **47 – 58%**     |
+| L=5 N=21 a ∈ {2, 4, 16}      |  0%    | **44 – 61%**     |
+
+Leak = ~50% everywhere x > 0 ⇒ **ξ = π/2 exactly** (sin²(π/4) = 0.5).
+Leak = 0 at x = 0 because mulmod is trivially identity on |0⟩ there.
+
+The 50% X-basis rate is consistent with ctrl being in a
+**maximally mixed state** after mulmod — i.e., ctrl has been
+completely entangled with internal ancillae that are then discarded,
+and the partial trace erases ctrl's coherence.  That matches the
+observed PE behaviour: 6 sequential mulmods at N=21 t=6 decohere
+all 6 counter qubits, killing interference.
+
+### Why Session 25's 3208-test suite missed this
+
+Every uf4 coherent test ran:
+
+    @context EagerContext() begin
+        x    = QInt{L}(x0)
+        ctrl = QBool(1/2)
+        mulmod_beauregard!(x, a, N, ctrl)
+        r = Int(x)
+        _ = Bool(ctrl)                # Z-basis on ctrl
+        ...
+    end
+
+**Z-basis on |+⟩ and on a maximally-mixed qubit both give 50/50.**
+The two are indistinguishable without an X-basis measurement (or
+equivalently, an inverse of the |+⟩ prep followed by Z).  Session
+25's tests correctly caught every case where ctrl ACQUIRED a
+population imbalance — but a pure phase (or full decoherence) stays
+invisible.
+
+### Corollary — N=15 t=3 "passed" by coincidence
+
+At N=15 a=7 with t=3, only 2 of 3 mulmods actually fire because
+a_j = [7, 4, 1] and a_j=1 is skipped at runtime.  Two rounds of
+decoherence accumulated across only 3 counter qubits happens to
+scatter PE amplitudes in a way that *still* gives 50% mass on the
+r=4 peaks (ỹ ∈ {2, 6} decode to r=4 at t=3).  This is a
+happy-accident signal, not a correctness guarantee.  The bench
+numbers for impl D (wires, gates, DAG bytes) remain valid as
+structural / resource measurements — the DAG IS polynomial in L —
+but the statevector simulation outputs cannot be trusted past
+N=15.
+
+### Status of the polynomial-in-L Shor chain
+
+| Bead                     | Real status                                |
+|--------------------------|--------------------------------------------|
+| `Sturm.jl-ar7` add_qft   | ✓ correct                                  |
+| `Sturm.jl-dgy` modadd    | ⚠ Z-basis correct; X-basis coherence not verified |
+| `Sturm.jl-uf4` mulmod    | ⚠ Z-basis correct; **π/2 X-basis leak** (di9) |
+| `Sturm.jl-6kx` shor_D    | ⚠ structure correct; end-to-end N=15 only; **BROKEN N ≥ 21** |
+| `Sturm.jl-di9`           | P0 bug filed; root-cause fix blocks 6kx completion |
+| `Sturm.jl-8b9`           | P1 Fig. 8 semi-classical iQFT, deferred — would have hit the same phase leak anyway |
+
+### Not yet known — where the π/2 comes from
+
+Three candidates under investigation (details in Sturm.jl-di9):
+
+1. **Controlled-Rz(θ) on superposed target leaks -θ/2 phase on
+   ctrl=|1⟩.**  add_qft! contains Rz gates applied to Fourier-basis
+   y wires (every y wire is in superposition).  Inside modadd step
+   6 (`when(anc) add_qft!(y, N)`) or modadd steps 1/7/13 (under
+   ctrls=(ctrl, xj)), each CRz(θ_k) leaks -θ_k/2 onto the outer
+   control.  Summing across wires and across modadd calls per
+   mulmod could produce the observed π/2 constant.
+
+2. **Rz angle folding `mod(θ+π, 2π) - π` introduces global phase
+   -1 per fold.**  add_qft! folds θ_raw = 2π·a/2^jj into (-π, π].
+   Under control, -1 global phase = π relative phase on ctrl=|1⟩.
+   Cumulative across L Rz's × 2L modadds × … might land at π/2 mod 2π.
+
+3. **Ry(π) / Ry(-π) MSB flip pair at modadd steps 9/11 was added
+   in Session 25 specifically to avoid a global phase (the X! = -iY
+   fix).**  It cancels cleanly when modadd runs standalone — but
+   may NOT cancel correctly inside a cascaded operation (mulmod's
+   2L modadds) if the intermediate state transforms the msb wire
+   non-trivially.
+
+Fix strategy (per di9): build a minimal X-basis harness, narrow the
+leak block-by-block (add_qft alone, modadd alone, modadd with
+ctrls, mulmod CMULT forward alone, full mulmod), identify the
+exact gate sequence that leaks, apply the smallest possible
+compensating phase rotation.  Add X-basis regression tests to
+`test/test_arithmetic.jl` so the next silent-phase bug has a
+tripwire.
+
+### Files added this session
+
+- `test/probe_shor_larger_N.jl` — N=21/N=35 end-to-end (fails)
+- `test/probe_shor_bug_hunt.jl` — mulmod-at-L=5 + N=15 bigger-t isolation
+- `test/probe_N21_ytilde.jl` — ỹ histogram
+- `test/probe_pe_bug.jl` — phase_estimate sanity + shor_order_D t-sweep
+- `test/probe_mulmod_phase.jl` — X-basis coherence probe (the smoking gun)
+
+All kept as dev probes; NONE registered in runtests.jl.
+
+### Files changed
+
+- `src/library/shor.jl` — added `!!! warning` block to `shor_order_D`
+  docstring flagging di9 and the N ≥ 21 restriction.
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-di9` — P0 bug filed (mulmod phase leak).
+- `Sturm.jl-6kx` stays closed for the DAG-structure deliverable, but
+  the end-to-end N=21/N=35 verification is blocked on di9.  If a new
+  bead is wanted for "extend 6kx coverage post-fix", file as depending
+  on di9 at that time.
+- `Sturm.jl-8b9` (semi-classical iQFT) still P1; deferred.  Would
+  have hit the same phase leak so no work lost.
+
+### Gotchas for future agents — KEEP THESE IN MIND
+
+1. **Z-basis measurement of a control qubit that started as |+⟩ is
+   BLIND to phase leaks and to full decoherence.**  Both |+⟩ and
+   maximally-mixed give 50/50 Z-basis outcomes.  Test coherence via
+   inverse-prep-then-Z (a.k.a. X-basis via Ry(-π/2)) — see
+   `test/probe_mulmod_phase.jl` for the minimal protocol.  Consider
+   this rule a **correctness prerequisite** for any new controlled
+   sub-circuit shipped into Sturm.
+
+2. **Session 25's sin²(ξ/2) probe pattern was a 4-line test that
+   would have caught di9 immediately.**  It was not run because
+   Session 25 only added the coherent `ctrl=|+⟩` test at the
+   mulmod LEVEL with Z-basis output — exactly the pattern that's
+   blind to phase leaks.  New primitives that accept a QBool ctrl
+   should ship with BOTH Z-basis correctness (`Int(x) == expected`)
+   AND X-basis coherence (`Bool(Ry(-π/2); ctrl) == false`) tests.
+
+3. **"All tests green" is a lower bound, not a correctness proof.**
+   The 3208-pass uf4 suite is what I (confidently) shipped as
+   "mulmod_beauregard! works".  Better framing: "mulmod produces
+   correct computational-basis outputs and preserves ctrl's Z-basis
+   mixing, coherence not verified".  Generalising: always state the
+   regime a test suite actually checks.
+
+4. **Verbose-flush pattern paid off AGAIN.**  The smoking-gun probe
+   (`probe_mulmod_phase.jl`) ran 27 rows × 80 shots with per-row
+   flush output — the leak pattern (x=0 clean, x>0 ~50%) jumped out
+   in the very first printed line of the first config.  No
+   blank-screen-waiting; the tell was visible within 15 seconds.
+   Keep it up.
+
+---
+
 ## 2026-04-19 — Session 26: Close `Sturm.jl-6kx` (shor_order_D, polynomial-in-L Shor)
 
 Picked up from Session 25's uf4 close. The polynomial-in-L Shor chain's

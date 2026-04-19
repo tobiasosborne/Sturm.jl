@@ -853,6 +853,18 @@ end
     shor_order_D(a::Int, N::Int; t::Int=3, verbose::Bool=true) -> Int
     shor_order_D(a::Int, N::Int, ::Val{t}) where {t}
 
+!!! warning "Known correctness issue — Sturm.jl-di9 (P0)"
+    `mulmod_beauregard!` leaks a π/2 phase on its `ctrl=|1⟩` branch
+    whenever `x > 0`, decohering the counter qubit inside the PE
+    cascade. This breaks `shor_order_D` for L ≥ 5 (N ≥ 21). It
+    happens to work at N=15 because only 2 of 3 mulmods fire (order
+    saturation gives a_j = [a, a², 1, 1, …]) and the accumulated
+    decoherence aligns with PE peaks by coincidence. Do NOT use
+    `shor_order_D` for factoring larger N until di9 is fixed. The
+    polynomial-in-L DAG structure stands (bench_shor_scaling.jl :D
+    entries remain valid for trace-size measurement), but the
+    end-to-end simulation is only trustworthy at N=15.
+
 Order of `a` modulo `N` via the "controlled-U^{2^j} cascade" idiom (Box
 5.2 / Eq. 5.43), lifting **arithmetic** modular multiplication
 ([`mulmod_beauregard!`](@ref), Beauregard 2003 Fig. 7) instead of a
