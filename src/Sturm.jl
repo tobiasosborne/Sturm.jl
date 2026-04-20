@@ -13,6 +13,9 @@ include("context/multi_control.jl")  # shared cascade, needs both context types
 include("types/quantum.jl")
 include("types/qbool.jl")
 include("types/qint.jl")
+include("types/qcoset.jl")
+include("types/qrunway.jl")
+include("types/qrom_table.jl")
 
 # Channel / tracing layer
 include("channel/dag.jl")
@@ -51,6 +54,7 @@ include("qecc/channel_encode.jl")
 # Library patterns (higher-order quantum operations)
 include("library/patterns.jl")
 include("library/arithmetic.jl")
+include("library/coset.jl")
 include("library/shor.jl")
 
 # Hamiltonian simulation
@@ -89,6 +93,7 @@ export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @con
 # Types
 export QBool, QInt, WireID, discard!, Quantum
 export with_silent_casts
+export QCoset, QRunway, QROMTable, QROMTableLarge
 
 # Quantum control
 export when
