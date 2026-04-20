@@ -11,6 +11,14 @@
 #      Local PDF: docs/literature/quantum_simulation/qsp_qsvt/s00220-025-05302-9.pdf
 # Ref: Laneve (2025), arXiv:2503.03026.
 #      Local PDF: docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf
+#
+# ── Parity convention ──
+# The user-facing phase-count rule for qsvt_phases (src/qsvt/circuit.jl) is:
+#   even Chebyshev parity (cos-like) → 2d phases   — drop φ₀
+#   odd  Chebyshev parity (sin-like) → 2d+1 phases — keep φ₀
+# GSLW Theorem 17 requires n and polynomial parity to match; otherwise the
+# SVT collapses eigenvalue signs (Hermitian A → P(|λ|) instead of P(λ)).
+# See qsvt_phases docstring for the full derivation.
 
 using FFTW
 

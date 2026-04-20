@@ -4,6 +4,61 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 31: Close `Sturm.jl-5gz` (qsvt_phases sin parity, documentation bug)
+
+P2 bug: `test/test_qsvt_reflect.jl:57` asserted `length(phi) == 2d` for sin
+polynomials at `d ∈ {5, 9, 13}`, but `qsvt_phases` returns `2d+1`. The bead
+author's hypothesis ("may be a test-assertion issue rather than a physics
+issue") is correct. Confirmed via WORKLOG-archive.md:1561-1596 — the
+`2d+1`-for-odd-parity behaviour is a deliberate fix from an earlier session:
+GSLW Theorem 17 requires `n` and polynomial parity to match, or the SVT
+collapses Hermitian eigenvalue signs (`P(|λ|)` instead of `P(λ)`). The fix
+detects odd Chebyshev parity (even-indexed coefficients ≈ 0) and keeps
+`φ₀`, yielding `2d+1` phases; cos stays at `2d`.
+
+### Smoke confirmation (no fix needed in code)
+
+    cos d=4  → 8  ✓   sin d=5  → 11 ✓
+    cos d=8  → 16 ✓   sin d=9  → 19 ✓
+    cos d=12 → 24 ✓   sin d=13 → 27 ✓
+
+### Files touched
+
+- `test/test_qsvt_reflect.jl` — sin testset expects `2d+1`; both cos and
+  sin testsets now document the GSLW Thm 17 parity rule inline.
+- `src/qsvt/circuit.jl` — `qsvt_phases` docstring's "Returns" section now
+  states the two-arm length rule and cites Theorem 17. Pipeline step 6
+  description changed from "drop φ₀" to "parity-matched trim".
+- `src/qsvt/phase_factors.jl` — header comment gains a short parity-
+  convention block with cross-ref to `qsvt_phases`. This is where the
+  5gz bead author expected to find the convention documented.
+
+### Gotchas for future agents
+
+1. **`qsvt_phases` lives in `src/qsvt/circuit.jl`, not `phase_factors.jl`.**
+   The 5gz bead body pointed at `phase_factors.jl` because that's where
+   the phase-factor algorithm lives — but the user-facing trim rule (drop
+   vs keep `φ₀`) is applied in `circuit.jl`. The new header comment in
+   `phase_factors.jl` cross-references to avoid the next search-miss.
+2. **Parity-matched `n` is load-bearing for ALL Hermitian QSVT.** Dropping
+   `φ₀` unconditionally would pass the length test for cos and break sin
+   silently (downstream `qsvt_reflect!` sin circuit would compute `|sin|`
+   rather than `-sin`). Regression tripwire: the length asserts in
+   `test_qsvt_reflect.jl`'s A-block AND the downstream `qsvt_reflect!:
+   sin(Ht/α)` testset at line 230, which catches the sign-collapse case.
+3. **"Test assertion wrong, algorithm right" bugs are easy to miss under
+   a green suite.** The bead was only visible because the length-asserts
+   happened to be the test — downstream functional tests passed (they
+   consumed the actual 2d+1 phases and ran correct circuits). Lesson:
+   when a length / count assertion fails but nothing else does, the
+   assertion is the likely culprit.
+
+### Beads
+
+- `Sturm.jl-5gz` closed.
+
+---
+
 ## 2026-04-19 — Session 30: Close `Sturm.jl-i0j` (Shor resource benchmark + diagrams)
 
 Point estimate for "what idiomatic Shor actually costs in Sturm":

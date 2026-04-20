@@ -284,7 +284,7 @@ Pipeline:
 3. Weiss + RHW → NLFT sequence F_k ∈ iℝ (purely imaginary for real P)
 4. Phase extraction → X-constrained GQSP phases (θ_k = 0, λ = 0)
 5. Section 4.3 correction: φₙ += π/2
-6. Return φ₁,...,φₙ (drop φ₀, it's absorbed by post-selection)
+6. Parity-matched trim: drop φ₀ for even parity, keep φ₀ for odd parity.
 
 The X-constrained GQSP phases ARE the Z-constrained QSVT phases
 (same numerical values) via the Hadamard conjugation identity
@@ -295,7 +295,15 @@ H·e^{iφX}·H = e^{iφZ} (Laneve Section 2.1).
 - `epsilon`: target precision for the phase computation
 
 # Returns
-Vector{Float64} of length 2d: the QSVT phases [φ₁, ..., φ_{2d}].
+`Vector{Float64}` of length matched to the Chebyshev polynomial's parity:
+- **even parity** (cos-like, `c₁ = c₃ = ... = 0`): **2d** phases,
+  implementing an even polynomial on the singular values.
+- **odd parity** (sin-like, `c₀ = c₂ = ... = 0`): **2d+1** phases,
+  implementing an odd polynomial on the singular values (sign preserved).
+
+Parity matching is required by GSLW Theorem 17: n and the polynomial
+parity must agree, or the SVT collapses eigenvalue signs (Hermitian A
+maps through P(|λ|) under even n, losing sign).
 
 # Ref
 Berntson, Sünderhauf (2025), CMP 406:161 (completion step).
