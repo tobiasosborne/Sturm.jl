@@ -5,140 +5,90 @@
 #   arXiv:1905.08488. Figure 1 (InitCoset), Figure 2 (runway init).
 #   Local copy: docs/physics/gidney_2019_approximate_encoded_permutations.pdf
 #
-# Design notes (read before modifying):
+# _coset_init! — external-ancilla approach
+#   Gidney Fig. 1 shows Cpad stages of: H on a padding qubit, controlled
+#   addition of 2^p·N, then a comparison-negation `(-1)^{x≥2^p·N}`. The
+#   comparison-negation phase-kickback-disentangles the padding qubits from
+#   the value register, producing the PURE coset state on a single W+Cpad
+#   qubit register. Implementing comparison-negation requires a reversible
+#   comparator — deferred to a follow-on refinement bead.
 #
-# _coset_init! — QFT-sandwich approach
-#   Gidney Figure 1 shows m stages of: H on a padding qubit, controlled
-#   addition of 2^p·N, then a comparison-negation ((-1)^{x≥N}) step.
-#   The comparison-negation operations require a reversible comparator circuit
-#   (Cuccaro-style) that is not available in this bead's scope (it belongs to
-#   downstream bead 6xi). We therefore implement the QFT-sandwich variant,
-#   which achieves the SAME coset superposition state by exploiting the
-#   QFT-basis addition structure:
+#   For bead 6xi acceptance (residue-mod-N correctness), we implement the
+#   simpler variant WITHOUT comparison-negation: allocate Cpad separate pad
+#   ancillae, put them in |+⟩, use them as EXTERNAL controls for +2^p·N into
+#   reg. The resulting state is entangled:
 #
-#     |Coset_m(r)⟩ = (1/√2^m) ∑_{j=0}^{2^m−1} |r + j·N⟩
-#                  = (1/√2^m) ∑_{c_0,...,c_{m−1}∈{0,1}} |r + c_0·N + c_1·2N + … + c_{m−1}·2^{m−1}N⟩
+#     (1/√2^Cpad) ∑_{j=0..2^Cpad-1} |j⟩_pad ⊗ |k + j·N⟩_reg
 #
-#   Each padding bit c_p in |+⟩ = (|0⟩+|1⟩)/√2 independently controls an
-#   addition of 2^p·N into the full Wtot-qubit register in QFT basis.
-#   The QFT basis is needed because add_qft! (Draper 2000) works in-basis.
+#   Tracing out the pad (via discard or reg-only measurement) leaves the
+#   correct coset comb distribution: every measurement of reg yields
+#   (k + jN) for some j, so `outcome mod N == k` deterministically. This
+#   matches Gidney 1905.08488 Thm 3.2's measurement-level claim.
 #
-#   Circuit for _coset_init!:
-#     1. superpose!(reg)                          — QFT on full Wtot-qubit register
-#     2. For p = 0..Cpad-1:
-#        a. H! on reg.wires[W+p+1]               — put padding bit p in |+⟩ ***
-#        b. when(pad_bit) { add_qft!(reg, 2^p·N) } — controlled Draper add
-#     3. interfere!(reg)                          — inverse QFT
-#
-#   *** Note: after superpose!(reg), the padding bits are already in a QFT-basis
-#   state, not in |0⟩. The H! in step 2a is structurally part of the QFT already
-#   applied to those bits. Instead of applying H! again (which would undo the QFT
-#   action on that bit), we exploit the fact that in the QFT basis the padding
-#   bits start in the |φ_k(0)⟩ = |+⟩ state anyway (since they hold value 0).
-#   The superpose! transforms |0⟩^Cpad → |+⟩^{Cpad} (all phases zero ⟹ |+⟩).
-#   So after superpose!(reg), the padding bits are ALREADY in |+⟩ in the QFT
-#   basis — we do NOT apply H! again. We directly use each padding bit as a
-#   control for its conditional addition.
-#
-#   This is correct because:
-#     QFT|0…0⟩ = |+⟩^W (every qubit in |+⟩, zero relative phases)
-#     The padding bits start at value 0, so after QFT they are in |+⟩.
-#     when(pad) { add_qft!(reg, 2^p·N) } adds 2^p·N to the QFT-basis register
-#     conditioned on pad, creating the controlled superposition.
-#     interfere!(reg) = QFT† maps back to the computational basis.
-#
-# _runway_init! — trivial |+⟩ initialisation
-#   Figure 2 shows the runway qubits initialised as |+⟩, then subtracted from
-#   the high part of a target register at ATTACHMENT time. The subtraction from
-#   the target is performed by the downstream runway_fold!/coset_add! functions
-#   (beads b3l/6xi/6oc), not here. The constructor's job is only to put the
-#   Cpad runway qubits into |+⟩. Since the QInt{Wtot} constructor initialises
-#   those bits to |0⟩, a single Ry(π/2) per runway qubit suffices (Ry(π/2)|0⟩ = |+⟩).
+#   Why "external" ancillae (not high bits of reg): if pad bits were wires
+#   of reg, the controlled addition `when(pad_p) { reg += 2^p·N }` would
+#   require pad_p as both control and target (reg.wires[W+p+1]), which
+#   Orkan rejects. External ancillae sidestep this entirely.
 
 # ── InitCoset ────────────────────────────────────────────────────────────────
 
 """
-    _coset_init!(ctx::AbstractContext, reg::QInt{Wtot}, ::Val{W}, ::Val{Cpad}, N::Int)
+    _coset_init!(ctx, reg::QInt{Wtot}, pad_anc::NTuple{Cpad,WireID},
+                 ::Val{W}, ::Val{Cpad}, N::Int)
 
-In-place initialisation of a `QInt{Wtot}` (which was prepared in the classical
-value `k`) into the coset superposition state
+In-place initialisation of `reg` (already holding classical value `k`) and
+`pad_anc` (all wires at `|0⟩`) into the entangled coset state
 
-    |Coset_Cpad(k)⟩ = (1/√2^Cpad) ∑_{j=0}^{2^Cpad−1} |k + j·N⟩
+    (1/√2^Cpad) ∑_{j=0..2^Cpad-1} |j⟩_pad ⊗ |k + j·N⟩_reg
 
-using a QFT-sandwich approach:
-  1. `superpose!(reg)` — QFT transforms the register to the Fourier basis.
-     After QFT, the Cpad padding bits (which hold value 0) are in |+⟩.
-  2. For each padding bit position `p ∈ 0..Cpad-1`:
-     `when(pad_bit_p) { add_qft!(reg, 2^p · N) }` — in QFT basis, this
-     controlled Draper addition implements the controlled increment by 2^p·N.
-  3. `interfere!(reg)` — inverse QFT maps back to the computational basis,
-     producing the uniform superposition over all j·N offsets.
+Circuit (three phases):
+  1. For each `p ∈ 0..Cpad-1`: apply Ry(π/2) to `pad_anc[p+1]` to put it in `|+⟩`.
+  2. `superpose!(reg)` — QFT reg into Fourier basis.
+  3. For each `p ∈ 0..Cpad-1`:
+       `when(pad_anc[p+1]) { add_qft!(reg, 2^p · N) }`
+     Each controlled-add emits a Draper loop of Rz rotations on reg.wires,
+     with pad_anc[p+1] as EXTERNAL control (no self-control because pad_anc
+     is allocated separately from reg).
+  4. `interfere!(reg)` — inverse QFT back to computational basis.
+
+Properties guaranteed by the resulting state:
+  * Measuring `reg` yields outcome `k + jN` for uniformly-random
+    `j ∈ {0,..,2^Cpad-1}`. Therefore `outcome mod N == k` deterministically.
+  * The pad ancillae remain entangled with `reg` — they encode `j`. Tracing
+    them out (via `discard!` on the `QCoset`) does not affect the residue
+    distribution on `reg`.
 
 # Reference
-  Gidney (2019) arXiv:1905.08488, Definition 3.1, Figure 1.
-  QFT-sandwich approach chosen because the comparison-negation operations in
-  the original Figure 1 circuit ((-1)^{x≥N} gates) require a reversible
-  comparator not available in this bead. The QFT approach produces the same
-  coset state since:
-    f(g, c) = g + c·N (Def. 3.1) with c uniform over {0..2^m−1} gives
-    exactly the uniform superposition ∑_j |k + j·N⟩.
-  Each padding bit controls addition of 2^p·N, so the combined controlled
-  additions iterate over all c = Σ_p c_p · 2^p ∈ {0..2^m−1}.
+  Gidney (2019) arXiv:1905.08488, Definition 3.1, Figure 1. This function
+  implements the "pre-comparison-negation" portion of the InitCoset circuit.
 """
 function _coset_init!(ctx::AbstractContext, reg::QInt{Wtot},
+                      pad_anc::NTuple{Cpad, WireID},
                       ::Val{W}, ::Val{Cpad}, N::Int) where {Wtot, W, Cpad}
     Wtot == W + Cpad || error(
         "_coset_init!: Wtot=$Wtot must equal W+Cpad=$(W+Cpad)"
     )
 
-    # Step 1: QFT — transforms reg to Fourier basis.
-    # After QFT, the padding bits (which held value 0) are in |+⟩.
+    # Phase 1: put each pad ancilla into |+⟩ via Ry(π/2)|0⟩ = |+⟩.
+    for p in 0:(Cpad - 1)
+        apply_ry!(ctx, pad_anc[p + 1], π / 2)
+    end
+
+    # Phase 2: QFT the value register so that add_qft! can operate in-basis.
     superpose!(reg)
 
-    # Step 2: For each padding bit p, controlled-add 2^p · N in Fourier basis.
-    # The padding bit at position p occupies wire index W+p+1 (1-indexed).
-    #
-    # IMPORTANT: `add_qft!(reg, addend)` inside `when(pad)` would cause Orkan
-    # to attempt `controlled-Rz(θ, ctrl=pad_wire, target=pad_wire)` when
-    # k = W+p+1. Hardware rejects ctrl==target. The resolution:
-    #   * For all wires k ≠ W+p+1: `when(pad) { Rz(θ_k) }` — controlled rotation.
-    #   * For wire k = W+p+1 (the control wire itself):
-    #     `controlled-Rz(θ, ctrl=q, target=q)` acts as `Rz(θ)` unconditionally,
-    #     because on |0⟩ the ctrl is off (no rotation) and on |1⟩ the ctrl is on
-    #     (rotation applied), which matches the unconditional Rz(θ) action on |1⟩.
-    #     So we apply Rz(θ_self) unconditionally outside `when`.
-    #
-    # This split-loop mirrors Draper 2000 §5 arithmetic.jl:61 but with the
-    # self-wire handled separately.
+    # Phase 3: for each p, controlled-add 2^p · N to reg, controlled by
+    # pad_anc[p+1]. Because pad_anc is EXTERNAL to reg, add_qft!'s Rz loop
+    # can fire under when(pad_q) without ctrl==target conflict.
     for p in 0:(Cpad - 1)
-        pad_wire = reg.wires[W + p + 1]
-        pad = QBool(pad_wire, ctx, false)  # non-owning view, used as when() ctrl
-        addend = (1 << p) * N              # 2^p · N
-
-        # Apply the Draper rotations wire-by-wire (cf. add_qft! body).
-        # We reproduce the loop from add_qft! (arithmetic.jl:61) rather than
-        # calling add_qft! inside when(), to separate the self-wire case.
-        L = Wtot
-        a_int = addend
-        for k in 1:L
-            jj = L - k + 1
-            θ = 2π * a_int / (1 << jj)
-            target_wire = reg.wires[k]
-            if target_wire == pad_wire
-                # Self-rotation: ctrl==target ⟹ apply Rz(θ) unconditionally.
-                qk = QBool(target_wire, ctx, false)
-                qk.φ += θ
-            else
-                # Normal controlled rotation.
-                qk = QBool(target_wire, ctx, false)
-                when(pad) do
-                    qk.φ += θ
-                end
-            end
+        addend = (1 << p) * N
+        pad_q = QBool(pad_anc[p + 1], ctx, false)
+        when(pad_q) do
+            add_qft!(reg, addend)
         end
     end
 
-    # Step 3: inverse QFT — maps back to computational basis.
+    # Phase 4: inverse QFT — back to computational basis.
     interfere!(reg)
 
     return reg
