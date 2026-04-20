@@ -67,7 +67,8 @@ end
 
 function deallocate!(ctx::DensityMatrixContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
-    measure!(ctx, wire)
+    # Partial trace = measure-and-discard. Blessed P2 path (used by discard!).
+    _blessed_measure!(ctx, wire)
 end
 
 # ── Wire resolution ──────────────────────────────────────────────────────────
@@ -167,6 +168,7 @@ Measure a single qubit from the density matrix:
 4. Reset qubit to |0⟩ and recycle slot
 """
 function measure!(ctx::DensityMatrixContext, wire::WireID)::Bool
+    _warn_direct_measure()   # P2 antipattern warning, suppressed inside Bool/Int casts
     qubit = _resolve(ctx, wire)
     dim = 1 << ctx.n_qubits
     mask = 1 << qubit

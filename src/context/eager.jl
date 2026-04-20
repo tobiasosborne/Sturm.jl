@@ -100,8 +100,9 @@ end
 """Deallocate a wire: measure it (discarding result) and recycle the slot."""
 function deallocate!(ctx::EagerContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
-    # Measure to collapse, then recycle — measure! handles everything
-    measure!(ctx, wire)
+    # Partial trace = measure-and-discard. measure! handles collapse + recycle.
+    # Blessed: this is the P2-blessed partial-trace path used by discard!(q).
+    _blessed_measure!(ctx, wire)
 end
 
 # ── Wire → qubit resolution ──────────────────────────────────────────────────
@@ -203,6 +204,7 @@ Measure a single qubit:
 4. Reset qubit to |0> and recycle the slot
 """
 function measure!(ctx::EagerContext, wire::WireID)::Bool
+    _warn_direct_measure()   # P2 antipattern warning, suppressed inside Bool/Int casts
     qubit = _resolve(ctx, wire)
     dim = 1 << ctx.n_qubits
     mask = 1 << qubit

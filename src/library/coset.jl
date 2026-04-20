@@ -127,3 +127,83 @@ function _runway_init!(ctx::AbstractContext, reg::QInt{Wtot},
 
     return reg
 end
+
+# ── Coset arithmetic: classical addition into a coset register ───────────────
+
+"""
+    coset_add!(c::QCoset{W, Cpad, Wtot}, a::Integer) -> c
+
+Add the classical constant `a` into the coset-encoded register `c`, in-place,
+preserving the coset structure. Decoding the result mod `c.modulus` yields
+`(k + a) mod N` where `k` was the originally encoded residue, with deviation
+at most `2^{-Cpad}` per addition (Gidney 1905.08488 Theorem 3.2 / GE21 §2.4).
+
+This is the GE21 §2.4 "modular-via-non-modular" pattern: in the coset
+representation, ordinary (non-modular) addition of a classical constant
+implements modular addition mod N to within the deviation bound. The trick
+is that the coset state is approximately an eigenvector of the +N operation
+(any value-error from wrap-around the (W+Cpad)-bit register affects at most
+one coset value out of `2^Cpad`).
+
+# Circuit
+QFT-sandwich around a single Draper add:
+  1. `superpose!(c.reg)` — QFT into Fourier basis.
+  2. `add_qft!(c.reg, a)` — Draper rotations encoding +a (mod 2^Wtot).
+  3. `interfere!(c.reg)` — inverse QFT.
+
+The pad ancillae (which encode the coset index `j`) remain entangled with
+`c.reg` throughout — they are not touched by `coset_add!`. This preserves
+the entangled coset structure so that subsequent additions and a final
+`decode!` still produce the correct residue distribution.
+
+# Note on `a`
+`a` may be any integer (positive, negative, or larger than N). Decoding via
+`% N` always recovers the correct residue.
+
+# Reference
+  Gidney (2019) arXiv:1905.08488, §3 (the "near-eigenvector under +N" claim);
+  Theorem 3.2 (deviation bound 2^{-Cpad} per addition).
+  Gidney-Ekerå (2021) arXiv:1905.09749, §2.4.
+"""
+function coset_add!(c::QCoset{W, Cpad, Wtot}, a::Integer) where {W, Cpad, Wtot}
+    check_live!(c)
+    superpose!(c.reg)
+    add_qft!(c.reg, a)
+    interfere!(c.reg)
+    return c
+end
+
+# ── Coset decoding: measurement + classical mod N ───────────────────────────
+
+"""
+    decode!(c::QCoset{W, Cpad, Wtot}) -> Int
+
+Measure the coset register and pad ancillae, return the encoded residue
+`k mod N` (a classical integer in `[0, N)`). Consumes `c`.
+
+The decoding is purely classical: measure all `W + Cpad` value qubits to
+get an integer `x ∈ [0, 2^{W+Cpad})`, take `x mod N`. The pad ancillae are
+also measured (and discarded) to release their wires.
+
+# Correctness
+For an unmodified coset state (no `coset_add!` calls), `x` will be one of
+the basis states `{k, k+N, …, k+(2^Cpad-1)·N}`, all satisfying `x mod N == k`.
+
+After `coset_add!(c, a)` calls totalling `a_total`, `x mod N` will equal
+`(k + a_total) mod N` with deviation bounded by Theorem 3.2 cumulative
+over the operation count.
+
+# Reference
+  Gidney 1905.08488 §3 (decoder definition); GE21 §2.15 (classical decoding
+  is performed after measurement, not as a quantum circuit).
+"""
+function decode!(c::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
+    check_live!(c)
+    ctx = c.reg.ctx
+    x = Int(c.reg)                                 # P2 cast — measures reg
+    for w in c.pad_anc                             # partial-trace pad ancillae
+        discard!(QBool(w, ctx, false))             # P2-clean: cast wrapper + discard
+    end
+    c.consumed = true
+    return x % c.modulus
+end

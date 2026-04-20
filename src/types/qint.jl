@@ -109,7 +109,7 @@ function Base.Int(q::QInt{W}) where {W}
     check_live!(q)
     result = 0
     for i in 1:W
-        outcome = measure!(q.ctx, q.wires[i])
+        outcome = _blessed_measure!(q.ctx, q.wires[i])   # blessed cast path
         if outcome
             result |= (1 << (i - 1))
         end

@@ -93,7 +93,7 @@ end
 
 function Base.Bool(q::QBool)
     check_live!(q)
-    result = measure!(q.ctx, q.wire)
+    result = _blessed_measure!(q.ctx, q.wire)   # blessed cast path — no antipattern warning
     q.consumed = true
     return result
 end

@@ -76,7 +76,7 @@ function discard!(q::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     ctx = q.reg.ctx
     discard!(q.reg)
     for w in q.pad_anc
-        deallocate!(ctx, w)
+        discard!(QBool(w, ctx, false))   # idiomatic partial trace per ancilla
     end
     q.consumed = true
 end

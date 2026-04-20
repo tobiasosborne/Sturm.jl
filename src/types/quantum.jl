@@ -110,7 +110,9 @@ Use sparingly — intended for tight loops where the measurement is obviously
 intentional and re-wrapping every assignment in an explicit cast would be
 pure noise. Prefer explicit casts (`Bool(q)`, `Int(qi)`) in normal code.
 
-Nests correctly: the previous silent state is restored on exit.
+Nests correctly: the previous silent state is restored on exit. Also
+suppresses [`_warn_direct_measure`](@ref) (the `measure!` antipattern
+warning) — both warnings share this escape hatch.
 
 ```julia
 result = with_silent_casts() do
@@ -131,5 +133,68 @@ function with_silent_casts(f)
         return f()
     finally
         task_local_storage(:sturm_implicit_cast_silent, old)
+    end
+end
+
+# ── P2: direct `measure!` antipattern warning ────────────────────────────────
+#
+# `measure!(ctx, wire)` is the FFI-level measurement primitive — internal back-
+# end of the blessed `Bool(q)` / `Int(qi)` casts. Calling it directly from user
+# or library code violates P2 (the quantum→classical boundary should be a
+# CAST, not a function call) and bypasses the implicit-cast warning system.
+#
+# Per user policy 2026-04-20: prototyping antipatterns are OK with warnings —
+# same discipline as float→int truncation. This helper fires once per source
+# location whenever measure! is called outside the blessed cast path.
+#
+# Suppression mechanisms (any one disables the warning):
+#   * `:sturm_measure_blessed` task-local flag — set by `_blessed_measure!`,
+#     used by `Bool(::QBool)` / `Int(::QInt)` so casts stay silent.
+#   * `with_silent_casts(do ... end)` — user opt-out shared with implicit-cast
+#     warnings.
+#
+# Bead: Sturm.jl-amh.
+
+"""
+    _warn_direct_measure()
+
+Emit a one-per-source-location warning when `measure!(ctx, wire)` is called
+directly. Suppressed when `:sturm_measure_blessed` is true (i.e. inside
+`Bool(q)` / `Int(qi)` casts via [`_blessed_measure!`](@ref)) or inside
+[`with_silent_casts`](@ref).
+
+Dedup id is `(file, line)` of the first user stack frame.
+
+See README §P2, bead Sturm.jl-amh.
+"""
+function _warn_direct_measure()
+    get(task_local_storage(), :sturm_measure_blessed, false) && return nothing
+    get(task_local_storage(), :sturm_implicit_cast_silent, false) && return nothing
+    site = _first_user_frame(stacktrace(backtrace()))
+    @warn "Direct call to `measure!(ctx, wire)` — this is a P2 antipattern. " *
+          "The quantum→classical boundary should be a CAST: use `Bool(q)` " *
+          "or `Int(qi)` for measurement, or `discard!(q)` for partial trace. " *
+          "Wrap a non-owning view as `Bool(QBool(wire, ctx, false))` if you " *
+          "only have a raw WireID. Suppress per-task with `with_silent_casts`." maxlog=1 _id=(:sturm_direct_measure, site.file, site.line) _file=string(site.file) _line=Int(site.line)
+    return nothing
+end
+
+"""
+    _blessed_measure!(ctx::AbstractContext, wire::WireID) -> Bool
+
+Internal: invoke `measure!(ctx, wire)` with the `:sturm_measure_blessed`
+task-local flag set, suppressing the [`_warn_direct_measure`](@ref) warning
+for this call only. Used by `Bool(::QBool)` and `Int(::QInt)` so the blessed
+cast path does not warn while the raw `measure!` path does.
+
+Nests correctly via try/finally; restores the previous flag on exit.
+"""
+@inline function _blessed_measure!(ctx, wire)
+    old = get(task_local_storage(), :sturm_measure_blessed, false)
+    task_local_storage(:sturm_measure_blessed, true)
+    try
+        return measure!(ctx, wire)
+    finally
+        task_local_storage(:sturm_measure_blessed, old)
     end
 end

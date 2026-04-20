@@ -133,6 +133,7 @@ end
 # ── Measurement (symbolic) ───────────────────────────────────────────────────
 
 function measure!(ctx::TracingContext, wire::WireID)::Bool
+    _warn_direct_measure()   # P2 antipattern warning, suppressed inside Bool/Int casts
     _resolve_tracing(ctx, wire)
     ctx._result_counter += 1
     push!(ctx.dag, ObserveNode(wire, ctx._result_counter))
