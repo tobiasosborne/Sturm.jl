@@ -4,6 +4,102 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 36b: N=55 demo (biggest shor_factor_EH fitting 24 qubits)
+
+Ran `_eh_short_dlp(7, 28, 55, Val(3), Val(3), Val(6))` with verbose=true
+instrumentation. Predicted peak `2·ell + m + 2·L + 3 = 24`. Actual peak
+(via `ctx.n_qubits` after run): **24 qubits exactly**. ✓
+
+### Runtime (commit `b41fe2f`)
+
+```
+[eh_dlp +1.2s  live=15] alloc y_reg[L=6] = |1⟩
+[eh_dlp +88.1s live=15] first_reg[1]: EXIT mulmod_beauregard!
+[eh_dlp +174.5s live=15] first_reg[2]: EXIT
+[eh_dlp +263.4s live=15] first_reg[3]: EXIT
+[eh_dlp +353.4s live=15] first_reg[4]: EXIT
+[eh_dlp +442.0s live=15] first_reg[5]: EXIT
+[eh_dlp +531.4s live=15] first_reg[6]: EXIT
+[eh_dlp +621.1s live=15] second_reg[1]: EXIT
+[eh_dlp +707.2s live=15] second_reg[2]: EXIT
+[eh_dlp +792.6s live=15] second_reg[3]: EXIT
+[eh_dlp +792.6s live=15] interfere!(first_reg)
+[eh_dlp +793.5s live=15] interfere!(second_reg)
+[eh_dlp +795.7s live=0 ] EXIT j=6 k=2
+```
+
+9 controlled mulmods at ~88s each, interfere! negligible. Total 13m16s
+per shot. Each mulmod works at 2^24 statevector (24-qubit peak inside
+the mulmod interior, driven by the L+1=7 ancillae).
+
+### Single-shot MISS — the "smeared peaks" discovery
+
+The shot returned `(j=6, k=2)` with `_eh_recover_d_candidates = []` —
+no d ∈ (0, 8) satisfied `|{d·j + 2^m·k}_{64}| ≤ 2^(m-2) = 2`. Miss.
+
+**Root cause (NEW insight, worth saving)**: For N=15 `max ord(g) = 4`
+and 64/4 = 16 is an integer power of 2 → QFT peaks are sharp (every
+shot lands on a multiple of 2^(ℓ+m) / ord). For N=55 `max ord(g) = 20`
+(lcm(4, 10)) and 64/20 is NOT an integer, let alone a power of 2 → QFT
+peaks are smeared across multiple (j, k) outcomes, and single-shot hit
+rate degrades.
+
+Generalisation: EH17's short-DLP algorithm at toy-N hits reliably only
+when `ord(g) | 2^(ℓ+m)`, i.e., when `ord(g)` is a power of 2. For
+N = pq with `p, q` odd primes, `max ord = lcm(p-1, q-1)`:
+  * N=15: lcm(2, 4) = 4 = 2² ✓
+  * N=21: lcm(2, 6) = 6 = 2·3 ✗
+  * N=33: lcm(2, 10) = 10 = 2·5 ✗
+  * N=35: lcm(4, 6) = 12 = 2²·3 ✗
+  * N=39: lcm(2, 12) = 12 ✗
+  * N=55: lcm(4, 10) = 20 = 2²·5 ✗
+
+**Implication**: test acceptance of `shor_factor_EH(N) ≥ 50%` is
+structurally easier at N=15 than at any other toy-N. Future acceptance
+bars for Sturm's EH17 tests on N ∈ {21, 33, 35, 39, 55} should expect
+lower single-shot rates (~20-40% empirically) and rely on
+`max_attempts ≥ 10` to hit the cumulative ≥50% bar.
+
+### What was committed
+
+Commit `b41fe2f`:
+- `shor_factor_EH(N; m=nothing, ell=nothing, verbose=false, ...)` —
+  `m` and `ell` now overrideable (default heuristic unchanged).
+- `_eh_short_dlp(..., verbose::Bool=false)` — stage-by-stage
+  ENTER/EXIT lines on stderr (wall-clock ms, live qubits), flushed
+  per line. Silent by default.
+
+### Lessons for future agents
+
+1. **`tail -N` defeats eager-flush.** Piping a streaming producer
+   through `tail -80 | ...` buffers the entire stream until EOF.
+   For verbose runs, redirect to a file and use `Monitor` on
+   `tail -f file | grep --line-buffered ...`, or read the file directly
+   while it's being written.
+
+2. **Peak-qubit formula for EH17**: `2·ell + m + 2·L + 3` (L+1 mulmod
+   ancilla + 1 cascade workspace + ell+m+ell exponent + L working).
+   For 24-qubit budget: `3m + 2L ≤ 21` with ell=m, giving the family
+   `(m=3, L≤6)` (biggest N=55) or `(m=4, L≤4)` (too small to be
+   interesting).
+
+3. **Runtime per mulmod scales as 2^peak**: ~86s at 2^24 vs ~1.5s at
+   2^19 (N=15). For N=55 that's 9·88 = 13 min/shot. Multi-shot
+   acceptance tests at N=55 would need 1-2 hours compute; do NOT
+   run in a test suite.
+
+4. **QFT peak sharpness = ord(g) | 2^(ℓ+m)**. Powers-of-2 order gives
+   100% single-shot success; non-power-of-2 order smears peaks. The
+   EH17 analytical bound `ord ≥ 2^(ℓ+m) + 2^ℓ·d` is violated for all
+   these toy-N, but sharp-vs-smeared depends on the divisibility.
+
+### Next-session pointers (unchanged)
+
+As Session 36: `jrl` P2 (unblocks `6oc`), `870` P1 (Steane), or
+`eud`/`c6n` Shor epics. Session 36b added no new blockers.
+
+---
+
 ## 2026-04-20 — Session 36: Ship `Sturm.jl-6bn` (Ekerå-Håstad short-DLP factoring)
 
 Single-bead session. Shipped `shor_factor_EH`, the EH17 short-DLP
