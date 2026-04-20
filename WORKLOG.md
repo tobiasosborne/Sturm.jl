@@ -118,6 +118,91 @@ statevector probes — 2^(L+c_pad) grows fast.
 
 ---
 
+## 2026-04-20 — Session 35: Close `Sturm.jl-q84` (QCoset / QRunway / QROMTable type definitions + init circuits)
+
+Implementer pass for the three-plus-one round on bead q84. Two proposers
+(A, B) produced independent designs; the orchestrator synthesised them into
+a single spec. This session ships the agreed design.
+
+### What was implemented
+
+**4 new files:**
+
+1. `src/types/qcoset.jl` — `QCoset{W, Cpad, Wtot}` mutable struct, linearity
+   machinery, wire access, constructors. Three type params (Wtot = W+Cpad)
+   following the same pattern used to avoid `W+Cpad` in struct field annotations.
+
+2. `src/types/qrunway.jl` — `QRunway{W, Cpad, Wtot}`. `discard!` unconditionally
+   errors (CLAUDE.md fail-loud rule; runway must be classically uncomputed first).
+   `_runway_force_discard!` is the safe cleanup path after `runway_fold!`.
+
+3. `src/types/qrom_table.jl` — `QROMTable{Ccmul, W, Nentries}` (NTuple, max
+   Ccmul≤20) and `QROMTableLarge{Ccmul, W}` (Vector, no size limit). NOT subtypes
+   of `Quantum`. `_canonicalize_table_entries` handles mod-N reduction.
+   **Gotcha** (see below): infinite dispatch recursion on `QROMTableLarge`.
+
+4. `src/library/coset.jl` — `_coset_init!` (QFT-sandwich approach), `_runway_init!`
+   (trivial `|+⟩` init). Both are internal `_`-prefix, not exported.
+
+**Modified files:**
+- `src/Sturm.jl` — added includes for the 4 new files, added exports
+  `QCoset, QRunway, QROMTable, QROMTableLarge`.
+- `test/test_q84_types.jl` — 60 smoke tests, all passing.
+
+### Key decisions and gotchas
+
+**`_coset_init!` approach — QFT sandwich, not Gidney Fig. 1 literally:**
+Gidney 1905.08488 Figure 1 uses comparison-negation operations
+(`(-1)^{x≥N}`) which require a reversible comparator (Cuccaro-style).
+That circuit is out of scope for this bead. The QFT-sandwich variant
+achieves the SAME coset superposition `|Coset_m(r)⟩ = (1/√2^m) Σ_j |r+jN⟩`
+via controlled QFT-basis additions of `2^p·N` for each padding bit p,
+which directly implements Definition 3.1 encoder `f(g,c) = g + c·N`.
+
+**Orkan ctrl==target rejection:**
+When `when(pad)` wraps `add_qft!(reg, addend)`, the rotation loop inside
+`add_qft!` applies `Rz(θ)` to EVERY wire in the register including `pad`'s
+own wire (k = W+p+1). This creates `ctrl=pad, target=pad` — Orkan rejects
+it (`"qubits must be distinct"`). Fix: manually unroll the `add_qft!` loop,
+applying `when(pad) { Rz(θ) }` to all wires except `pad`'s own wire, and
+applying `Rz(θ)` unconditionally to `pad`'s wire (because controlled-self-
+rotation is equivalent to the unconditional rotation).
+
+**`QROMTableLarge` infinite dispatch loop:**
+The outer convenience constructor `QROMTableLarge{C,W}(entries::AbstractVector{<:Integer}, ...)`
+calls `_canonicalize_table_entries` which returns `Vector{UInt64}`. Then
+it calls `QROMTableLarge{C,W}(processed, modulus)` — but `Vector{UInt64}
+<: AbstractVector{<:Integer}`, so this re-dispatches to the OUTER constructor
+again, causing infinite recursion and a stack overflow. Fix: define an
+**inner constructor** in the struct body (`new{Ccmul,W}(data, modulus)`) 
+that is more specific (`Vector{UInt64}`) and is matched preferentially by Julia's
+dispatch to break the cycle.
+
+**`QROMTable{Ccmul,W}` needs third type param `Nentries`:**
+`NTuple{1 << Ccmul, UInt64}` is not valid in a struct field annotation —
+Julia evaluates `<<` at type-definition time with `Ccmul` as a TypeVar,
+producing `MethodError: <<(::Int64, ::TypeVar)`. Fix: add third type param
+`Nentries` (must equal `1 << Ccmul`, enforced by constructor), same
+Wtot-pattern as QCoset/QRunway.
+
+**`_runway_force_discard!` import in tests:**
+Internal `_`-prefix functions are not exported. Tests import explicitly via
+`import Sturm: _runway_force_discard!`.
+
+### Smoke tests
+
+All 60 tests pass. Covers: construction, validation errors, wire access,
+discard/force-discard, QROMTable canonical reduction, type parameter assertions,
+double-discard protection.
+
+### Beads
+
+- `Sturm.jl-q84` — close (this session ships the type definitions).
+- `Sturm.jl-6xi` (`coset_add!`), `Sturm.jl-b3l` (`runway_fold!`),
+  `Sturm.jl-6oc` (`qrom_lookup!`) — downstream, still open.
+
+---
+
 ## 2026-04-20 — Session 33: Close `Sturm.jl-p1z` (add_qft_quantum! — two-quantum-register Draper adder)
 
 P1 prerequisite for `Sturm.jl-6oc` (windowed arithmetic / `shor_order_E`). Sturm's
