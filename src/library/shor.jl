@@ -1310,51 +1310,82 @@ discarded — only `(j, k)` feeds classical post-processing).
   `docs/physics/ekera_2017_short_dlp.pdf`.
 """
 function _eh_short_dlp(g::Int, y::Int, N::Int,
-                      ::Val{m}, ::Val{ell}, ::Val{L}) where {m, ell, L}
+                      ::Val{m}, ::Val{ell}, ::Val{L};
+                      verbose::Bool=false) where {m, ell, L}
     gcd(g, N) == 1 || error("_eh_short_dlp: gcd(g=$g, N=$N) must be 1")
     gcd(y, N) == 1 || error("_eh_short_dlp: gcd(y=$y, N=$N) must be 1")
     N < (1 << L)   || error("_eh_short_dlp: N=$N must fit in L=$L bits")
 
     ctx = current_context()
     W1 = ell + m
+    t0 = time_ns()
+    ms() = round((time_ns() - t0) / 1e6, digits=1)
+    lq() = _live_qubits(ctx)
+    function log(msg::AbstractString)
+        verbose || return
+        print(stderr, "[eh_dlp +", ms(), "ms live=", lq(), "] ", msg, "\n")
+        flush(stderr)
+    end
+
+    log("ENTER g=$g y=$y N=$N m=$m ell=$ell L=$L W1=$W1")
 
     # Exponent registers: start at |0⟩, then put in |+⟩ via superpose! (= QFT).
     # QFT|0⟩ = (1/√2^W)·Σ|k⟩ = |+⟩^W, which is what step 1 of §4.3 calls for.
     first_reg  = QInt{W1}(ctx, 0)
+    log("alloc first_reg[W1=$W1]")
     second_reg = QInt{ell}(ctx, 0)
+    log("alloc second_reg[ell=$ell]")
     superpose!(first_reg)
+    log("superpose!(first_reg) → |+⟩^$W1")
     superpose!(second_reg)
+    log("superpose!(second_reg) → |+⟩^$ell")
 
     # Working register in eigenstate-style init |1⟩ (§4.3 step 2 acts on |0⟩
     # then prepends |1⟩ via the ⊙ group operation; initialising to |1⟩
     # directly is equivalent and avoids an extra mulby-1).
     y_reg = QInt{L}(ctx, 1)
+    log("alloc y_reg[L=$L] = |1⟩")
 
     # Phase 2 — y_reg ← y_reg · g^a mod N, bit-controlled from first_reg.
     for i in 1:W1
         pow = powermod(g, 1 << (i - 1), N)
-        pow == 1 && continue                        # identity: skip
+        if pow == 1
+            log("first_reg[$i]: pow=g^$(1<<(i-1)) mod $N = 1 → SKIP (identity)")
+            continue                        # identity: skip
+        end
+        log("first_reg[$i]: ENTER mulmod_beauregard!(y_reg, $pow, $N)")
         mulmod_beauregard!(y_reg, pow, N, first_reg[i])
+        log("first_reg[$i]: EXIT  mulmod_beauregard!")
     end
 
     # Phase 3 — y_reg ← y_reg · y^(-b) mod N, bit-controlled from second_reg.
     y_inv = invmod(y, N)
+    log("y_inv = invmod($y, $N) = $y_inv")
     for i in 1:ell
         pow = powermod(y_inv, 1 << (i - 1), N)
-        pow == 1 && continue
+        if pow == 1
+            log("second_reg[$i]: pow=y_inv^$(1<<(i-1)) mod $N = 1 → SKIP")
+            continue
+        end
+        log("second_reg[$i]: ENTER mulmod_beauregard!(y_reg, $pow, $N)")
         mulmod_beauregard!(y_reg, pow, N, second_reg[i])
+        log("second_reg[$i]: EXIT  mulmod_beauregard!")
     end
 
     # Phase 4 — inverse QFT on each exponent register, then measure.
     # (Paper §4.3 step 3 writes QFT; inverse QFT gives the same |·|² peak
     #  structure, matches Sturm's existing Shor A/B/C convention, and
     #  keeps j, k in the "continued-fractions compatible" orientation.)
+    log("interfere!(first_reg)")
     interfere!(first_reg)
+    log("interfere!(second_reg)")
     interfere!(second_reg)
 
+    log("measure first_reg + second_reg")
     j = Int(first_reg)
     k = Int(second_reg)
     discard!(y_reg)
+    log("EXIT  j=$j k=$k")
     return j, k
 end
 
@@ -1372,27 +1403,36 @@ the "toy-N caveat" in the comment block above.
 
 # Parameter selection
 
-Heuristic: `n_N = ceil(log2(N+1))`, `m = max(3, (n_N+1)÷2)`, `ell = m`
-(s = 1), `L = max(1, ceil(log2(N)))`.  For N=15 (`n_N=4`): `m = ell = 3`,
-`L = 4`.
+Default heuristic: `n_N = ceil(log2(N+1))`, `m = max(3, (n_N+1)÷2 + 1)`,
+`ell = m` (s = 1), `L = max(1, ceil(log2(N)))`.  For N=15 (`n_N=4`):
+`m = ell = 3`, `L = 4`.
+
+When the caller has tight qubit-budget constraints and knows a smaller
+`m` suffices (e.g. `d` is known to fit), pass `m` and `ell` explicitly.
+Peak live wires = `2·ell + m + 2·L + 3`.
 
 # Reference
   Ekerå-Håstad 2017 (arXiv:1702.00249) §5.2;
   `docs/physics/ekera_2017_short_dlp.pdf`.
   Gidney-Ekerå 2021 §2.1 (use as an optimisation stage in Shor pipeline).
 """
-function shor_factor_EH(N::Int; max_attempts::Int=16, verbose::Bool=false)
+function shor_factor_EH(N::Int;
+                        m::Union{Int, Nothing}=nothing,
+                        ell::Union{Int, Nothing}=nothing,
+                        max_attempts::Int=16, verbose::Bool=false)
     N >= 4 || error("shor_factor_EH: N=$N must be ≥ 4")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     # Parameter selection for EH17 s=1 normalisation (§5.2.4).
-    # For RSA N=pq with n_prime-bit primes, d = (p+q-2)/2 has ~n_prime bits,
-    # so m ≥ n_prime suffices.  Heuristic: m = max(3, ⌈n_N / 2⌉ + 1) with
-    # n_N = ⌈log2(N+1)⌉.  This guarantees d < 2^m for any allowable (p, q).
+    # Default heuristic guarantees d < 2^m for any allowable (p, q) with
+    # similarly-sized primes.  Caller may override via `m` / `ell` kwargs
+    # to squeeze qubit budget when (p, q) are known smaller.
     n_N = ceil(Int, log2(N + 1))
-    m_val   = max(3, (n_N + 1) ÷ 2 + 1)
-    ell_val = m_val                      # s = 1
-    L_val   = max(1, ceil(Int, log2(N))) # working register width
+    m_val   = m === nothing   ? max(3, (n_N + 1) ÷ 2 + 1) : m
+    ell_val = ell === nothing ? m_val : ell              # s = 1 default
+    L_val   = max(1, ceil(Int, log2(N)))                 # working register
+    m_val   >= 1 || error("shor_factor_EH: m=$m_val must be ≥ 1")
+    ell_val >= 1 || error("shor_factor_EH: ell=$ell_val must be ≥ 1")
 
     for attempt in 1:max_attempts
         g = rand(2:(N - 1))
@@ -1409,7 +1449,8 @@ function shor_factor_EH(N::Int; max_attempts::Int=16, verbose::Bool=false)
         y == 1 && continue
 
         # Quantum step — returns the two QFT outcomes.
-        j, k = _eh_short_dlp(g, y, N, Val(m_val), Val(ell_val), Val(L_val))
+        j, k = _eh_short_dlp(g, y, N, Val(m_val), Val(ell_val), Val(L_val);
+                             verbose=verbose)
 
         # Classical post-processing — iterate lattice candidates, verify
         # each via the quadratic recovery + multiplication check.
