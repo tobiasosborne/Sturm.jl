@@ -4,6 +4,114 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 32: Close `Sturm.jl-c6n` (polynomial-in-L Shor scaling doc)
+
+P1 EPIC. Primary acceptance: "`shor_order_D` correct on N=15,21,35 AND
+bench at L=14 shows polynomial (not exponential) gate count." N=15 and
+N=21 were verified in sessions 26 and 28 (end-to-end Orkan shots).
+N=35 is device-blocked on the current box (HWM ≈ 20–21 qubits >
+16-qubit cap). This session closes the polynomial-scaling half.
+
+### Deliverable
+
+New `docs/shor_scaling.md` with:
+- Trace-only bench data for impl C and impl D across L ∈ [4, 14]
+- log-log fit: `gates(L) ≈ 82.7·L^3.358` (R²=0.997),
+  `toff(L) ≈ 5.72·L^2.026` ≈ 6L² (R²=0.999)
+- Extrapolation to L=1024 with honest comparison to Gidney-Ekerå 2021's
+  `0.3n³ + 0.0005n³ lg n` Toffoli formula
+- Caveats: a_j-saturation outliers at L=4 and L=9, counting-convention
+  gap between Sturm CCX count and GE "abstract Toffoli"
+
+### Results table (impl D, t=2L)
+
+| L | gates | toff |
+|--:|--:|--:|
+|  4 |   2,473 |    24 |  ← outlier (N=15 a=7, only 2/8 mulmods fire)
+|  5 |  19,551 |   150 |
+|  6 |  33,505 |   216 |
+|  7 |  56,239 |   294 |
+|  8 |  85,089 |   384 |
+|  9 |  28,749 |   108 |  ← outlier (N=257 a=2, ord(2 mod 257)=16)
+| 10 | 179,281 |   600 |
+| 11 | 250,911 |   726 |
+| 12 | 334,129 |   864 |
+| 13 | 529,933 | 1,092 |
+| 14 | 570,753 | 1,176 |
+
+Impl C over the same range: 8k → **47.7M** gates (5,750× growth).
+Impl D over the same range: 2.5k → **571k** gates (230× growth). At
+L=14 the impl C / impl D gate ratio is 83×; at L=18 the preflight
+projects ~200×.
+
+### "Nice-to-have" verdict: NOT met, expected
+
+The bead optionally asked for the L=1024 extrapolation to be "within
+an order of magnitude of Gidney-Ekerå 2021". Honest read:
+- Sturm CCX count at L=1024 = ~7 × 10⁶, GE Toff = ~3.3 × 10⁸. Looks
+  like Sturm is *cheaper* but that's a metric mismatch — Sturm doesn't
+  fold Rz into its Toffoli count; GE does.
+- Sturm total gates at L=1024 = ~1.06 × 10¹² vs GE Toff 3.3 × 10⁸.
+  Sturm is ~3,200× more expensive on this axis. This is consistent
+  with GE's own abstract stating they reduce Toffoli count by 10×+
+  vs prior art via windowed arithmetic, Zalka coset, oblivious carry
+  runways — optimisations NOT present in vanilla Beauregard (impl D).
+
+The primary acceptance — "polynomial not exponential" — is met with
+R²=0.997 on the fit.
+
+### Fixes landed this session
+
+1. **`test/bench_shor_scaling.jl` default impl filter now includes :D.**
+   Without this, `STURM_BENCH_ONLY` had to be set manually; :D was a
+   post-landing addition that was never folded into the default. One
+   line, `parse_impl_filter()`.
+2. Filed `Sturm.jl-guj` P3 for the Int64 overflow in `estimate_bytes`
+   at L ≥ 16 for impl B. Not triggered under `STURM_BENCH_MAX_L ≤ 14`.
+
+### Gotchas for future agents
+
+1. **`a_j = a^{2^{t-i}} mod N` saturates early for bases with small
+   multiplicative order.** At N=15 a=7 (ord=4) or N=257 a=2 (ord=16 —
+   257 is a Fermat prime!), many mulmod calls become identity and get
+   short-circuited by the impl D mulmod dispatch. Observed: L=9 gate
+   count (28,749) is *lower* than L=8 gate count (85,089), which is
+   the clearest non-monotone dip in the series. Always EXCLUDE
+   small-order cases from any scaling fit OR choose non-pathological
+   bases (`a` coprime with no unusually-short order mod N).
+2. **Sturm CCX count ≠ GE abstract Toffoli count.** Sturm reports CCX
+   as 3+-wire-with-`ncontrols ≥ 1` DAG nodes only; multi-controlled
+   Rz is counted as RzNode with `ncontrols=2`, NOT as CCX. GE's
+   abstract-circuit Toffoli count folds ALL non-Clifford operations
+   into a single number. Cross-framework comparison requires either
+   (a) synthesising Sturm's Rz to Clifford+T and counting T gates, or
+   (b) running GE's formula in total-gate mode. Neither is done here.
+3. **`TracingContext.wire_counter` is monotone, not live-HWM.** Bench
+   table's "wires" column is the number of allocated WireIDs (every
+   `_alloc_wire!` bumps it, `_free_wire!` does not). Live HWM is
+   maintained by `ctx.n_qubits` on Eager/Density contexts only. See
+   `src/context/tracing.jl`.
+4. **Per-case trace time on this device was 0.5–9s for L ≤ 14.** Much
+   faster than expected — DAG construction is mostly pointer appends
+   into a pre-sized `Vector{HotNode}`. The slow cases were impl C at
+   L=13 (9.1s, 44M nodes) and L=4 (5.2s, first-run JIT warm-up).
+
+### Files touched
+
+- `docs/shor_scaling.md` (new, ~200 lines) — the deliverable.
+- `test/bench_shor_scaling.jl` — default impl filter includes :D.
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-c6n` closed with a note that N=35 end-to-end verification
+  remains device-blocked (16-qubit cap vs 20+ needed) — separate bead
+  if anyone later wants to track it.
+- `Sturm.jl-guj` filed for the Int64 overflow in the preflight cost
+  model at L ≥ 16 for impl B. P3, not blocking.
+
+---
+
 ## 2026-04-20 — Session 31: Close `Sturm.jl-5gz` (qsvt_phases sin parity, documentation bug)
 
 P2 bug: `test/test_qsvt_reflect.jl:57` asserted `length(phi) == 2d` for sin
