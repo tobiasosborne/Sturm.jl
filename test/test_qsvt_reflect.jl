@@ -43,18 +43,30 @@ end
     # ─────────────────────────────────────────────────────────────────────
 
     @testset "qsvt_phases: cos polynomial returns correct count" begin
+        # Even Chebyshev parity → even n (= 2d). GSLW Thm 17: even-n QSVT
+        # implements an even polynomial on the singular values. φ₀ is dropped.
         for d in [4, 8, 12]
+            println(stderr, "  [cos d=$d] computing qsvt_phases…"); flush(stderr)
+            t0 = time()
             c = jacobi_anger_cos_coeffs(1.0, d)
             phi = qsvt_phases(c; epsilon=1e-6)
-            @test length(phi) == 2d  # analytic degree = 2d, minus phi_0
+            println(stderr, "  [cos d=$d] length=$(length(phi)) expected=$(2d) in $(round(time()-t0, digits=1))s"); flush(stderr)
+            @test length(phi) == 2d
         end
     end
 
     @testset "qsvt_phases: sin polynomial returns correct count" begin
+        # Odd Chebyshev parity → odd n (= 2d+1). GSLW Thm 17: odd-n QSVT
+        # implements an odd polynomial on the singular values, preserving
+        # eigenvalue sign P(λ) rather than collapsing to P(|λ|). φ₀ is kept.
+        # See src/qsvt/circuit.jl qsvt_phases step 6 for the parity rule.
         for d in [5, 9, 13]
+            println(stderr, "  [sin d=$d] computing qsvt_phases…"); flush(stderr)
+            t0 = time()
             c = jacobi_anger_sin_coeffs(1.0, d)
             phi = qsvt_phases(c; epsilon=1e-6)
-            @test length(phi) == 2d
+            println(stderr, "  [sin d=$d] length=$(length(phi)) expected=$(2d+1) in $(round(time()-t0, digits=1))s"); flush(stderr)
+            @test length(phi) == 2d + 1
         end
     end
 
