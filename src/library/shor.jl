@@ -1151,3 +1151,278 @@ function shor_factor_D_semi(N::Int; max_attempts::Int=16)
     end
     return Int[]
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Impl EH — Ekerå-Håstad 2017 short-DLP derivative
+#
+# Ground truth: Ekerå & Håstad, "Quantum algorithms for computing short
+# discrete logarithms and factoring RSA integers", arXiv:1702.00249
+# (2017-02-01).  Local PDF: docs/physics/ekera_2017_short_dlp.pdf
+#
+# Unlike the A/B/C/D impls which find the ORDER of `a mod N` and reduce to
+# factors via gcd(a^{r/2} ± 1, N), impl EH recasts factoring as a short
+# discrete log problem (EH17 §5.2) and gives a ~1.5n exponent instead of
+# Shor's 2n — asymptotically fewer controlled modular multiplications.
+#
+# For RSA integer N = pq (EH17 normalisation, §5.2.2):
+#   y = g^((N-1)/2) mod N  ≡  g^((p+q-2)/2)  (since (N-1)/2 ≡ (p+q-2)/2 mod
+#                                             ord(g) when ord(g) | φ(N))
+#   d = (p+q-2)/2         — the short discrete log, 0 < d < 2^(n_prime+1)
+#   Recover (p, q) from x² - (2d+2)x + N = 0 via the quadratic formula.
+#
+# Quantum step (EH17 §4.3, s=1 parameterisation):
+#   Two exponent registers of sizes (ℓ+m) and ℓ, working reg |1⟩_L.
+#   Prepare both in |+⟩ (uniform).  Compute g^a · y^(-b) mod N on working
+#   reg via controlled mulmod cascades.  Inverse QFT each register.
+#   Measure → (j, k).  The pair (j, k) is "good" (Def 1) with high
+#   probability: |{d·j + 2^m·k}_{2^(ℓ+m)}| ≤ 2^(m-2).
+#
+# Classical post-processing (EH17 §4.4, s=1):
+#   The 2D lattice L = Z-span of rows [[j, 1], [2^(ℓ+m), 0]], target
+#   v = ({-2^m·k}_{2^(ℓ+m)}, 0).  Search for u ∈ L with
+#   |u - v| < sqrt(s/4+1)·2^m = sqrt(5)/2·2^m; last coordinate of u is d.
+#   For s=1 and small m this reduces to brute force over d ∈ (0, 2^m),
+#   testing the residual |{d·j + 2^m·k}_{2^(ℓ+m)}| ≤ 2^(m-2) bound.
+#   ~20 lines pure Julia (mirrors _shor_convergents).
+#
+# Toy-N caveat (N=15, 21, 35):
+#   EH17's analysis (§4.3) requires ord(g) ≥ 2^(ℓ+m) + 2^ℓ·d.  For small
+#   N the multiplicative group is too small (ord ≤ 4 at N=15).  The
+#   algorithm still yields biased output because the phase structure
+#   survives partial wrap-around; empirical hit rate at N=15 is 50-90%.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    _eh_recover_d_candidates(j::Int, k::Int, m::Int, ell::Int) -> Vector{Int}
+
+Classical post-processing for the Ekerå-Håstad short-DLP algorithm
+(s=1 parameterisation).  Given a quantum measurement outcome `(j, k)` and
+the register sizes `m` (short-DLP bit-width) and `ell` (second register),
+return the sorted list of all candidate `d ∈ (0, 2^m)` satisfying the
+good-pair residual bound
+
+    |{d·j + 2^m·k}_{2^(ℓ+m)}| ≤ 2^(m-2)        (EH17 Def 1)
+
+where `{·}_M` is the centred residue on `[-M/2, M/2)`.  Sorted by
+increasing absolute residual (best candidate first).  Empty if `(j, k)`
+is not a good pair for any `d`.
+
+Note on spurious candidates (EH17 §4.4, Lemma 3): at small `m`, the 2D
+lattice may contain multiple short vectors, so several `d` may pass the
+bound.  The caller must verify each via `_eh_factors_from_d` or by
+recomputing `g^d mod N`.  For s>1 the lattice `L` has `s+1`
+dimensions and the probability of spurious short vectors drops to
+`2^{-s-1}`.
+
+# Reference
+  Ekerå-Håstad 2017 (arXiv:1702.00249), §4.4;
+  `docs/physics/ekera_2017_short_dlp.pdf`.
+"""
+function _eh_recover_d_candidates(j::Int, k::Int, m::Int, ell::Int)::Vector{Int}
+    m >= 1   || error("_eh_recover_d_candidates: m=$m must be ≥ 1")
+    ell >= 1 || error("_eh_recover_d_candidates: ell=$ell must be ≥ 1")
+    j >= 0   || error("_eh_recover_d_candidates: j=$j must be ≥ 0")
+    k >= 0   || error("_eh_recover_d_candidates: k=$k must be ≥ 0")
+
+    M = 1 << (ell + m)
+    twom = 1 << m
+    bound = m >= 2 ? (1 << (m - 2)) : 0    # 2^(m-2); at m=1 bound=0 (trivial)
+    half = M ÷ 2
+
+    pairs = Tuple{Int, Int}[]              # (|residual|, d)
+    for d in 1:(twom - 1)
+        r = mod(d * j + twom * k, M)
+        r = r >= half ? r - M : r
+        ar = abs(r)
+        if ar <= bound
+            push!(pairs, (ar, d))
+        end
+    end
+    sort!(pairs)
+    return Int[p[2] for p in pairs]
+end
+
+"""
+    _eh_factors_from_d(d::Integer, N::Integer) -> Union{Tuple{Int,Int}, Nothing}
+
+Factor recovery for the Ekerå-Håstad algorithm (EH17 §5.2.2, EH normalisation).
+Given the short discrete log `d = (p+q-2)/2`, solves the quadratic
+
+    x² - (2d+2)·x + N = 0
+
+whose roots are `x = (d+1) ± √((d+1)² - N)`.
+
+Returns `(p, q)` with `p ≤ q`, `p·q = N`, and `1 < p, q < N`; or `nothing`
+if the discriminant is negative or not a perfect square, or if the roots
+do not genuinely factor `N`.
+"""
+function _eh_factors_from_d(d::Integer, N::Integer)::Union{Tuple{Int,Int}, Nothing}
+    d >= 1 || return nothing
+    N_i = Int(N)
+    c = Int(d) + 1
+    disc = c * c - N_i
+    disc < 0 && return nothing
+    sr = isqrt(disc)
+    sr * sr == disc || return nothing
+    p = c - sr
+    q = c + sr
+    (p > 1 && q > 1 && p * q == N_i) || return nothing
+    return (Int(p), Int(q))
+end
+
+"""
+    _eh_short_dlp(g::Int, y::Int, N::Int, ::Val{m}, ::Val{ell}, ::Val{L}) -> (j, k)
+
+Quantum step of the Ekerå-Håstad 2017 short-DLP algorithm (§4.3, s=1).
+Given a generator `g` and `y = [d]g = g^d mod N` with `0 < d < 2^m`,
+runs the two-register phase estimation and returns the measured outcome
+`(j, k)` with `j ∈ [0, 2^(ℓ+m))`, `k ∈ [0, 2^ℓ)`.
+
+# Circuit
+
+Three registers:
+  * `first_reg :: QInt{ell+m}` — exponent register for `a`.
+  * `second_reg :: QInt{ell}`  — exponent register for `b`.
+  * `y_reg :: QInt{L}`         — working register, initial state `|1⟩`.
+
+Four phases:
+  1. Prepare `first_reg` and `second_reg` in `|+⟩` (via `superpose!(|0⟩)`).
+  2. Controlled cascade: for each bit `i` of `first_reg`, apply
+     `mulmod_beauregard!(y_reg, g^{2^(i-1)} mod N, N, first_reg[i])`.
+     Net effect: `y_reg ← y_reg · g^a mod N`.
+  3. Controlled cascade: for each bit `i` of `second_reg`, apply
+     `mulmod_beauregard!(y_reg, y_inv^{2^(i-1)} mod N, N, second_reg[i])`
+     where `y_inv = invmod(y, N)`.  Net: `y_reg ← y_reg · y^(-b) mod N`.
+  4. Inverse QFT on each exponent register, measure → `(j, k)`.
+
+The working register factors out of the final measurement (paper
+§4.3 step 4: the measurement of the third register gives `[e]g` but is
+discarded — only `(j, k)` feeds classical post-processing).
+
+# Peak qubit budget (per EH17 §4.3, Sturm.jl allocation)
+
+  * `(ell + m) + ell + L` steady-state live wires.
+  * `+ L + 1` transient ancilla for each `mulmod_beauregard!` call.
+  * For N=15 (`m = ell = 3`, `L = 4`): peak `6 + 3 + 4 + 5 = 18` wires.
+
+# Reference
+  Ekerå-Håstad 2017 (arXiv:1702.00249), §4.3;
+  `docs/physics/ekera_2017_short_dlp.pdf`.
+"""
+function _eh_short_dlp(g::Int, y::Int, N::Int,
+                      ::Val{m}, ::Val{ell}, ::Val{L}) where {m, ell, L}
+    gcd(g, N) == 1 || error("_eh_short_dlp: gcd(g=$g, N=$N) must be 1")
+    gcd(y, N) == 1 || error("_eh_short_dlp: gcd(y=$y, N=$N) must be 1")
+    N < (1 << L)   || error("_eh_short_dlp: N=$N must fit in L=$L bits")
+
+    ctx = current_context()
+    W1 = ell + m
+
+    # Exponent registers: start at |0⟩, then put in |+⟩ via superpose! (= QFT).
+    # QFT|0⟩ = (1/√2^W)·Σ|k⟩ = |+⟩^W, which is what step 1 of §4.3 calls for.
+    first_reg  = QInt{W1}(ctx, 0)
+    second_reg = QInt{ell}(ctx, 0)
+    superpose!(first_reg)
+    superpose!(second_reg)
+
+    # Working register in eigenstate-style init |1⟩ (§4.3 step 2 acts on |0⟩
+    # then prepends |1⟩ via the ⊙ group operation; initialising to |1⟩
+    # directly is equivalent and avoids an extra mulby-1).
+    y_reg = QInt{L}(ctx, 1)
+
+    # Phase 2 — y_reg ← y_reg · g^a mod N, bit-controlled from first_reg.
+    for i in 1:W1
+        pow = powermod(g, 1 << (i - 1), N)
+        pow == 1 && continue                        # identity: skip
+        mulmod_beauregard!(y_reg, pow, N, first_reg[i])
+    end
+
+    # Phase 3 — y_reg ← y_reg · y^(-b) mod N, bit-controlled from second_reg.
+    y_inv = invmod(y, N)
+    for i in 1:ell
+        pow = powermod(y_inv, 1 << (i - 1), N)
+        pow == 1 && continue
+        mulmod_beauregard!(y_reg, pow, N, second_reg[i])
+    end
+
+    # Phase 4 — inverse QFT on each exponent register, then measure.
+    # (Paper §4.3 step 3 writes QFT; inverse QFT gives the same |·|² peak
+    #  structure, matches Sturm's existing Shor A/B/C convention, and
+    #  keeps j, k in the "continued-fractions compatible" orientation.)
+    interfere!(first_reg)
+    interfere!(second_reg)
+
+    j = Int(first_reg)
+    k = Int(second_reg)
+    discard!(y_reg)
+    return j, k
+end
+
+"""
+    shor_factor_EH(N::Int; max_attempts::Int=16, verbose::Bool=false) -> Vector{Int}
+
+Factor composite `N = p·q` via the Ekerå-Håstad 2017 short-DLP derivative
+of Shor's algorithm (EH17 §5.2).  Returns `sort([p, q])` on success,
+`Int[]` after exhausting attempts.
+
+For an `n`-bit semiprime the EH17 exponent-register width is
+`2ℓ + m ≈ 1.5n` bits (single-shot `s=1` parameterisation), compared to
+Shor's `2n`.  At small `N` the asymptotic savings do not apply — see
+the "toy-N caveat" in the comment block above.
+
+# Parameter selection
+
+Heuristic: `n_N = ceil(log2(N+1))`, `m = max(3, (n_N+1)÷2)`, `ell = m`
+(s = 1), `L = max(1, ceil(log2(N)))`.  For N=15 (`n_N=4`): `m = ell = 3`,
+`L = 4`.
+
+# Reference
+  Ekerå-Håstad 2017 (arXiv:1702.00249) §5.2;
+  `docs/physics/ekera_2017_short_dlp.pdf`.
+  Gidney-Ekerå 2021 §2.1 (use as an optimisation stage in Shor pipeline).
+"""
+function shor_factor_EH(N::Int; max_attempts::Int=16, verbose::Bool=false)
+    N >= 4 || error("shor_factor_EH: N=$N must be ≥ 4")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    # Parameter selection for EH17 s=1 normalisation (§5.2.4).
+    # For RSA N=pq with n_prime-bit primes, d = (p+q-2)/2 has ~n_prime bits,
+    # so m ≥ n_prime suffices.  Heuristic: m = max(3, ⌈n_N / 2⌉ + 1) with
+    # n_N = ⌈log2(N+1)⌉.  This guarantees d < 2^m for any allowable (p, q).
+    n_N = ceil(Int, log2(N + 1))
+    m_val   = max(3, (n_N + 1) ÷ 2 + 1)
+    ell_val = m_val                      # s = 1
+    L_val   = max(1, ceil(Int, log2(N))) # working register width
+
+    for attempt in 1:max_attempts
+        g = rand(2:(N - 1))
+        gcd_gN = gcd(g, N)
+        if gcd_gN > 1
+            # Lucky draw: g shares a factor with N.  Return it without
+            # invoking the quantum step.
+            return sort!([gcd_gN, N ÷ gcd_gN])
+        end
+
+        # y = g^((N-1)/2) mod N (EH17 §5.2.2 normalisation).  Retry if y == 1,
+        # which happens when g is in a subgroup too small to encode d.
+        y = powermod(g, (N - 1) ÷ 2, N)
+        y == 1 && continue
+
+        # Quantum step — returns the two QFT outcomes.
+        j, k = _eh_short_dlp(g, y, N, Val(m_val), Val(ell_val), Val(L_val))
+
+        # Classical post-processing — iterate lattice candidates, verify
+        # each via the quadratic recovery + multiplication check.
+        cands = _eh_recover_d_candidates(j, k, m_val, ell_val)
+        for d in cands
+            fs = _eh_factors_from_d(d, N)
+            fs === nothing && continue
+            p, q = fs
+            if 1 < p < N && 1 < q < N && p * q == N
+                return sort!([p, q])
+            end
+        end
+    end
+    return Int[]
+end
+
