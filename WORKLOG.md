@@ -4,6 +4,120 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 34: Release `Sturm.jl-6xi` (coset representation) — ground-truth research punted
+
+After closing `p1z` (session 33 — `add_qft_quantum!`), tried to pick up `6xi`
+(coset representation of modular integers). Claimed the bead, read Zalka
+1998 §3 + GE21 §2.4 + Gidney 2019 (windowed arithmetic). Discovered that
+none of these give an **explicit coset-encoding preparation circuit**:
+
+- **GE21 §2.4** defines the target state (`√(2^-c_pad) · Σ_{j=0..2^c_pad-1}
+  |jN+k⟩`) but not the preparation procedure. Says "following Zalka [91]".
+- **Zalka 1998** (the fast-versions paper we have locally) §3 discusses
+  approximate-modular arithmetic (Eq. 15: "wrong for some small fraction
+  of inputs is OK") but the specific coset construction GE21 references
+  is in a later Gidney paper.
+- **Gidney 2019 "Windowed quantum arithmetic"** (1905.07682, local)
+  references coset but leaves the preparation circuit to Gidney's
+  follow-up paper "Approximate encoded permutations" (1905.08488). We
+  did NOT have that paper locally.
+
+Naive attempts fail: Hadamard the `c_pad` high-order pad qubits gives a
+period-`2^W` superposition `Σ_p |k + p·2^W⟩`, not period-`N`. Converting
+period-`2^W` → period-`N` is the non-trivial step that `1905.08488` handles.
+
+**Honest assessment:** the coset encoding is a multi-session research
+bead. Ground truth fetched this session (see below); next agent can begin
+from a complete reference set.
+
+### Actions taken
+
+1. **Fetched three primary-source PDFs** to `docs/physics/` (all from arXiv):
+   - `gidney_2019_approximate_encoded_permutations.pdf` (arXiv:1905.08488)
+     — THE missing coset-encoding circuit reference. Defines approximate
+     encoded permutations, including the coset representation as a
+     special case. Cited by GE21 as the preparation-circuit source.
+   - `ekera_2017_short_dlp.pdf` (arXiv:1702.00249) — Ekerå's short-DLP
+     derivative of Shor. Background for `Sturm.jl-6bn`.
+   - `ekera_hastad_2017_n_plus_half_n.pdf` (arXiv:1707.08494) — the
+     canonical Ekerå-Håstad "n + ½n" paper. Primary reference for `6bn`.
+2. **Released the `Sturm.jl-6xi` claim** — scope mismatch with one session.
+3. **Did NOT touch any code.** All changes this session are documentation
+   (WORKLOG entries, this file) and the three new PDFs.
+
+### Next-agent research round for the GE21 coset + windowed stack
+
+**Phase A — Ground-truth reading (no code).** Expected 1 session. Produce
+a design doc `docs/coset_encoding.md` with:
+
+1. **Read `gidney_2019_approximate_encoded_permutations.pdf` end to end.**
+   Extract the explicit preparation circuit for a coset-encoded register
+   — specifically the circuit that takes `|k⟩ ⊗ |0⟩^c_pad` and produces
+   the periodic superposition `Σ_j |jN + k⟩`. This paper's Section on
+   "approximate cosets" is the key citation.
+2. **Read GE21 §2.4–2.7 with attention to the interaction clauses.**
+   GE21 §2.7 explicitly notes "interactions between optimisations" — the
+   coset-padding length `c_pad` and the oblivious-carry-runway length are
+   the SAME parameter; windowing changes the optimal `c_pad`. Record
+   these cross-constraints before implementing anything in isolation.
+3. **Re-read `gidney_2019_windowed_arithmetic.pdf` §3.1** with coset in
+   mind. The `plus_equal_product` construction (Fig 1 there) is
+   non-modular `+=` into a target register — the modular behaviour is
+   IMPLIED by coset encoding of the target, not added explicitly.
+4. **Derive the approximation-error formula.** Gidney 1905.08488 gives
+   `ε = O(2^-c_pad)` in some norm. State it with the constant, cite the
+   lemma number.
+5. **Map Zalka's 1998 §3 "3L qubits are enough" idea to Sturm.** Zalka's
+   §3.0.1 uses semi-classical QFT — Sturm already has this (`D_semi`).
+   Document how the coset compression interacts with `D_semi`.
+6. **Produce a concrete preparation circuit in Sturm idiom** — i.e.,
+   expressed in primitives 1–4 only, no raw matrices. Include a textual
+   "circuit sketch" before any Julia.
+
+**Phase B — Implementation (subsequent session).** Red-green TDD for:
+
+- `coset_encode!(q::QInt{W+Cpad}, N::Int, ::Val{Cpad})`
+- `coset_decode!(q)` — measurement-based classical post-processing
+- Property tests: `ε = Pr[decode != correct_mod_N]` scales as `2^-c_pad`
+- Integration: `coset_encode!` + `add_qft!` + `coset_decode!` approximates
+  modular addition to within `ε`
+
+**Phase C — Windowed arithmetic follow-up** (still separate, `Sturm.jl-6oc`):
+Once coset is landed, windowed modular add becomes `oracle_table → fresh
+register → add_qft_quantum! (already shipped in session 33)`. The
+modular reduction is automatic via the coset encoding — **that's the
+interaction the naive "6oc first" order missed**.
+
+**Critical reminder for next agent:** do NOT spawn proposer subagents
+(CLAUDE.md rule 2 three-plus-one) for these beads unless the
+implementation touches a core surface (`types/`, `context/abstract.jl`,
+`primitives/`, `src/orkan/`). Coset + windowed are library-level work;
+single-agent TDD is correct.
+
+**Device reminder:** 16-qubit simulation cap. Coset tests at L=3, c_pad=3
+= 6 qubits is fine. L=6, c_pad=6 = 12 qubits fine. Avoid large `c_pad`
+statevector probes — 2^(L+c_pad) grows fast.
+
+### Files touched
+
+- `docs/physics/gidney_2019_approximate_encoded_permutations.pdf` (new)
+- `docs/physics/ekera_2017_short_dlp.pdf` (new)
+- `docs/physics/ekera_hastad_2017_n_plus_half_n.pdf` (new)
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-6xi` claim released (status back to open). Notes updated
+  with the three new PDF paths and the Phase A/B/C research plan above.
+- `Sturm.jl-6oc` NOT claimed this session. Its full speedup depends on
+  6xi landing first (windowing alone without coset is much-reduced gain);
+  notes updated to record the cross-dependency.
+- `Sturm.jl-b3l` (oblivious runways) also benefits from
+  `gidney_2019_approximate_encoded_permutations.pdf` landing in physics/.
+  Updated.
+
+---
+
 ## 2026-04-20 — Session 33: Close `Sturm.jl-p1z` (add_qft_quantum! — two-quantum-register Draper adder)
 
 P1 prerequisite for `Sturm.jl-6oc` (windowed arithmetic / `shor_order_E`). Sturm's
