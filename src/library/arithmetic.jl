@@ -89,6 +89,83 @@ computes `(y − a) mod 2^L` in the computational basis after `interfere!`.
 """
 sub_qft!(y::QInt{L}, a::Integer) where {L} = add_qft!(y, -Int(a))
 
+"""
+    add_qft_quantum!(y::QInt{L}, b::QInt{L}) -> y
+
+Add the quantum register `b` into a Fourier-basis quantum register `y`,
+in-place. Full two-register Draper 2000 §5 construction — the generalisation
+of [`add_qft!`](@ref) where the addend is quantum rather than a classical
+constant. `b` is in computational basis and is preserved; `y` starts and
+ends in Fourier basis. After `interfere!(y)` the caller recovers
+`(y₀ + b) mod 2^L`.
+
+Gate count: `L(L+1)/2` controlled `Rz` rotations, no ancillae. Under
+`when(ctrl)`, each rotation picks up one extra control via Sturm's control
+stack — still a single primitive-3 call per rotation.
+
+# Convention
+
+Draper §5 Fig. "Transform Addition": target wire `|φ_{jj}(y)⟩` receives
+rotation `R_d` controlled on source bit `b_j`, with `d = jj − j + 1`, for
+each `j = 1..jj`. Sturm's `superpose!` stores `|φ_{jj}⟩` at `wires[L−jj+1]`
+(bit-reversal), and `b.wires[j]` stores bit `2^(j−1)` of `b`. So the code
+loop walks target wire `k ∈ 1..L`, sets `jj = L − k + 1`, and inside it walks
+`j = 1..jj` emitting `Rz(2π / 2^(jj − j + 1))` controlled on `b.wires[j]`.
+
+The classical specialisation `add_qft!(y, a::Integer)` sums the rotations
+across `j` classically into a single `Rz(2π · a / 2^jj)` per target wire.
+This function keeps the rotations per-control, giving the full O(L²) count.
+
+# di9 carry-over
+
+No angle fold. Each rotation is emitted at raw value `2π / 2^d`. Inverse is
+`sub_qft_quantum!(y, b) ≡ add_qft_quantum!` with negated angles — the two
+compose to identity per wire as unitaries `Rz(θ)·Rz(−θ) = I`, preserving
+control-branch coherence. See Sturm.jl-di9 WORKLOG for why any fold would
+be a ctrl=|1⟩ phase leak.
+
+# Reference
+
+  Draper 2000 §5 "Quantum Addition", Fig. "Transform Addition", p. 6.
+  `docs/physics/draper_2000_qft_adder.pdf`.
+"""
+function add_qft_quantum!(y::QInt{L}, b::QInt{L}) where {L}
+    _add_qft_quantum_signed!(y, b, +1)
+end
+
+"""
+    sub_qft_quantum!(y::QInt{L}, b::QInt{L}) -> y
+
+Quantum-addend QFT subtractor. Adjoint of [`add_qft_quantum!`](@ref).
+Emits `Rz(−2π / 2^d)` per Draper §5 pair instead of `Rz(+2π / 2^d)`; the
+angle negation is structural, so the pair `add_qft_quantum!` then
+`sub_qft_quantum!` composes to the per-wire identity `Rz(θ)·Rz(−θ) = I`
+regardless of control context (no di9-style phase leak under `when`).
+"""
+function sub_qft_quantum!(y::QInt{L}, b::QInt{L}) where {L}
+    _add_qft_quantum_signed!(y, b, -1)
+end
+
+@inline function _add_qft_quantum_signed!(y::QInt{L}, b::QInt{L}, sign::Int) where {L}
+    check_live!(y); check_live!(b)
+    y.ctx === b.ctx ||
+        error("add_qft_quantum!: y and b must live in the same context")
+    ctx = y.ctx
+    for k in 1:L
+        jj = L - k + 1                       # Sturm wires[k] ↔ Draper φ_{jj}
+        qk = QBool(y.wires[k], ctx, false)
+        for j in 1:jj
+            d = jj - j + 1                   # Draper R_d conditional rotation
+            θ = sign * 2π / (1 << d)
+            bj = QBool(b.wires[j], ctx, false)
+            when(bj) do
+                qk.φ += θ
+            end
+        end
+    end
+    return y
+end
+
 # ── Internal: nested `when`s from a tuple of controls ─────────────────────
 #
 # `_apply_ctrls(f, ())`            ≡ f()
