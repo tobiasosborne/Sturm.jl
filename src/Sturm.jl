@@ -94,7 +94,7 @@ export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @con
 export QBool, QInt, WireID, discard!, Quantum
 export with_silent_casts
 export QCoset, QRunway, QROMTable, QROMTableLarge
-export coset_add!
+export coset_add!, runway_add!, runway_decode!
 
 # Quantum control
 export when

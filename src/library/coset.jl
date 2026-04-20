@@ -207,3 +207,64 @@ function decode!(c::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     c.consumed = true
     return x % c.modulus
 end
+
+# ── Runway arithmetic: classical addition into a runway-augmented register ───
+
+"""
+    runway_add!(r::QRunway{W, Cpad, Wtot}, a::Integer) -> r
+
+Add the classical constant `a` into the value+runway register, in-place.
+The runway absorbs any carries that would otherwise overflow the W-bit
+value register; the runway's `|+⟩^Cpad` initialisation makes it invariant
+under such carries, so the value register's low W bits cleanly hold
+`(value + a) mod 2^W` after the operation.
+
+# Circuit
+QFT-sandwich around a single Draper add on the FULL `W+Cpad`-qubit register:
+  1. `superpose!(r.reg)` — QFT into Fourier basis.
+  2. `add_qft!(r.reg, a)` — Draper rotations encoding +a (mod 2^Wtot).
+  3. `interfere!(r.reg)` — inverse QFT.
+
+# Note on the runway-at-end case
+This implementation places the runway at the high end of the register
+(no high part above). In this configuration the |+⟩^Cpad runway is
+invariant under any classical addition (a constant addition merely
+relabels the runway's superposition index), so decoded low W bits equal
+`(value + a) mod 2^W` deterministically. The Theorem 4.2 deviation bound
+of `2^{-Cpad}` per addition applies to the runway-in-middle layout
+(high part above runway), which is a different type signature reserved
+for follow-on work.
+
+# Reference
+  Gidney (2019) arXiv:1905.08488, §4 Definition 4.1, Theorem 4.2.
+  Gidney-Ekerå (2021) arXiv:1905.09749, §2.6.
+"""
+function runway_add!(r::QRunway{W, Cpad, Wtot}, a::Integer) where {W, Cpad, Wtot}
+    check_live!(r)
+    superpose!(r.reg)
+    add_qft!(r.reg, a)
+    interfere!(r.reg)
+    return r
+end
+
+# ── Runway decoding: measurement + classical low-W extraction ────────────────
+
+"""
+    runway_decode!(r::QRunway{W, Cpad, Wtot}) -> Int
+
+Measure the full runway-augmented register, return the value in the low
+W bits (a classical integer in `[0, 2^W)`). Consumes `r`.
+
+The runway bits are also measured (the classical outcome is discarded —
+GE21 §2.6 calls this the "post-measurement classical cleanup", trivial
+for the runway-at-end configuration where no further correction is needed).
+
+# Reference
+  GE21 §2.6 (classical cleanup is performed after measurement).
+"""
+function runway_decode!(r::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
+    check_live!(r)
+    x = Int(r.reg)                # P2 cast — measures all W+Cpad wires
+    r.consumed = true
+    return x & ((1 << W) - 1)     # low W bits
+end
