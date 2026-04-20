@@ -4,6 +4,189 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 36: Ship `Sturm.jl-6bn` (Ekerå-Håstad short-DLP factoring)
+
+Single-bead session. Shipped `shor_factor_EH`, the EH17 short-DLP
+derivative of Shor, picked because (a) it's an independent Shor driver
+(no `jrl` / 3+1 type-design needed), (b) single-session scope, and
+(c) user asked for "Shor algorithm stuff". Commit `6e0cc60` pushed.
+
+### Ground truth before coding (rule 4 + user instruction)
+
+Read `docs/physics/ekera_2017_short_dlp.pdf` (arXiv:1702.00249) front to
+back (pp. 1–15). Extracted:
+- §4.3 quantum step: |Ψ⟩ = (1/√2^(2ℓ+m)) Σ_a Σ_b |a⟩|b⟩|0⟩, compute
+  [a]g ⊙ [-b]x = [a-bd]g, QFT both registers, measure → (j, k).
+- §4.4 classical post-processing (s=1): 2D lattice L = Z-span of
+  [[j,1], [2^(ℓ+m),0]], target v = ({-2^m k}_M, 0), search |u-v| <
+  sqrt(5)/2·2^m, last coord of u is d.
+- Def 1 (good pair): |{d·j + 2^m·k}_{2^(ℓ+m)}| ≤ 2^(m-2).
+- §5.2.2 factor recovery (EH-normalisation): y = g^((N-1)/2) mod N,
+  d = (p+q-2)/2, quadratic x² - (2d+2)x + N = 0 with roots
+  p, q = (d+1) ± √((d+1)² - N).
+
+### Conceptual surprise — EH17 is NOT amenable to semi-classical iQFT
+
+My first instinct was to mirror `shor_order_D_semi`'s Griffiths-Niu
+semi-classical iQFT (Beauregard 2003 "one-qubit trick") and do two
+sequential per-bit measure-and-correct loops, one per register.
+
+**That is wrong.** §4.3 Eq. (the observation probability expression)
+shows that the joint distribution P(j, k) is non-separable — the (j, k)
+correlation comes from the shared e = a - bd in the working register
+and is resolved jointly by QFT on both registers. Measuring first
+register's iQFT outcome LOSES this correlation: the post-measurement
+state isn't the one a naïve "semi-classical iQFT" would produce.
+
+Mosca-Ekert (§4.7 of EH17 refs) adapts semi-classical to multi-register
+DLP but the trick is more subtle than one-register PE. Out of scope.
+
+**Shipped**: full non-semi-classical two-register PE with explicit
+`QInt{ell+m}` + `QInt{ell}` exponent registers in `|+⟩^n` via
+`superpose!` (which is forward QFT; on |0⟩ it equals H^⊗n |0⟩),
+controlled mulmods, then `interfere!` (inverse QFT) on each register
+independently, and measurement.
+
+Peak qubit budget at N=15 (m = ell = 3, L = 4):
+`6 + 3 + 4 + 5 + 1 = 19` wires — well under Orkan's 30.
+
+### Classical post-processing: brute force over d, then verify
+
+Straight `for d in 1:(2^m - 1)` with the good-pair residual bound.
+For m=3 this is 7 candidates. Returns `Vector{Int}` sorted by
+ascending |residual|. Driver iterates candidates, verifies each via
+`_eh_factors_from_d` (the quadratic), accepts the first that
+actually factors N.
+
+**Why a list, not a single minimum:** at small m, multiple d values
+can satisfy the residual bound — these are the "spurious lattice
+vectors" of §4.4 Lemma 3. The probe output for (j=2, k=7, m=ell=3)
+returned `[4, 3, 5]` with d=4 first (residual 0) and d=3 second
+(residual 2, the true answer). d=4 fails the quadratic (disc=10 not
+a square); d=3 succeeds. Verification IS the uniqueness-resolution.
+
+### Toy-N caveat: N=15 violates EH17's analytical assumption
+
+EH17 §4.3 requires ord(g) ≥ 2^(ℓ+m) + 2^ℓ·d. For N=15: max ord is 4
+(= lcm(p-1, q-1) = lcm(2, 4)), and 2^(ℓ+m) = 64. So the algorithm runs
+**outside** its proven regime at N=15. Empirically it still works
+because:
+- Lucky-g cases (gcd(g, N) > 1) resolve classically (~46% at N=15).
+- For coprime g, only low bits of the exponent registers couple to
+  `y_reg` (high-bit mulmods are identity when `g^(2^i) mod N = 1`);
+  the iQFT on those low bits still produces biased (j, k) pairs.
+- At m=3, the brute-force verification step exhaustively checks all 7
+  candidate d values, so "spurious candidate d=4" never leaks through.
+
+Observed hit rate: **30/30 for N=15** (100%). Well above the 50% bar.
+
+### Parameter selection heuristic
+
+`n_N = ceil(log2(N+1))`, `m = max(3, (n_N+1)÷2 + 1)`, `ell = m`, `L =
+ceil(log2(N))`. At N=15 → m=3. At N=35 → m=4. At N=21 → m=4. The
+`+1` buffer over `(n_N+1)÷2` ensures d < 2^m for any (p, q) satisfying
+2^(n_prime-1) < p, q < 2^n_prime. No tuning required per-N.
+
+### RED-GREEN TDD trace
+
+1. **RED**: wrote `test/test_6bn_ekera_hastad.jl` with 5 testsets:
+   (a) `_eh_factors_from_d` on {N=15, N=21, N=35}, wrong-d cases;
+   (b) `_eh_recover_d_candidates` on all j ∈ [1, 63] for d_true=3,
+       verifying d_true in candidates for every good pair
+       (39 of 63 j values are good pairs; Lemma 1 predicts ≥32);
+   (c) non-good-pair returns `[]`;
+   (d) spurious-candidate case `(j=2, k=7)` includes d=3;
+   (e) end-to-end hit rate ≥ 50% over 30 shots;
+   (f) even-N trivial factor.
+
+2. **Classical GREEN first** (30 seconds): sanity probe showed
+   `_eh_factors_from_d` and `_eh_recover_d_candidates` immediately
+   correct — typical of brute-force closed-form math.
+
+3. **Quantum probe**: ran 5 shots of `_eh_short_dlp(g, y, 15, ...)`
+   with various g. Non-lucky shots all returned (j, k) whose candidate
+   list contained d=3. Sign that the full hit rate would be very high.
+
+4. **Full test**: 54 tests pass in 3m44s (30 quantum shots + all
+   classical tests). 30/30 = 100% hit rate at N=15.
+
+### Files touched
+
+- **New**: `src/library/shor.jl:1153..1426` — EH impl block (273 lines):
+  `_eh_recover_d_candidates`, `_eh_factors_from_d`, `_eh_short_dlp`,
+  `shor_factor_EH`. Appended after `shor_factor_D_semi`.
+- **New**: `test/test_6bn_ekera_hastad.jl` (118 lines) — 54 tests.
+- **Modified**: `src/Sturm.jl:123` — added `export shor_factor_EH`.
+- **Modified**: `WORKLOG.md` — this session 36 entry.
+
+### Commits
+
+```
+6e0cc60  feat(shor): shor_factor_EH — Ekerå-Håstad short-DLP factoring + 54 tests — close Sturm.jl-6bn
+```
+
+Dolt remote also pushed.
+
+### Beads
+
+Closed: `Sturm.jl-6bn` P2.
+None filed.
+
+### Lessons for future agents
+
+1. **EH17's §4.3 is NOT directly semi-classical-izable.** The (j, k)
+   correlation is joint (via `e = a - bd`), not sequential. One-qubit-
+   trick semi-classical PE from `shor_order_D_semi` doesn't carry over
+   as-is. Mosca-Ekert (§4.7 refs) is the adapted form — out of scope
+   for 6bn but could shrink the 9-qubit exponent cost for a follow-on.
+
+2. **Brute-force classical post-processing beats Lagrange at small m.**
+   The bead spec said "~20 lines Lagrange reduction"; the actual win
+   is at m > ~20. For m=3 the brute-force is 7 candidates with trivial
+   residual arithmetic — cleaner AND exhaustively correct (no short-
+   lattice-vector corner cases to worry about).
+
+3. **Verification-by-factorisation is THE disambiguator.** When
+   multiple d satisfy the residual bound, `_eh_factors_from_d(d, N)`
+   returns `nothing` for the spurious ones. No need for a proper CVP
+   algorithm at toy N — just try every candidate.
+
+4. **Toy-N (N=15) works despite violating the EH17 analytical bound.**
+   ord(g) ≪ 2^(ℓ+m) at N=15, but the algorithm still biases (j, k)
+   toward good pairs because of the low-bit coupling structure.
+   Don't dismiss an algorithm as "broken at small N" without probing —
+   the math may still cooperate.
+
+5. **Classical sanity check before ANY quantum probe.** The quantum
+   step takes 13-20s per shot at N=15; a typo in the driver that causes
+   retries would waste minutes. Running `_eh_factors_from_d` and
+   `_eh_recover_d_candidates` in isolation took 30s and caught the
+   initial "min-residual-always-correct" assumption before the quantum
+   pipeline was ever invoked.
+
+6. **User gave explicit TDD + idiom instructions.** Followed all three
+   (ground truth first via PDF read, RED tests first, Sturm-idiom check
+   before coding). Heuristic: when user says "before coding", ALWAYS
+   read the primary source AND re-check the Sturm codebase for the
+   specific primitives the impl will use (in this case
+   `mulmod_beauregard!` signature + `QInt[i]` non-owning view pattern).
+
+### Next-session pointers
+
+**Unchanged from Session 35 — highest-priority ready beads**:
+- `jrl` P2 — QRunwayMid runway-in-middle type. Blocks `6oc`.
+- `6oc` P1 — windowed arithmetic (blocked on `jrl`). 3-4 sessions.
+- `870` P1 — Steane [[7,1,3]] syndrome extraction (orthogonal).
+
+**New candidate follow-ons filed or implied from 6bn**:
+- NONE filed this session. `shor_factor_EH` is complete; the s>1 /
+  lattice-Lagrange extensions and Mosca-Ekert semi-classical variant
+  are orthogonal-wins, not blockers. If ever needed, file then.
+
+**Hygiene**: `5jn` (ntuple in `_shor_mulmod_a!`), `2i0` (ScopedValue).
+
+---
+
 ## 2026-04-20 — Session 35: Deep research round + ship q84 + 8fy + 6xi + amh + b3l
 
 Big session. Deep literature/codebase/Julia-idioms research, then ground out
