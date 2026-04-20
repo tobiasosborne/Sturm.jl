@@ -320,7 +320,11 @@ const CASES = [
 
 function parse_impl_filter()
     s = get(ENV, "STURM_BENCH_ONLY", "")
-    isempty(s) && return Set([:A, :B, :C])
+    # Default includes :D (Beauregard polynomial-in-L mulmod, landed post-6kx).
+    # Without it, the bench's whole polynomial-vs-exponential comment dies.
+    # D_semi is deliberately omitted — it's a qubit-count optimisation (2n+3),
+    # same gate count as D at TracingContext (session 30 benchmark).
+    isempty(s) && return Set([:A, :B, :C, :D])
     Set(Symbol(uppercase(strip(x))) for x in split(s, ","))
 end
 
