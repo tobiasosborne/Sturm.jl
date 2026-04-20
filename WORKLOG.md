@@ -4,6 +4,118 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 33: Close `Sturm.jl-p1z` (add_qft_quantum! — two-quantum-register Draper adder)
+
+P1 prerequisite for `Sturm.jl-6oc` (windowed arithmetic / `shor_order_E`). Sturm's
+`add_qft!` (arithmetic.jl:61) only handles the CLASSICAL-constant addend —
+Draper 2000's degenerate case where the n²/2 controlled rotations collapse
+to n unconditional Rz. Windowed arithmetic, coset representation, and any
+QROM-addend construction need the full Draper §5 "Transform Addition" with
+both registers quantum.
+
+### Sturm.jl's Shor circuit stack relative to GE 2021 (session-32 assessment)
+
+GE21 (arXiv:1905.09749) combines 5 optimisations:
+1. Ekerå-Håstad 2017 short-DLP derivative (n_e = 1.5n)
+2. Coset representation (Zalka 1998) — 2.5× fewer Toffolis per add
+3. **Windowed arithmetic (Gidney 2019 arXiv:1905.07682)** — polylog reduction
+4. Oblivious carry runways
+5. Semi-classical QFT — ✓ `D_semi` in Sturm
+
+At the end of session 32 Sturm had 1 of the 5. Tier-1 roadmap now filed
+as 4 beads: `Sturm.jl-6oc`, `-6xi`, `-b3l`, `-6bn`. Session 33 lands the
+foundational primitive (quantum-addend Draper adder) that unblocks 6oc.
+
+### Ground truth
+
+- Draper 2000 quant-ph/0008033 §5 "Quantum Addition", Fig. "Transform
+  Addition" p.6. Local PDF: `docs/physics/draper_2000_qft_adder.pdf`.
+- Full construction: for target wire `|φ_{jj}(y)⟩`, apply `R_d` with
+  `d = jj − j + 1` controlled on `b.wires[j]`, for each `j = 1..jj`.
+  `R_d` is conditional phase `diag(1, e^(2πi/2^d))`.
+
+### Implementation — `src/library/arithmetic.jl:92-142`
+
+```julia
+function _add_qft_quantum_signed!(y::QInt{L}, b::QInt{L}, sign::Int)
+    for k in 1:L
+        jj = L - k + 1                       # Sturm wires[k] ↔ Draper φ_{jj}
+        qk = QBool(y.wires[k], ctx, false)
+        for j in 1:jj
+            d = jj - j + 1
+            θ = sign * 2π / (1 << d)
+            bj = QBool(b.wires[j], ctx, false)
+            when(bj) do
+                qk.φ += θ
+            end
+        end
+    end
+end
+```
+
+Nested `when` around `.φ +=` — two primitives (when, Rz). Under an outer
+`when(ctrl)`, each emission picks up one more control via Sturm's control
+stack — still a single primitive-3 call, decomposition handled by the
+context's multi-control lowering.
+
+Signed helper (`+1` / `-1`) lets `sub_qft_quantum!` reuse the same code
+with negated angles. Pair composes to per-wire `Rz(θ) · Rz(−θ) = I` — no
+di9-style global-phase leak even under `when(ctrl)`.
+
+### RED-GREEN
+
+1. **RED** — `test/test_p1z_add_qft_quantum.jl` with seven testsets.
+   First run pre-implementation: 3 errors, "`add_qft_quantum!` not defined".
+2. **GREEN** on first implementation attempt. **576/576 PASS in 6.3s**:
+   - Exhaustive L=3 forward `y += b` over 64 pairs.
+   - Inverse: `add_qft_quantum! ∘ sub_qft_quantum!` is identity on 64 pairs.
+   - Double-add: `y += 2b mod 2^L` on 64 pairs.
+   - Under `when(ctrl=|1⟩)`: addition fires, ctrl preserved (64 pairs).
+   - Under `when(ctrl=|0⟩)`: identity, ctrl preserved (64 pairs).
+   - Under `when(ctrl=|+⟩)`: forward + inverse leaves ctrl pure — X-basis
+     coherence clean (di9 tripwire) on 16 pairs.
+   - L=4 spot-check: 32 targeted `(y0, b0)` pairs.
+
+### Gotchas for future agents
+
+1. **Wire-convention mapping from Draper to Sturm.** Draper numbers the
+   target QFT output as `φ_1, φ_2, ..., φ_n` with `φ_n` the full-precision
+   wire (denominator `2^n`). Sturm's `superpose!` includes a bit-reversal
+   SWAP so that `y.wires[1]` holds `|φ_L⟩` and `y.wires[L]` holds `|φ_1⟩`.
+   Every reader of `add_qft!` / `add_qft_quantum!` needs to juggle
+   `jj = L − k + 1` to translate between the two indexing conventions.
+2. **`QBool(wire, ctx, false)` is the safe lightweight handle.** The
+   third arg (`is_owned`) defaults matter: `false` means "the caller owns
+   the wire, don't touch the allocator on drop". The classical `add_qft!`
+   and `modadd!` both use this pattern — see arithmetic.jl:75, 183.
+   Constructing a QBool inside a tight loop with `is_owned=true` would
+   double-free wires when the loop body exits.
+3. **`Rz(θ) · Rz(−θ) = I` is the inverse law relied on by the di9 fix.**
+   Any canonicalisation of the angle (`mod` into a half-open interval)
+   that maps the boundary representatives asymmetrically would break this
+   and leak a `−I` global phase per wire, which becomes a `π` relative
+   phase on the outer control under `when`. This is why
+   `_add_qft_quantum_signed!` emits raw `2π / 2^d`, identical to
+   `add_qft!`'s di9 fix. See arithmetic.jl:72 for the ruler.
+
+### Files touched
+
+- `src/library/arithmetic.jl` — `add_qft_quantum!`, `sub_qft_quantum!`,
+  `_add_qft_quantum_signed!` internal helper (+70 lines).
+- `src/Sturm.jl` — export the two new functions.
+- `test/test_p1z_add_qft_quantum.jl` (new) — 7 testsets, 576 tests.
+- `WORKLOG.md` — this entry.
+
+### Beads
+
+- `Sturm.jl-p1z` closed.
+- `Sturm.jl-6oc` (windowed arithmetic) unblocked.
+- Related open beads, now reachable once 6oc lands: `Sturm.jl-6xi`
+  (coset representation), `Sturm.jl-b3l` (oblivious runways),
+  `Sturm.jl-6bn` (Ekerå-Håstad).
+
+---
+
 ## 2026-04-20 — Session 32: Close `Sturm.jl-c6n` (polynomial-in-L Shor scaling doc)
 
 P1 EPIC. Primary acceptance: "`shor_order_D` correct on N=15,21,35 AND
