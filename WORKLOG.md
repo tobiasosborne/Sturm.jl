@@ -4,6 +4,206 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 35: Deep research round + ship q84 + 8fy + 6xi + amh + b3l
+
+Big session. Deep literature/codebase/Julia-idioms research, then ground out
+**five beads** through the GE21 stack from type design to functional shipping.
+
+### Pre-flight (bead `rqg`)
+
+PDF audit:
+- **DELETED** `docs/physics/ekera_hastad_2017_n_plus_half_n.pdf` — was
+  arXiv:1707.08494 (Ioli et al. building-energy paper), wrong content.
+- The actual **Ekerå-Håstad 2017** paper is `ekera_2017_short_dlp.pdf`
+  (arXiv:1702.00249 — both authors, despite filename suggesting single
+  Ekerå; verified by reading title page).
+- Fetched 4 new PDFs:
+  - `ekera_2023_single_run_dlp.pdf` (arXiv:2309.01754, GE21's [23] for
+    single-shot post-processing conditions)
+  - `babbush_2018_qrom_linear_T.pdf` (arXiv:1805.03662, measurement-based
+    QROM uncomputation — needed for 6oc)
+  - `gidney_2025_rsa2048_1m_qubits.pdf` (arXiv:2505.15917, post-2021 SOTA
+    — ~900k qubits via approximate residue arithmetic)
+  - `regev_2023_efficient_factoring.pdf` (arXiv:2308.06572, Õ(n^{3/2})
+    asymptotic but unclear practical benefit)
+
+### Type design 3+1 round (bead `q84`)
+
+CLAUDE.md rule 2 triggered (touches `src/types/`). Two parallel proposers,
+implementer, orchestrator review.
+
+Synthesis:
+- **Composition over subtyping.** `QCoset.reg::QInt{Wtot}` field, not
+  `<: QInt`. Julia subtypes share parent dispatch; cannot restrict.
+- **Three type params** `{W, Cpad, Wtot}` — Wtot is third param to dodge
+  `W+Cpad` in struct field annotation (Julia limitation).
+- **N as runtime field** for QCoset; not in type (avoids per-modulus
+  specialisation).
+- **No modulus in QRunway** (it's modulus-agnostic).
+- **`discard!` on QRunway = `error()`** per CLAUDE.md fail-loud; users call
+  `_runway_force_discard!` after measurement+cleanup.
+- **QROMTable/QROMTableLarge** as two separate concrete types (NTuple ≤20,
+  Vector beyond) — simpler than Storage type param.
+- **`measure!` direct call is a P2 antipattern** — discovered via the
+  implementer's first `decode!` and the user's correction. See bead `amh`.
+
+Implementer's q84 shipped 60/60 smoke tests. **But state correctness was
+NOT smoke-testable** — the `_coset_init!` impl was wrong (see `8fy`).
+
+### `_coset_init!` was wrong (bead `8fy`)
+
+Implementer's first cut used a **QFT-sandwich** approach: `superpose!(reg)`,
+then `when(pad_p)` wrapping `add_qft!(reg, 2^p·N)` with the pad qubit being
+INSIDE reg. Two bugs:
+
+1. **QFT-sandwich is conceptually wrong** when controls are wires of the
+   register being QFT'd. The control's value gets "smeared" into Fourier
+   phases before the controlled-add fires, so the operation isn't a clean
+   conditional add.
+2. **Self-wire Rz workaround was wrong.** Implementer noticed Orkan rejects
+   `controlled-Rz(θ, ctrl=q, target=q)` and resolved by applying `Rz(θ)`
+   unconditionally on the self-wire. But controlled-Rz(θ) with ctrl=target
+   = `diag(1, e^{iθ/2})` ≠ `Rz(θ)` = `diag(e^{-iθ/2}, e^{iθ/2})` —
+   introduces spurious phase.
+
+**State-correctness probe** (1k shots of `QCoset{4,3}(7,15)` then measure
+mod 15): only **13% gave residue 7** (vs ~100% expected). Fully wrong.
+
+**Fix:** refactor QCoset to add `pad_anc::NTuple{Cpad, WireID}` field —
+**EXTERNAL** pad ancillae allocated separately from reg. Then:
+1. Apply Ry(π/2) to each pad ancilla (puts in |+⟩)
+2. `superpose!(reg)`
+3. `when(pad_anc[p+1]) { add_qft!(reg, 2^p·N) }` for p=0..Cpad-1.
+   Pad ancilla is now EXTERNAL — no self-control issue.
+4. `interfere!(reg)`
+
+Total internal qubits: `W + 2·Cpad`. The pad ancillae remain entangled
+with reg after init — tracing them out (via discard) gives the correct
+mixed coset comb. Measuring reg always yields `(k+jN)` for some j, so
+`outcome mod N == k` deterministically.
+
+This is **NOT the pure single-register coset state** of Gidney Fig 1 —
+that requires implementing comparison-negation `(-1)^{x≥2^p·N}` for
+phase-kickback disentanglement of pad. For 6xi residue tests the
+entangled construction suffices. Pure-state version filed for later.
+
+After fix: 100% correct residue (4000 shots), all 8 basis states
+{7,22,37,52,67,82,97,112} equiprobable within 3σ.
+
+### `measure!` antipattern warning (bead `amh`)
+
+User flagged: **`measure!` direct calls violate P2** (boundary should be a
+cast). Per user policy 2026-04-20: "antipatterns are OK with warnings".
+
+Implementation mirrors existing `_warn_implicit_cast` machinery:
+- `_warn_direct_measure()` in `types/quantum.jl` — fires once per source
+  location, suppressed by `:sturm_measure_blessed` task-local flag OR
+  `with_silent_casts(do ... end)`.
+- `_blessed_measure!(ctx, wire)` wraps `measure!` with the blessed flag.
+- Each `measure!` impl (eager/density/tracing) calls `_warn_direct_measure`
+  at top of body. Non-blessed callers warn once.
+- Blessed callers: `Bool(::QBool)`, `Int(::QInt)`, **AND**
+  `deallocate!(::EagerContext)`, `deallocate!(::DensityMatrixContext)`
+  (since `discard!(q)` → `deallocate!` → `measure!` is the partial-trace
+  path).
+
+**Subtle gotcha:** `deallocate!` in eager.jl/density.jl calls `measure!`
+internally to collapse before recycling — this is the BACKEND of `discard!`.
+Forgot to bless this initially; warnings fired from `decode!`'s
+`discard!(QBool(w, ctx, false))` cleanup loop. Fixed by blessing both
+deallocate impls.
+
+### `coset_add!` + `decode!` (bead `6xi`)
+
+Public API:
+- `coset_add!(c::QCoset, a::Integer)` — QFT-sandwich + add_qft!. GE21 §2.4
+  modular-via-non-modular pattern.
+- `decode!(c::QCoset)` — P2-clean: `Int(c.reg)` cast for value;
+  `discard!(QBool(w, ctx, false))` for pad ancillae; return `x % modulus`.
+
+Notable: `decode!` extends the existing QECC `decode!` function via
+multiple dispatch (different signature) — no namespace conflict.
+
+311/311 tests including:
+- 100% residue correctness (unmodified state, 2000 shots)
+- Basis state uniformity within 3σ (4000 shots, W=4 Cpad=3)
+- `coset_add!` correctness (1000 shots, multiple parameter sets)
+- **Theorem 3.2 deviation bound sweep**: `Cpad ∈ {2,3,4,5}`, deviation ≤
+  `2^{-Cpad}` confirmed empirically.
+- Round-trip exhaustive at W=4, Cpad=2, all (k, N) for N ∈ {11, 13, 15}.
+
+Runtime: 19 min — cap-bound at Cpad=5 (4+2·5=14 qubits, slow).
+
+### Runway (bead `b3l`)
+
+**Surprising scope discovery:** current `QRunway{W, Cpad}` (q84) puts
+runway at the HIGH END of reg with no high part above. In this layout,
+the |+⟩^Cpad runway is INVARIANT under classical addition (a constant add
+just relabels the runway's superposition uniformly), so decoded low W
+bits = `(value + a) mod 2^W` **deterministically** — zero deviation
+regardless of Cpad.
+
+Theorem 4.2's `2^{-Cpad}` deviation bound only applies to runway-IN-MIDDLE
+layouts (high part above runway). Filed `Sturm.jl-jrl` as follow-on for
+that layout (needed by 6oc's runway-folding step for actual depth
+reduction).
+
+Shipped:
+- `runway_add!(r, a)` — QFT-sandwich + add_qft!
+- `runway_decode!(r)` — Int cast + low W bits
+- 491/491 tests including exhaustive 16x16 grid of (value, addend) pairs
+
+### Files touched
+
+- New: `src/types/qcoset.jl`, `qrunway.jl`, `qrom_table.jl` (q84)
+- New: `src/library/coset.jl` (q84/8fy/6xi/b3l)
+- New: `test/test_q84_types.jl`, `test/test_6xi_coset.jl`, `test/test_b3l_runway.jl`
+- Modified: `src/types/quantum.jl` (amh: warning helpers)
+- Modified: `src/context/eager.jl`, `density.jl`, `tracing.jl` (amh: warning hooks)
+- Modified: `src/types/qbool.jl`, `qint.jl` (amh: blessed cast paths)
+- Modified: `src/Sturm.jl` (exports)
+- Deleted: `docs/physics/ekera_hastad_2017_n_plus_half_n.pdf` (rqg)
+- Added: `docs/physics/ekera_2023_single_run_dlp.pdf`, `babbush_2018_qrom_linear_T.pdf`,
+  `gidney_2025_rsa2048_1m_qubits.pdf`, `regev_2023_efficient_factoring.pdf` (rqg)
+
+### Beads (this session)
+
+- Closed: `rqg` (preflight), `q84` (types), `8fy` (coset_init fix), `amh`
+  (measure! warning), `6xi` (coset rep), `b3l` (oblivious runways).
+- Filed open: `7z1` (Gidney 2025 follow-on), `wzc` (Regev 2023 follow-on),
+  `5jn` (Julia hygiene `_shor_mulmod_a!` ntuple fix), `2i0` (ScopedValue
+  migration), `jrl` (runway-in-middle layout).
+- Open ready: `6bn` (Ekerå-Håstad — independent at circuit level, only
+  needs D_semi), `870` (Steane), others.
+- Blocked: `6oc` (windowed arithmetic — now blocks on `jrl` for the
+  runway-folding step).
+
+### Lessons for future agents
+
+1. **Smoke tests aren't enough for state-preparation circuits.** q84's 60/60
+  smoke tests passed while the prepared state was 87% wrong. Always probe
+  the actual state distribution before claiming a state-prep bead done.
+2. **Pad qubits inside the register being QFT'd is broken.** When you need
+  pad qubits for a controlled superposition state-prep, allocate them
+  EXTERNALLY (outside the target register). Self-control issues are not
+  fixable by clever Rz angle tricks.
+3. **`measure!` is internal FFI; never call from library/user code.** Use
+  `Bool(q)` / `Int(qi)` casts or `discard!(q)`. The warning system fires
+  at the user stack frame, so the offending call site is obvious.
+4. **`deallocate!` is the partial-trace backend** — it calls `measure!`
+  internally. When adding a P2 antipattern warning system, remember to
+  bless the deallocate path too or every `discard!` call will warn.
+5. **For coset/runway with no high part, deviation is zero.** GE21's
+  Theorem 4.2 bound only applies in the runway-in-middle configuration
+  with a high part above the runway. The runway-at-end case (cleaner to
+  implement) gives deterministic correctness but no depth-reduction
+  benefit. Filed `jrl` for the in-middle case.
+6. **Multi-bead chains in one session save context churn.** Closed q84
+  → 8fy → amh → 6xi → b3l in one continuous session by treating each
+  bug discovery as a new bead rather than reopening the previous one.
+
+---
+
 ## 2026-04-20 — Session 34: Release `Sturm.jl-6xi` (coset representation) — ground-truth research punted
 
 After closing `p1z` (session 33 — `add_qft_quantum!`), tried to pick up `6xi`
