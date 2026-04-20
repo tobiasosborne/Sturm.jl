@@ -4,6 +4,147 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-20 — Session 36c: File three EH17 follow-on beads + handoff notes
+
+After the 6bn ship and the N=55 demo (sessions 36 / 36b), mapped out the
+remaining Shor work and filed three new beads for EH17-specific follow-
+ons that were implicit in the 6bn design but out of its scope.
+
+### Beads filed this session
+
+| ID  | P  | Title | Unblocked? |
+|-----|----|-------|------------|
+| `Sturm.jl-zli` | P2 | shor_factor_EH s>1 — multi-shot lattice post-processing (EH17 §4.4 general) | ready now |
+| `Sturm.jl-npd` | P2 | shor_factor_EH_semi — Mosca-Ekert semi-classical iQFT for two-register EH17 | ready now |
+| `Sturm.jl-e73` | P3 | Pure coset state via comparison-negation — Gidney 1905.08488 Fig 1 full | ready now |
+
+### zli — EH17 s>1 (P2)
+
+**What**: Current `shor_factor_EH` is s=1 only (2D Lagrange post-
+processing). For s>1 the exponent register width shrinks asymptotically
+from 1.5n toward 0.5n, which is the entire point of EH17's 2017
+generalization over Ekerå 2016's s=1 algorithm.
+
+**How to start**: Add `s::Int=1` kwarg. For s≥2, (a) run the quantum
+step s times, (b) build the (s+1)-dim lattice basis of EH17 Def 3,
+(c) solve CVP via pure-Julia LLL (~200 lines, δ=3/4), (d) verify via
+`_eh_factors_from_d`. Spurious-candidate probability drops to 2^(-s-1)
+per Lemma 3, so s=2 already halves ambiguity.
+
+**Acceptance**: `shor_factor_EH(15; s=2)` ≥ 50% over 30 shots;
+`shor_factor_EH(15; s=3)` ≥ 60%. s=1 unchanged. New test file with LLL
+unit tests against reference vectors.
+
+**Avoid**: Don't reach for Nemo.jl / fpLLL_jll as a hard dep. Pure-Julia
+LLL is well-known (Lenstra-Lenstra-Lovász 1982, δ=3/4); the whole
+module is ~200 lines and this project doesn't carry a lattice-algebra
+dep yet.
+
+### npd — Mosca-Ekert semi-classical for EH17 (P2)
+
+**What**: Current `shor_factor_EH` peaks at 24 qubits for N=55 because
+both exponent registers live in superposition simultaneously (full
+two-register PE). Mosca-Ekert (1999 NASA QCQC [Lecture Notes in CS
+vol 1509]) adapts Griffiths-Niu semi-classical iQFT to multi-register
+DLP, collapsing each exp register to a single recycled qubit — the
+same trick Beauregard 2003 gave us for ORDER-finding in
+`shor_order_D_semi`. Result: N=55 peak drops from 24 to ~13 qubits,
+single-shot runtime from 13m16s to ≤30s.
+
+**CRITICAL research step (MUST do first)**: Session 36 explicitly
+established that EH17's §4.3 is NOT directly Griffiths-Niu-izable
+because the (j,k) correlation is joint via shared `e = a - bd`.
+Mosca-Ekert §3.2 solves this but the exact cross-register phase-
+correction formula is NOT obvious from EH17 alone. Phase 0 of this
+bead: FETCH Mosca-Ekert 1999 PDF (arxiv.org/abs/quant-ph/9903071 is a
+candidate — verify when read) and work out the phase accumulator
+recurrence on paper BEFORE any coding. Pattern mirrors rule 4: local
+PDF + explicit equation reference.
+
+**Acceptance**: see bead — 5 criteria including 50%+ hit rate at N=15,
+peak reduction, runtime reduction, and a documented phase-correction
+derivation in code comments.
+
+**Avoid**: Don't try to "just mirror `shor_order_D_semi`'s outer
+structure and hope" — this was the instinct session 36 already
+corrected. The phase-correction for TWO exp registers feeding ONE
+working register is non-trivial.
+
+### e73 — Pure coset state via comparison-negation (P3)
+
+**What**: Session 35 (bead 8fy) shipped `_coset_init!` with Cpad
+EXTERNAL pad ancillae that remain entangled with `reg` — pragmatic
+for 6xi acceptance but not the Gidney 1905.08488 Fig 1 circuit. The
+paper's pure single-register construction uses a
+`(-1)^{x ≥ 2^p·N}` comparison-negation phase kickback per stage to
+DISENTANGLE pad ancillae back to |0⟩. Benefits: -Cpad steady-state
+qubits, matches paper for publication, simplifies `decode!`, enables
+true Gidney-style coset arithmetic downstream.
+
+**How to start**: Implement `_comparison_negate!(reg::QInt{W},
+threshold::Integer)` as a reversible comparator (subtract-check-
+uncompute pattern; sub_qft_quantum! + sign-bit Z). Then rewrite
+`_coset_init!` to Gidney Fig 1 literally: allocate pad_p fresh per
+stage, H, controlled-add, comparison-negate, H, deallocate pad_p
+(verified |0⟩). Keep the external-ancilla path as `pure=false`
+fallback.
+
+**Also useful for**: `jrl` (runway) and `6oc` (windowed arithmetic)
+both want the comparator as a primitive. e73's comparator becomes
+load-bearing infrastructure for the rest of the GE21 stack.
+
+### What's NOT left for Shor (shipped)
+
+For reassurance to future-agent: the Shor stack is already rich.
+Shipped:
+- 5 order-finding impls (A, B, C, D, D_semi) covering oracle-lift,
+  PE HOF, U^{2^j} cascade, Beauregard 2n+3, and semi-classical iQFT.
+- `shor_factor_EH` (6bn, this session) — EH17 1.5n short-DLP, s=1,
+  30/30 hit at N=15, 24-qubit peak verified at N=55.
+- `QCoset` / `coset_add!` / `decode!` — GE21 §2.4 coset representation
+  (types shipped; NOT yet used inside any Shor driver — that's an
+  unfiled polish step, not on the GE21 critical path).
+- `QRunway` runway-at-end (b3l).
+
+### Missing — GE21 critical path (UNCHANGED from prior sessions)
+
+1. **`jrl` P2** — `QRunwayMid{W_low, Cpad, W_high}` runway-in-middle.
+   Blocks 6oc. 3+1 type-design round required.
+2. **`6oc` P1** — windowed arithmetic + `shor_order_E`. Blocked on jrl.
+   Three phases, 3–4 sessions.
+
+### Missing — orthogonal
+
+- **`870` P1** — Steane QECC syndrome extraction; wrapping any
+  shor_factor_* via `encode(ch, Steane)` gives fault-tolerant Shor.
+- **`7z1` P3 / `wzc` P4** — Gidney 2025 / Regev 2023 (post-GE21).
+
+### Suggested next-session pick (for future-you)
+
+If you like **research-heavy**: `npd` (Mosca-Ekert) — ground-truth
+fetch + paper derivation + implement. Highest information-per-session.
+
+If you like **algorithmic**: `jrl` + `6oc` — the main GE21 chain, big
+payoff (polylog Toffoli reduction), but 4-5 sessions.
+
+If you like **small-and-shippable**: `e73` (pure coset). One session,
+delivers a reusable primitive (comparator) that pays off later.
+
+If you like **extension of 6bn**: `zli` (s>1). Classical-heavy (LLL),
+minimal quantum work.
+
+### Commits this session (36c)
+
+```
+b41fe2f  feat(shor): m/ell/verbose kwargs for shor_factor_EH + _eh_short_dlp
+94f97fc  docs(worklog): session 36b — N=55 demo (biggest shor_factor_EH in 24 qubits)
+<TBD>    docs(worklog): session 36c — file zli + npd + e73 EH17 follow-ons
+```
+
+Dolt remote synced after each close (`bd dolt push`).
+
+---
+
 ## 2026-04-20 — Session 36b: N=55 demo (biggest shor_factor_EH fitting 24 qubits)
 
 Ran `_eh_short_dlp(7, 28, 55, Val(3), Val(3), Val(6))` with verbose=true
