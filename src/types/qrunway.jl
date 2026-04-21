@@ -27,12 +27,12 @@ composing `QRunway` with `QCoset` at the function-call level (GE21 §2.6).
 `reg.wires[W+1..W+Cpad]` = runway (continuing little-endian from weight 2^W).
 Contiguous, NOT interleaved (Gidney 1905.08488 Figure 2 wire order).
 
-# Discard discipline
-A `QRunway` MUST NOT be discarded directly — the runway bits are entangled with
-the rest of the computation, and measurement-based uncomputation (classical carry
-correction) must be applied first. Call `runway_fold!` (downstream bead) then
-`_runway_force_discard!`. Direct `discard!` is an unconditional error (CLAUDE.md
-fail-loud rule).
+# Partial-trace discipline
+A `QRunway` MUST NOT be partial-traced directly — the runway bits are entangled
+with the rest of the computation, and measurement-based uncomputation (classical
+carry correction) must be applied first. Call `runway_fold!` (downstream bead)
+then `_runway_force_ptrace!`. Direct `ptrace!` (or the backcompat alias
+`discard!`) is an unconditional error (CLAUDE.md fail-loud rule).
 
 # References
   * Gidney (2019) "Approximate Encoded Permutations and Piecewise Quantum Adders",
@@ -61,27 +61,29 @@ function consume!(q::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
 end
 
 """
-    discard!(q::QRunway)
+    ptrace!(q::QRunway)
 
-ERROR: direct discard of a QRunway is forbidden.
+ERROR: direct partial-trace of a QRunway is forbidden.
 
 The runway qubits are entangled with the computation and must be
 classically uncomputed (carry correction) before they can be safely
 released. Call `runway_fold!` first to perform measurement-based
-uncomputation, then call `_runway_force_discard!` to release the wires.
+uncomputation, then call `_runway_force_ptrace!` to release the wires.
 
 This error is intentional per CLAUDE.md fail-loud rule: crashes, not
 corrupted state.
+
+`discard!` remains as a backcompat alias. Prefer `ptrace!` (bead diy).
 """
-function discard!(q::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
+function ptrace!(q::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     error(
         "QRunway: runway must be measured and classical carry correction " *
-        "applied before discard. Call runway_fold! first."
+        "applied before partial trace. Call runway_fold! first."
     )
 end
 
 """
-    _runway_force_discard!(r::QRunway{W, Cpad, Wtot})
+    _runway_force_ptrace!(r::QRunway{W, Cpad, Wtot})
 
 Internal: release all wires after `runway_fold!` has applied classical carry
 correction and the runway bits are back to a known state. NOT safe to call
@@ -91,11 +93,12 @@ leading underscore and the absence from public exports.
 Callers outside this module that need to clean up after a runway: use
 `runway_fold!` (downstream bead b3l), then call this function.
 """
-function _runway_force_discard!(r::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
+function _runway_force_ptrace!(r::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     check_live!(r)
-    discard!(r.reg)
+    ptrace!(r.reg)
     r.consumed = true
 end
+const _runway_force_discard! = _runway_force_ptrace!
 
 # ── Wire access ──────────────────────────────────────────────────────────────
 

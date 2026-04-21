@@ -34,8 +34,8 @@ Contiguous, NOT interleaved (matches Gidney 1905.08488 Fig. 1 value wire order).
 `_coset_init!`. Remain entangled with `reg` after initialisation.
 
 # Linear resource semantics
-A `QCoset` is consumed when explicitly discarded via `discard!`, which frees
-both `reg` and `pad_anc` wires.
+A `QCoset` is consumed when explicitly released via `ptrace!` (partial trace),
+which frees both `reg` and `pad_anc` wires. `discard!` is a backcompat alias.
 
 # References
   * Gidney (2019) "Approximate Encoded Permutations and Piecewise Quantum Adders",
@@ -66,17 +66,20 @@ function consume!(q::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
 end
 
 """
-    discard!(q::QCoset{W, Cpad, Wtot})
+    ptrace!(q::QCoset{W, Cpad, Wtot})
 
-Discard all wires in the coset register AND its pad ancillae (measure and
-throw away results). Frees both `q.reg` (W+Cpad wires) and `q.pad_anc` (Cpad wires).
+Partial trace — discards every wire of the coset register AND its pad ancillae
+(measure-and-discard per wire, outcomes thrown away). Frees `q.reg` (W+Cpad
+wires) and `q.pad_anc` (Cpad wires).
+
+`discard!` remains as a backcompat alias. Prefer `ptrace!` (bead diy).
 """
-function discard!(q::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
+function ptrace!(q::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     check_live!(q)
     ctx = q.reg.ctx
-    discard!(q.reg)
+    ptrace!(q.reg)
     for w in q.pad_anc
-        discard!(QBool(w, ctx, false))   # idiomatic partial trace per ancilla
+        ptrace!(QBool(w, ctx, false))   # idiomatic partial trace per ancilla
     end
     q.consumed = true
 end

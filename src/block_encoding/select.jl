@@ -248,7 +248,7 @@ function _multi_controlled_phase_flip!(ctrls::Vector{QBool}, system::Vector{QBoo
         end
 
         for w in work
-            discard!(w)
+            ptrace!(w)
         end
     end
     return nothing
@@ -313,7 +313,7 @@ function _multi_controlled_pauli_exp!(ctrls::Vector{QBool}, system::Vector{QBool
         end
 
         for w in work
-            discard!(w)
+            ptrace!(w)
         end
     end
     return nothing
@@ -365,7 +365,7 @@ function _multi_controlled_pauli_exp_adj!(ctrls::Vector{QBool}, system::Vector{Q
         end
 
         for w in work
-            discard!(w)
+            ptrace!(w)
         end
     end
     return nothing

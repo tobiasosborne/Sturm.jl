@@ -173,7 +173,7 @@ function _warn_direct_measure()
     site = _first_user_frame(stacktrace(backtrace()))
     @warn "Direct call to `measure!(ctx, wire)` — this is a P2 antipattern. " *
           "The quantum→classical boundary should be a CAST: use `Bool(q)` " *
-          "or `Int(qi)` for measurement, or `discard!(q)` for partial trace. " *
+          "or `Int(qi)` for measurement, or `ptrace!(q)` for partial trace. " *
           "Wrap a non-owning view as `Bool(QBool(wire, ctx, false))` if you " *
           "only have a raw WireID. Suppress per-task with `with_silent_casts`." maxlog=1 _id=(:sturm_direct_measure, site.file, site.line) _file=string(site.file) _line=Int(site.line)
     return nothing

@@ -643,7 +643,7 @@ function _reflect_ancilla_phase!(ancillas::Vector{QBool}, phi::Float64)
         end
         when(ancillas[1]) do; work[1] ⊻= ancillas[2]; end
 
-        for w in work; discard!(w); end
+        for w in work; ptrace!(w); end
     end
 
     for q in ancillas; q.θ += π; end  # X all (undo)

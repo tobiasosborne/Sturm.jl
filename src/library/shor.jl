@@ -118,9 +118,9 @@ end
 # Circuit shape:
 #     counter (t qubits) |0⟩ ─ superpose! ─┬──────────── interfere! ── measure
 #                                         │
-#     output (t qubits)  |0⟩ ──────── oracle(a^k mod N) ── discard!
+#     output (t qubits)  |0⟩ ──────── oracle(a^k mod N) ── ptrace!
 #
-# The discard! of the output register is the post-measurement trace that
+# The ptrace! of the output register is the post-measurement trace that
 # collapses `k` onto the coset `{k : a^k mod N = f₀}` for some random f₀;
 # inverse QFT + measurement then samples `s/r` to precision 2^{−t}.
 
@@ -144,7 +144,7 @@ Algorithm (N&C §5.3.1, Exercise 5.14 / Eq. 5.47):
   1. Prepare counter `k` = |0⟩ on `t` qubits; `superpose!` → uniform.
   2. `y = oracle_table(k -> powermod(a, k, N), k, Val(L))` — fresh
      output register; a single controlled table lookup.
-  3. `discard!(y)` — trace out output, which collapses `k` onto a coset
+  3. `ptrace!(y)` — trace out output, which collapses `k` onto a coset
      of the period `r`.
   4. `interfere!(k)` — inverse QFT on the counter.
   5. `ỹ = Int(k)`; continued-fractions → candidate period.
@@ -171,8 +171,8 @@ function shor_order_A(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where {t}
     y_reg = oracle_table(k -> powermod(a, k, N), k_reg, Val(L))
     verbose && @info "  after oracle_table (peak)" live_qubits=_live_qubits(ctx) total_allocated=ctx.n_qubits
 
-    discard!(y_reg)
-    verbose && @info "  after discard!(y_reg)" live_qubits=_live_qubits(ctx)
+    ptrace!(y_reg)
+    verbose && @info "  after ptrace!(y_reg)" live_qubits=_live_qubits(ctx)
 
     interfere!(k_reg)
     y_tilde = Int(k_reg)
@@ -695,7 +695,7 @@ Algorithm (N&C §5.3.1, Box 5.2, Eqs. 5.40–5.43):
        * classical: `a_j = a^{2^{j-1}} mod N`
        * quantum:   controlled-mulmod on `y` by `a_j`, control = `c.wires[j]`.
   4. `interfere!(c)` — inverse QFT on the counter.
-  5. `discard!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
+  5. `ptrace!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
 
 Resource profile (N = 15, L = 4, t = 3):
   * Peak live qubits per mulmod call: `t + 2L + O(log L) ≈ 17` (cf. impl B's 25)
@@ -761,8 +761,8 @@ function shor_order_C(a::Int, N::Int, ::Val{t}; verbose::Bool=true) where {t}
     interfere!(c_reg)
     verbose && _shor_log("[shor_C t=+$(ms())ms] interfere!(c_reg)                live=$(lq())")
 
-    discard!(y_reg)
-    verbose && _shor_log("[shor_C t=+$(ms())ms] discard!(y_reg)                  live=$(lq())")
+    ptrace!(y_reg)
+    verbose && _shor_log("[shor_C t=+$(ms())ms] ptrace!(y_reg)                  live=$(lq())")
 
     y_tilde = Int(c_reg)
     verbose && _shor_log("[shor_C t=+$(ms())ms] measured ỹ=$y_tilde                    live=$(lq())")
@@ -881,7 +881,7 @@ Fig. 7 replacing the abstract c-U_a):
        quantum:   `mulmod_beauregard!(y, a_j, N, c.wires[j])`
        (skip `a_j == 1` — identity, saves 2L modadds)
   4. `interfere!(c)` — inverse QFT on the counter.
-  5. `discard!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
+  5. `ptrace!(y)`; `ỹ = Int(c)`; continued-fractions → candidate period.
 
 Ref: Nielsen & Chuang §5.3.1, Box 5.2, Eqs. 5.40–5.43, 5.44.
      Beauregard 2003, §2.3 Fig. 6/7, Eq. 3, Eq. 4.
@@ -931,8 +931,8 @@ function shor_order_D(a::Int, N::Int, ::Val{t}; verbose::Bool=true) where {t}
     interfere!(c_reg)
     verbose && _shor_log("[shor_D t=+$(ms())ms] interfere!(c_reg)                live=$(lq())")
 
-    discard!(y_reg)
-    verbose && _shor_log("[shor_D t=+$(ms())ms] discard!(y_reg)                  live=$(lq())")
+    ptrace!(y_reg)
+    verbose && _shor_log("[shor_D t=+$(ms())ms] ptrace!(y_reg)                  live=$(lq())")
 
     y_tilde = Int(c_reg)
     verbose && _shor_log("[shor_D t=+$(ms())ms] measured ỹ=$y_tilde                    live=$(lq())")
@@ -1118,7 +1118,7 @@ function shor_order_D_semi(a::Int, N::Int, ::Val{t}; verbose::Bool=false) where 
     end
     verbose && _shor_log("[shor_D_semi t=+$(ms())ms] ỹ = $(y_tilde) (bits = $(bits))")
 
-    discard!(y_reg)
+    ptrace!(y_reg)
     r = _shor_period_from_phase(y_tilde, t, N)
     verbose && _shor_log("[shor_D_semi t=+$(ms())ms] decoded φ=$y_tilde/$(1<<t) r=$r   (total=$(ms())ms)")
     return r
@@ -1384,7 +1384,7 @@ function _eh_short_dlp(g::Int, y::Int, N::Int,
     log("measure first_reg + second_reg")
     j = Int(first_reg)
     k = Int(second_reg)
-    discard!(y_reg)
+    ptrace!(y_reg)
     log("EXIT  j=$j k=$k")
     return j, k
 end

@@ -38,7 +38,7 @@ function classicalise(f::Function)
             M[1, input_val + 1] = p0  # P(output=0 | input=input_val)
             M[2, input_val + 1] = p1  # P(output=1 | input=input_val)
 
-            discard!(q)
+            ptrace!(q)
         end
     end
 
