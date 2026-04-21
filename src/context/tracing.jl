@@ -18,26 +18,32 @@ mutable struct TracingContext <: AbstractContext
     dag::Vector{DAGNode}
     control_stack::Vector{WireID}
     consumed::Set{WireID}
+    live::Vector{WireID}    # sv3: insertion-ordered live-wire set; cleanup! emits DiscardNodes for orphans
     _result_counter::UInt32
 
     function TracingContext(; sizehint::Int=256)
         dag = DAGNode[]
         sizehint > 0 && sizehint!(dag, sizehint)
-        new(dag, WireID[], Set{WireID}(), UInt32(0))
+        new(dag, WireID[], Set{WireID}(), WireID[], UInt32(0))
     end
 end
 
 # ── Qubit allocation ─────────────────────────────────────────────────────────
 
 function allocate!(ctx::TracingContext)::WireID
-    fresh_wire!()
+    wire = fresh_wire!()
+    push!(ctx.live, wire)
+    wire
 end
 
 function deallocate!(ctx::TracingContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
     push!(ctx.dag, DiscardNode(wire))
     push!(ctx.consumed, wire)
+    filter!(!=(wire), ctx.live)
 end
+
+live_wires(ctx::TracingContext) = copy(ctx.live)
 
 # ── Wire resolution ──────────────────────────────────────────────────────────
 
@@ -159,5 +165,6 @@ function _emit_observe!(ctx::TracingContext, wire::WireID)::UInt32
     ctx._result_counter += 1
     push!(ctx.dag, ObserveNode(wire, ctx._result_counter))
     push!(ctx.consumed, wire)
+    filter!(!=(wire), ctx.live)
     return ctx._result_counter
 end

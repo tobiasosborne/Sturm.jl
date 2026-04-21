@@ -4,6 +4,139 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-21 — Session 39: @context auto-cleanup (close `sv3`) — RAII for qubits
+
+Followed session 38's hand-off: `sv3` was the recommended next target because
+(a) it closes the long-standing `hlk` footgun, (b) makes the eventual
+`discard!→ptrace!` rename (`diy`) trivial, (c) purely additive. Shipped in
+one session via a 3+1 agent protocol. 14/14 new tests green; 804 adjacent
+tests (channel 44, hardware 726, hardware-lifecycle 16, tracing-deep-when
+18) green with zero regressions.
+
+### The design in one paragraph
+
+Added `live_wires(ctx)` and `cleanup!(ctx)` to `AbstractContext`. Default
+`cleanup!` loops `live_wires` and calls `deallocate!` per wire, catching
+per-wire errors into a `@warn` so one bad wire doesn't poison the rest.
+Eager/Density/Hardware share `live_wires(ctx) = collect(keys(ctx.wire_to_qubit))`.
+Hardware overrides `cleanup!` with a `ctx.closed && return` guard so
+`with_hardware` and the finalizer continue to own `close()`. TracingContext
+adds a new `live::Vector{WireID}` field (insertion-ordered, NOT a Set — DAG
+emission order is user-visible), maintained by `allocate!` / `deallocate!` /
+`_emit_observe!`. The `@context` macro gained a two-layer try/catch: body
+exception captured via `body_threw::Bool` + `rethrow()` (preserves native
+stacktrace); cleanup failure on a clean body path rethrows; cleanup failure
+during an unwind becomes a `@warn` so the body's error wins. Body's last
+expression is now preserved through the macro (fixes a latent bug from
+session 23's `1f3` debugging). `trace()` filters designated output wires
+out of `ctx.live` then calls `cleanup!` before `defer_measurements`, so
+orphaned allocations become `DiscardNode`s in the lowered Channel.
+
+### 3+1 agent protocol this time
+
+- **Phase A — ground truth**: read every context file, trace.jl, qbool/qint
+  constructors, existing `@context` macro, and the hardware lifecycle
+  finalizer pattern BEFORE any code. Also revisited session 37 gotcha 5
+  (finalizer + FFI is unsafe).
+- **Phase B — red test**: wrote `test/test_autocleanup.jl` with 12 cases
+  targeting the bead's acceptance + the semantics user locked in (silent
+  partial-trace on block exit, matching GC idiom). Ran: 9 fail, 3 pass.
+- **Phase C — parallel proposers**: two Plan-agents (both Opus) given
+  identical context + the 9-point gotcha list + the red test file; no
+  cross-pollination. Both proposed `live_wires` + `cleanup!` as the API
+  surface, converged on 95% of the design. Divergences: error surfacing
+  (CompositeException vs per-wire `@warn`), field name (`allocated` vs
+  `live`), body-throw handling (`body_threw` flag vs captured exception).
+  I synthesised: per-wire `@warn` (simpler than composite), `live` name
+  (matches accessor), `body_threw + rethrow()` pattern (preserves Julia's
+  native backtrace).
+- **Phase D — implementer**: general-purpose Opus with the frozen plan and
+  strict instructions NOT to redesign. Got a first-attempt 14/14 green
+  (no iteration needed) and the two regression runs it was asked for.
+- **Phase E — review** (me): verified files match plan via `git diff`,
+  re-ran the sv3 suite, ran three additional regressions I chose
+  (channel/trace, hardware context, tracing deep when) — all green.
+
+### Gotcha #6 design lock-in
+
+User asked: "Isn't partial trace of control expected behaviour? What would
+be alternatives?" The alternatives are all worse:
+
+- **Error on escape**: needs macro-level escape analysis of the block's
+  return expression. Julia can't do this cleanly — the macro cannot tell
+  `q; end` from `Bool(q); end`.
+- **Force explicit cast before return**: that's what P2 already asks for
+  in user-facing code. Auto-cleanup backstops it; it doesn't undermine it.
+- **Keep ctx alive beyond the block**: breaks the `task_local_storage` /
+  `lock(l) do … end` pattern. Any op on `q` after the block already
+  fails at `current_context()` lookup.
+
+So: silent partial-trace on exit. A returned live `q` is a dead handle.
+Matches GC semantics for every transient Julia object. Locked in.
+
+### Gotchas discovered and retired
+
+1. **`@context` had a latent return-value bug** (known since session 23
+   `1f3` debugging — the macro's `try...finally` dropped the body's last
+   expression). Fixed incidentally as part of the rewrite — `local result`
+   captured before the `finally`, returned after.
+2. **`deallocate!` during cleanup might still need `current_context()`** —
+   so cleanup must run BEFORE TLS restoration. Encoded in the macro
+   structure.
+3. **`trace()` has two entry points** — `trace(f, n_in::Int)` and
+   `trace(f, ::Val{W})` — both needed the same 3-line change. Implementer
+   got both on first pass.
+4. **HardwareContext.deallocate! has `_check_open(ctx)` guard**. Since
+   `cleanup!(ctx::HardwareContext)` short-circuits on `ctx.closed`, this
+   never fires during cleanup — correct interaction.
+5. **`_emit_observe!` also needs to remove from `live`** (not just
+   `deallocate!`). Caught during plan drafting; implementer picked it up.
+
+### What sv3 does NOT do (scope discipline)
+
+- Does NOT rename `discard!` → `ptrace!` (that's bead `diy`, now unblocked).
+- Does NOT add `QBool(p) do q … end` do-block allocation (bead `cbl`).
+- Does NOT add a Julia finalizer on QBool/QInt (bead `hlk`). `sv3`
+  covers 95% of cases deterministically; `hlk` remains open as the
+  belt-and-braces backstop for the rare "QBool escapes its @context"
+  case. User call: do not walk through that door until telemetry
+  justifies it.
+
+### Files touched
+
+| File | LOC delta | What |
+|------|-----------|------|
+| `src/context/abstract.jl` | +82 -2 | `live_wires`, `cleanup!`, `_default_cleanup!`, rewrote `@context` macro |
+| `src/context/eager.jl` | +2 | `live_wires` method |
+| `src/context/density.jl` | +2 | `live_wires` method |
+| `src/context/tracing.jl` | +9 -2 | `live::Vector{WireID}` field; maintained in allocate!/deallocate!/_emit_observe! |
+| `src/hardware/hardware_context.jl` | +9 | `live_wires` + `cleanup!` override with `ctx.closed` guard |
+| `src/channel/trace.jl` | +16 | filter out_wires from live, cleanup! before defer_measurements (both branches) |
+| `test/test_autocleanup.jl` | +139 (new) | 14 testsets: Eager, Density, Hardware not touched (TBD), 100 iterations, exception safety, nested @context, TracingContext DiscardNodes, block return, DAG ordering |
+| `test/runtests.jl` | +1 | include new test |
+
+### Beads state
+
+- Closed: `Sturm.jl-sv3` (P2 @context auto-cleanup).
+- Unblocked: `Sturm.jl-diy` (P3 discard!→ptrace! rename, depended on sv3).
+- `Sturm.jl-hlk` (P3 QBool/QInt finalizer) stays open as backstop per design
+  decision above.
+- `Sturm.jl-cbl` (P3 do-block allocation) independent, unchanged.
+
+### Next-session pointers
+
+The obvious next P2 candidates from `bd ready`:
+- `870` P1 — Steane [[7,1,3]] syndrome extraction (orthogonal, unblocked).
+- `npd` P2 — shor_factor_EH_semi with Mosca-Ekert semi-classical iQFT.
+- `jrl` P2 — QRunway runway-in-middle (unblocks 6oc GE21 critical path).
+
+The obvious next P3 (ergonomics follow-on from sv3):
+- `diy` — discard!→ptrace! rename. Now trivially doable because most
+  explicit `discard!` calls became redundant under sv3; the rename will
+  touch far fewer sites than it would have pre-sv3.
+
+---
+
 ## 2026-04-21 — Session 38: cases() + OpenQASM dynamic circuits (close `322` + `tak`); file 3 follow-on beads
 
 User asked to fix bead `322` (TracingContext silent mis-trace of classical-conditioned

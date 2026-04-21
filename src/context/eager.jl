@@ -105,6 +105,8 @@ function deallocate!(ctx::EagerContext, wire::WireID)
     _blessed_measure!(ctx, wire)
 end
 
+live_wires(ctx::EagerContext) = collect(keys(ctx.wire_to_qubit))
+
 # ── Wire → qubit resolution ──────────────────────────────────────────────────
 
 function _resolve(ctx::EagerContext, wire::WireID)::UInt8

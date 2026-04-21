@@ -71,6 +71,8 @@ function deallocate!(ctx::DensityMatrixContext, wire::WireID)
     _blessed_measure!(ctx, wire)
 end
 
+live_wires(ctx::DensityMatrixContext) = collect(keys(ctx.wire_to_qubit))
+
 # ── Wire resolution ──────────────────────────────────────────────────────────
 
 function _resolve(ctx::DensityMatrixContext, wire::WireID)::UInt8
