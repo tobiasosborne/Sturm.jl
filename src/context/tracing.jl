@@ -149,7 +149,7 @@ function measure!(ctx::TracingContext, wire::WireID)::Bool
         "would silently mis-trace.\n" *
         "Use `cases(q, () -> then_body, () -> else_body)` (or `@cases q begin … end`) " *
         "for measurement-conditioned operations — both branches will be captured into the trace.\n" *
-        "Use `discard!(q)` if you only want to throw the qubit away (partial trace).\n" *
+        "Use `ptrace!(q)` if you only want to throw the qubit away (partial trace).\n" *
         "Use `cases(q, () -> nothing)` if you want a measurement record in the IR (e.g. for " *
         "OpenQASM `measure q -> c;` output) without classical branching."
     )

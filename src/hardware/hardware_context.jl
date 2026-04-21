@@ -89,7 +89,7 @@ function allocate!(ctx::HardwareContext)::WireID
         ctx.next_slot += 1
     else
         error("HardwareContext: device capacity $(ctx.capacity) exhausted; " *
-              "free a qubit via measure! or discard! before allocating another")
+              "free a qubit via measure! or ptrace! before allocating another")
     end
     wire = fresh_wire!()
     ctx.wire_to_qubit[wire] = slot

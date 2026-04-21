@@ -55,7 +55,7 @@ Properties guaranteed by the resulting state:
   * Measuring `reg` yields outcome `k + jN` for uniformly-random
     `j ∈ {0,..,2^Cpad-1}`. Therefore `outcome mod N == k` deterministically.
   * The pad ancillae remain entangled with `reg` — they encode `j`. Tracing
-    them out (via `discard!` on the `QCoset`) does not affect the residue
+    them out (via `ptrace!` on the `QCoset`) does not affect the residue
     distribution on `reg`.
 
 # Reference
@@ -202,7 +202,7 @@ function decode!(c::QCoset{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     ctx = c.reg.ctx
     x = Int(c.reg)                                 # P2 cast — measures reg
     for w in c.pad_anc                             # partial-trace pad ancillae
-        discard!(QBool(w, ctx, false))             # P2-clean: cast wrapper + discard
+        ptrace!(QBool(w, ctx, false))              # P2-clean: cast wrapper + partial trace
     end
     c.consumed = true
     return x % c.modulus

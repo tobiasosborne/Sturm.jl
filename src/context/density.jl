@@ -67,7 +67,7 @@ end
 
 function deallocate!(ctx::DensityMatrixContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
-    # Partial trace = measure-and-discard. Blessed P2 path (used by discard!).
+    # Partial trace = measure-and-discard. Blessed P2 path (used by ptrace!).
     _blessed_measure!(ctx, wire)
 end
 

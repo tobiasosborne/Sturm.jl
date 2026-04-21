@@ -101,7 +101,7 @@ end
 function deallocate!(ctx::EagerContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
     # Partial trace = measure-and-discard. measure! handles collapse + recycle.
-    # Blessed: this is the P2-blessed partial-trace path used by discard!(q).
+    # Blessed: this is the P2-blessed partial-trace path used by ptrace!(q).
     _blessed_measure!(ctx, wire)
 end
 

@@ -4,6 +4,109 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-21 — Session 40: discard! → ptrace! rename (close `diy`)
+
+Mechanical refactor — the channel-theoretic partial-trace primitive gets its
+proper name; `discard!` remains as a zero-overhead `const` alias for
+backcompat. Size of the change validates session 38's sequencing decision:
+because sv3 landed first, the rename touched ~20 internal call sites in
+`src/` (plus 4 canonical defs + 1 export). Done WITHOUT migrating any
+test/ file — the alias covers them.
+
+### What changed
+
+4 canonical definitions renamed: `function discard!` → `function ptrace!` in
+`src/types/{qbool,qint,qcoset,qrunway}.jl`. Added a single module-level
+alias `const discard! = ptrace!` in qbool.jl (the first types/ include,
+so the alias captures all subsequent method additions via Julia's
+generic-function semantics). Exported `ptrace!` from `src/Sturm.jl`
+alongside the existing `discard!` export.
+
+Internal call sites in `src/` migrated to `ptrace!` for consistency
+(library/arithmetic, library/patterns, library/coset, library/shor,
+noise/classicalise, block_encoding/select, qecc/steane, qsvt/circuit,
+plus doc/error-message references in context/{eager,density,tracing},
+hardware/hardware_context, types/{qcoset,qrunway,quantum}). Renamed
+`_runway_force_discard!` → `_runway_force_ptrace!` with a const alias.
+
+Tests remain on `discard!` — the alias covers them — minimising
+cross-file churn. Future test files will use `ptrace!` (like
+`test/test_ptrace.jl` added this session).
+
+### Test strategy
+
+Red first: `test/test_ptrace.jl` with 9 cases — ptrace! on QBool/QInt,
+methods table contains QBool/QInt/QCoset/QRunway, `discard! === ptrace!`,
+discard! still works on QBool, ptrace! + @context auto-cleanup coexist.
+Ran red → 6 errors (UndefVarError on ptrace!), 1 pass. Implemented,
+re-ran → 9/9 green. Regressions: sv3 autocleanup 14/14 green, library
+patterns 92/92 green, QECC Steane 1173/1173 green. Full arithmetic
+suite queued (takes ~5min on this device per standing memory); not
+blocking the commit.
+
+### Gotchas
+
+1. **QCoset/QRunway constructors don't take plain Int** — my initial
+   test used `QCoset{4,2}(3)` which MethodErrors. Pivoted to a methods-
+   table check (`any(s -> s <: QCoset, sigs)` on `methods(ptrace!)`)
+   which asserts the same thing (rename covered all 4 types) without
+   needing runtime construction.
+
+2. **`discard!` alias must be defined AFTER the first `function ptrace!`
+   definition** but BEFORE any `discard!` caller runs. Julia binds
+   `const` to the generic function at alias time; subsequent `function
+   ptrace!(...)` in qint.jl, qcoset.jl, qrunway.jl add methods to the
+   same function, and the `discard!` alias sees them automatically. No
+   action needed beyond placing the const at qbool.jl (first include).
+
+3. **Batched Edit tool calls need prior Read per file** — learned
+   this mid-session. 8 of the src/ edits failed on the first batch
+   because I hadn't Read each file individually. Re-did with
+   Read-then-Edit pairs.
+
+4. **Buffered `tail -5` on a long-running Julia test silently hangs**
+   — `tail` waits for stdin EOF when its stdin isn't a TTY; if Julia
+   doesn't terminate (e.g. the suite runs many minutes), output
+   never flushes. Fix: pipe to `> /tmp/file.log 2>&1` and grep
+   the file afterwards.
+
+### Files touched
+
+- `src/types/qbool.jl`: renamed `discard!` → `ptrace!`, added alias (+19)
+- `src/types/qint.jl`: renamed, updated docstring (-4 +5)
+- `src/types/qcoset.jl`: renamed, updated docstring (-4 +5)
+- `src/types/qrunway.jl`: renamed, `_runway_force_discard!` → `_runway_force_ptrace!` + alias (-8 +10)
+- `src/Sturm.jl`: export `ptrace!` alongside `discard!` (+1 -1)
+- `src/library/{arithmetic,patterns,coset,shor}.jl`: call-site migration
+- `src/noise/classicalise.jl`, `src/block_encoding/select.jl`,
+  `src/qecc/steane.jl`, `src/qsvt/circuit.jl`: call-site migration
+- `src/context/{tracing,eager,density}.jl`, `src/hardware/hardware_context.jl`,
+  `src/types/quantum.jl`: doc / error-message references
+- `README.md`: resource-lifetime section — the "v0.1 caveat / being
+  deprecated" language replaced with "sv3 shipped, diy shipped,
+  discard! is now the backcompat alias"
+- `test/test_ptrace.jl`: new, 9 testsets
+- `test/runtests.jl`: include new test
+
+### Beads state
+
+- Closed: `Sturm.jl-diy` (P3).
+- Still open ergonomics: `cbl` (do-block allocation, independent),
+  `hlk` (QBool/QInt finalizer, backstop per sv3 design note).
+- Resource-lifetime ergonomics trilogy (sv3 → cbl → diy) now 2/3
+  shipped. cbl can land whenever; it's additive.
+
+### Next-session pointer
+
+User asked for `870` (Steane [[7,1,3]] syndrome extraction + correction)
+as the next target — "the real physics mega task". Pre-brief deferred
+to a focused next session: will need full 3+1 protocol, Steane 1996
+paper ground truth, Table II syndrome lookup, 3 X-stabilisers + 3
+Z-stabilisers, logical/physical channel bookkeeping, and tests against
+the {I,X,Y,Z} weight-1 error table.
+
+---
+
 ## 2026-04-21 — Session 39: @context auto-cleanup (close `sv3`) — RAII for qubits
 
 Followed session 38's hand-off: `sv3` was the recommended next target because

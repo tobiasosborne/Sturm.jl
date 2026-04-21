@@ -421,8 +421,8 @@ function mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer,
     # state: |a·x_orig mod N⟩|b=0⟩|anc=0⟩    (ctrl=1)
     #        |x_orig⟩|b=0⟩|anc=0⟩              (ctrl=0)
 
-    discard!(b)
-    discard!(anc)
+    ptrace!(b)
+    ptrace!(anc)
 
     return x
 end

@@ -24,11 +24,37 @@ function consume!(q::QBool)
     q.consumed = true
 end
 
-"""Explicitly discard a QBool (partial trace)."""
-function discard!(q::QBool)
+"""
+    ptrace!(q::QBool)
+
+Partial trace — explicit channel-theoretic cleanup of a quantum resource.
+The qubit is measured-and-discarded (outcome thrown away), consumed, and its
+slot returned to the context's free list.
+
+Idiomatic code rarely calls `ptrace!` directly: `@context EagerContext() begin
+… end` auto-cleans unconsumed resources at block exit (bead sv3). Reach for
+`ptrace!` only when scope-driven cleanup does not fit — e.g. a qubit must die
+mid-scope to free a slot for re-allocation on a capacity-bounded device.
+
+`discard!` remains as a backcompat alias. Prefer `ptrace!` (bead diy).
+"""
+function ptrace!(q::QBool)
     consume!(q)
     deallocate!(q.ctx, q.wire)
 end
+
+"""
+    discard!
+
+Backcompat alias for [`ptrace!`](@ref). Covers every method of `ptrace!`
+across all quantum register types (QBool, QInt, QCoset, QRunway), since
+`const` binds a name to the generic function — subsequent method additions
+on `ptrace!` are visible through `discard!` too.
+
+Deprecated in favour of `ptrace!`. No warning is emitted today; the alias
+is planned to outlive one release. See bead diy.
+"""
+const discard! = ptrace!
 
 # ── BlochProxy: enables q.θ += δ and q.φ += δ syntax ─────────────────────────
 

@@ -141,11 +141,14 @@ end
 Base.length(::QInt{W}) where {W} = W
 
 """
-    discard!(q::QInt{W})
+    ptrace!(q::QInt{W})
 
-Discard all wires in the register (measure and throw away results).
+Partial trace — discard all W wires of the register (measure-and-discard each,
+outcomes thrown away). Marks the register consumed.
+
+`discard!` remains as a backcompat alias. Prefer `ptrace!` (bead diy).
 """
-function discard!(q::QInt{W}) where {W}
+function ptrace!(q::QInt{W}) where {W}
     check_live!(q)
     for i in 1:W
         deallocate!(q.ctx, q.wires[i])

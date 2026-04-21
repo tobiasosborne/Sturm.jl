@@ -156,7 +156,7 @@ function phase_estimate(unitary!::Function, eigenstate::QBool, ::Val{P}) where {
     interfere!(prec)
 
     # Measure precision register
-    discard!(eigenstate)
+    ptrace!(eigenstate)
     return Int(prec)
 end
 
@@ -202,9 +202,9 @@ function phase_estimate(unitary!::Function, eigenstate::QInt{L}, ::Val{P}) where
     # Inverse QFT on precision register
     interfere!(prec)
 
-    # Discard the eigenstate register — it is no longer needed and (for Shor's
-    # §5.3.1) would anyway collapse onto one of the `|u_s⟩` eigenstates.
-    discard!(eigenstate)
+    # Partial-trace the eigenstate register — it is no longer needed and (for
+    # Shor's §5.3.1) would anyway collapse onto one of the `|u_s⟩` eigenstates.
+    ptrace!(eigenstate)
     return Int(prec)
 end
 
@@ -304,7 +304,7 @@ function _multi_controlled_z!(qubits::Vector{QBool})
     end
     when(qubits[1]) do; ancillae[1] ⊻= qubits[2]; end
 
-    for anc in ancillae; discard!(anc); end
+    for anc in ancillae; ptrace!(anc); end
 end
 
 # ── Diffusion operator ──────────────────────────────────────────────────────

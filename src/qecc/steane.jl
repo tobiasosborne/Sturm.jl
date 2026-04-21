@@ -132,9 +132,9 @@ function decode!(::Steane, physical::NTuple{7, QBool})
     q[6] ⊻= q[3]
     q[5] ⊻= q[3]
 
-    # Discard the six ancilla qubits (positions 1, 2, 4, 5, 6, 7).
+    # Partial-trace the six ancilla qubits (positions 1, 2, 4, 5, 6, 7).
     for i in (1, 2, 4, 5, 6, 7)
-        discard!(q[i])
+        ptrace!(q[i])
     end
 
     return q[3]  # logical qubit recovered at position 3
