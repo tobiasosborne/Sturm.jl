@@ -259,16 +259,34 @@ end
 
 3. **It's not Julia-idiomatic.** Julia's `if x` is defined on `x::Bool`. Types that want a boolean reading define `Base.Bool(::T)`, and `if x` becomes `if Bool(x)`. For `QBool`, `Bool(q)` is measurement — P2. `if q` with no overload already does the honest thing. The ForwardDiff.jl analogue is exact: `if x > 0` on a `Dual` also measures-then-branches (strips the dual); autodiff-safe code uses `ifelse` or similar branchless primitives. Sturm's `when` is the branchless-coherent primitive; `if` is the measure-then-branch one. Both have their place; one syntactic form may not mean both.
 
-### Classical control on a measurement outcome: `cases()`
+### Classical control on a measurement outcome
 
-`if Bool(q) … end` works in eager execution (measure, classical branch). But under `TracingContext` it silently mis-traces — the trace records the false-branch only, because `Bool(q)` returns a placeholder during tracing. The fix is the explicit primitive **`cases()`** (and the `@cases` macro), distinct from both `if` and `when()`:
+For real execution — `EagerContext`, `DensityMatrixContext`, `HardwareContext` — the natural pattern just works:
 
 ```julia
-@context EagerContext() begin
-    target = QBool(0); ancilla = QBool(1.0)
-    cases(ancilla, () -> X!(target))    # measure ancilla; if 1, flip target
-    @assert Bool(target) === true        # syndrome correction pattern
+@context HardwareContext(transport) begin
+    ancilla = QBool(1.0); target = QBool(0)
+    if Bool(ancilla)            # ← round-trip to device: measure, await, return Bool
+        X!(target)              # ← plain Julia branch on the classical result
+    end
+    @assert Bool(target)
 end
+```
+
+`Bool(q)` is the P2 cast — measurement. On `HardwareContext` it flushes pending ops, blocks on the device response, returns the classical Bool. The `if` is plain Julia. This is exactly the dynamic-circuit pattern IBM/Quantinuum hardware supports, exposed at zero ceremony.
+
+`Int(q::QInt)` does the same for multi-bit registers (one round-trip per bit in v0.1; bead `Sturm.jl-???` to come for batched). Use `if`, `switch`, `while` over the result freely — it's a regular Julia value.
+
+**The footgun is `TracingContext` only**, because tracing runs the function once symbolically and Julia's `if` is opaque to runtime tracing — there's no way to capture both arms without source-level rewriting (Cassette/IRTools, which the Julia DSL ecosystem has moved away from). For the symbolic-tracing path (building a `Channel` for OpenQASM export, or feeding the optimisation passes), use the explicit primitive **`cases()`** / **`@cases`**:
+
+```julia
+ch = trace(1) do q
+    target = QBool(0)
+    cases(q, () -> X!(target))    # both branches captured into a CasesNode
+    target
+end
+# trace() auto-lowers via Nielsen-Chuang deferred measurement →
+# controlled gates from the measurement wire. ch.dag has no CasesNode left.
 ```
 
 Macro form with two `begin` blocks (Julia doesn't support chained `do` blocks):
@@ -281,11 +299,16 @@ end begin
 end
 ```
 
-Under `TracingContext`, both branches trace into separate sub-DAGs and combine into a `CasesNode`; `trace()` auto-lowers via Nielsen-Chuang's principle of deferred measurement (controlled gates from the measurement wire). Under `HardwareContext`, `cases()` round-trips for the measurement and dispatches classically — exactly the dynamic-circuit pattern that IBM/Quantinuum hardware supports.
+| Context | `if Bool(q) … end` | `cases(q, then, else_)` |
+|---------|--------------------|--------------------------|
+| `EagerContext` | ✓ measure + classical branch | ✓ same effect |
+| `HardwareContext` | ✓ **round-trip + classical branch** | ✓ same effect |
+| `DensityMatrixContext` | ✓ sampled measure + classical branch | ✓ same effect |
+| `TracingContext` | ✗ errors loudly (silent mis-trace footgun) | ✓ captures both branches into `CasesNode` |
 
-For tracing-only "record a measurement in the IR without classical branching" (e.g., to get `c[0] = measure q[0];` in OpenQASM output), use the empty form `cases(q, () -> nothing)`. Raw `Bool(q)` / `Int(q)` inside `TracingContext` errors loudly with a migration message.
+For tracing-only "record a measurement without classical branching" (e.g., to get `c[0] = measure q[0];` in OpenQASM output), use the empty form `cases(q, () -> nothing)`.
 
-This sits in the same axiom space as `if`/`when`: three syntactic forms, three distinct channels — `if` is post-measurement classical, `when` is coherent control, `cases` is mid-circuit measurement with classical-conditioned operations. The 1:1 lowering target is OpenQASM 3's `if (c[i] == 1) { … } [else { … }]` (Qiskit-new `with circuit.if_test(...)`, Q# `if M(q) == One`, MQT `IfElseOperation` — same pattern across the field).
+This gives **three distinct channels with three distinct syntactic forms** — `if` is post-measurement classical, `when` is coherent control, `cases` is mid-circuit measurement with traced classical-conditioned operations. The 1:1 OpenQASM 3 lowering target for `cases` is `if (c[i] == 1) { … } [else { … }]` (matches Qiskit-new `with circuit.if_test(...)`, Q# `if M(q) == One`, MQT `IfElseOperation`).
 
 ### Resource lifetime: scope, not `free()` (corollary of P1 + P5)
 
