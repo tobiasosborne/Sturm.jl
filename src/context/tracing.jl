@@ -11,13 +11,17 @@ Implements all AbstractContext methods symbolically:
 - measure! appends ObserveNode and returns a Bool placeholder
 """
 mutable struct TracingContext <: AbstractContext
-    dag::Vector{HotNode}
+    # Vector{DAGNode} (not Vector{HotNode}) so that cases() can append CasesNode
+    # mid-trace. The trace() entry point auto-lowers CasesNodes via
+    # defer_measurements before constructing a Channel, which keeps the
+    # long-lived Channel.dag::Vector{HotNode} (Session 3 perf win) untouched.
+    dag::Vector{DAGNode}
     control_stack::Vector{WireID}
     consumed::Set{WireID}
     _result_counter::UInt32
 
     function TracingContext(; sizehint::Int=256)
-        dag = HotNode[]
+        dag = DAGNode[]
         sizehint > 0 && sizehint!(dag, sizehint)
         new(dag, WireID[], Set{WireID}(), UInt32(0))
     end
@@ -133,13 +137,27 @@ end
 # ── Measurement (symbolic) ───────────────────────────────────────────────────
 
 function measure!(ctx::TracingContext, wire::WireID)::Bool
-    _warn_direct_measure()   # P2 antipattern warning, suppressed inside Bool/Int casts
+    error(
+        "Bool(q) / Int(q) inside TracingContext is ambiguous: in tracing mode the " *
+        "result is always a placeholder, so any branching on it (e.g. `if Bool(q) … end`) " *
+        "would silently mis-trace.\n" *
+        "Use `cases(q, () -> then_body, () -> else_body)` (or `@cases q begin … end`) " *
+        "for measurement-conditioned operations — both branches will be captured into the trace.\n" *
+        "Use `discard!(q)` if you only want to throw the qubit away (partial trace).\n" *
+        "Use `cases(q, () -> nothing)` if you want a measurement record in the IR (e.g. for " *
+        "OpenQASM `measure q -> c;` output) without classical branching."
+    )
+end
+
+# ── cases() internal: emit ObserveNode without going through measure! ─────────
+#
+# cases() in src/control/cases.jl needs to record the measurement in the trace
+# without triggering measure!'s loud error. _emit_observe! is the internal
+# primitive — DO NOT call from user code.
+function _emit_observe!(ctx::TracingContext, wire::WireID)::UInt32
     _resolve_tracing(ctx, wire)
     ctx._result_counter += 1
     push!(ctx.dag, ObserveNode(wire, ctx._result_counter))
     push!(ctx.consumed, wire)
-    # In tracing mode, measurement returns a deterministic placeholder.
-    # Classical branching (if/else on measurement) is recorded via CasesNode
-    # when using the trace() function. For now, return false as default path.
-    return false
+    return ctx._result_counter
 end

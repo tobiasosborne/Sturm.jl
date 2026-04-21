@@ -52,11 +52,22 @@ using Sturm
         @test node.ctrl1 == w1
     end
 
-    @testset "TracingContext records measurement" begin
+    @testset "TracingContext: measure! errors loudly (use cases() or discard!)" begin
+        # Bool(q) / Int(q) inside TracingContext is a silent-mis-trace footgun
+        # (Sturm.jl-322). The fix is to error on raw measure! and route users
+        # to cases() for branching or discard!() for partial trace.
         ctx = TracingContext()
         w = Sturm.allocate!(ctx)
-        result = Sturm.measure!(ctx, w)
-        @test result isa Bool
+        @test_throws ErrorException Sturm.measure!(ctx, w)
+    end
+
+    @testset "TracingContext: _emit_observe! is the internal cases-only path" begin
+        # cases() uses the internal _emit_observe! to record an ObserveNode
+        # without triggering the loud-error guard on raw measure!.
+        ctx = TracingContext()
+        w = Sturm.allocate!(ctx)
+        cond_id = Sturm._emit_observe!(ctx, w)
+        @test cond_id isa UInt32
         @test length(ctx.dag) == 1
         @test ctx.dag[1] isa Sturm.ObserveNode
         @test w in ctx.consumed
@@ -125,7 +136,7 @@ using Sturm
     @testset "to_openqasm: measurement" begin
         ch = trace(1) do q
             H!(q)
-            _ = Bool(q)
+            cases(q, () -> nothing)   # record measurement in IR (for QASM output) without branching
             nothing
         end
         qasm = to_openqasm(ch)

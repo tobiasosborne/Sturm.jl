@@ -4,6 +4,172 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-21 — Session 38: cases() + OpenQASM dynamic circuits (close `322` + `tak`); file 3 follow-on beads
+
+User asked to fix bead `322` (TracingContext silent mis-trace of classical-conditioned
+operations after measurement). After deep research (3 parallel subagents on Sturm
+internals + Julia DSL idioms + quantum-DSL prior art), shipped a full design that
+also closes `tak` (OpenQASM CasesNode dropped). Filed three follow-on ergonomics
+beads (auto-cleanup `sv3`, do-block allocation `cbl`, discard!→ptrace! rename `diy`).
+
+### Research findings (recorded for future-you)
+
+Three subagents in parallel established:
+
+1. **Sturm internals**: CasesNode struct already exists (`dag.jl:114-118`),
+   `defer_measurements` already lowers ObserveNode+CasesNode via Nielsen-Chuang
+   §4.4, draw/pixels render placeholders, openqasm silently drops. The PRODUCER
+   side was the gap — TracingContext.measure! at `tracing.jl:135-145` returned
+   hardcoded false with a "for now" comment that was never followed up.
+
+2. **Julia DSL idioms**: Symbolics/MTK overload `Base.ifelse` + add error_hints
+   for `convert(Bool, ::Num)`; JuMP refuses `if VariableRef` and uses indicator
+   constraints; Cassette/IRTools/Mjolnir are fragile (FluxML migrating off
+   Cassette); IfElse.jl archived (Symbolics now overloads Base.ifelse directly);
+   **Yao.jl has no measurement-conditioned primitive at all** — Sturm fills a
+   genuine gap in the Julia quantum ecosystem.
+
+3. **Quantum DSL prior art** taxonomy:
+   - (A) Block-scoped: Qiskit-new (`with circuit.if_test((c, 1)):`), Q#, OpenQASM
+     3 (`if (c==1) { ... }`), MQT IfElseOperation. **Wins for Sturm.**
+   - (B) Method-on-gate: Cirq (`with_classical_controls`), TKET. Too narrow.
+   - (C) Decorator: Catalyst `@cond`. Unidiomatic in Julia.
+   - (D) Linear/labels: Quil. Wrong abstraction level.
+   Critical P4 warning from subagent C: Cirq blurs coherent `when` and classical
+   control by reusing op wrappers — Sturm must NOT make this mistake. The new
+   primitive must be VISUALLY DISTINCT from `when()`.
+
+### 8 design decisions locked (4 with user revisions)
+
+1. Name: `cases` (matches CasesNode + Qiskit/MQT terminology). ✓
+2. Syntax: **two-do-block was rejected by Julia parser** (chained `f() do … end
+   do … end` is a parse error). Pivoted to `@cases q begin … end begin … end`
+   macro — both blocks parse cleanly. The `cases(q, then, else_)` function is
+   the underlying primitive.
+3. trace() auto-lowers CasesNode via strict defer_measurements. ✓
+4. v1 restriction: cases bodies must be measurement-free; **strict mode errors
+   loudly** (per user revision — was originally "compiler warning"). ✓
+5. OpenQASM 3 dynamic-circuit emission for CasesNode (closes `tak`). ✓
+6. Fail fast, fail loud: `Bool(q)` / `Int(q)` inside TracingContext errors
+   with migration message pointing to `cases()` / `discard!()` / empty-cases
+   idiom. ✓
+
+### THE observe! ANTIPATTERN — caught and rejected mid-session
+
+In an early draft I introduced an `observe!(q)` primitive to handle the
+"measure-and-record-but-discard-result" case (test_channel.jl needed this for
+its OpenQASM output assertion). User correctly identified this as a P2
+violation: P2 says "the Q→C boundary is a CAST. Only explicit casts: Bool(q),
+Int(qi)." Adding `observe!(q)` would be a back-door measurement function —
+exactly what P2 forbids. Plus it's redundant with discard! (which IS partial
+trace, the channel-theoretic operation for "throw away this qubit").
+
+**The right answer**: empty-cases idiom `cases(q, () -> nothing)`. This is
+honest about what's happening — measure, branch on outcome, but both branches
+do nothing — and produces an ObserveNode + empty CasesNode in the trace. The
+auto-lowering pass drops the empty CasesNode and keeps the ObserveNode, so
+OpenQASM still emits `c[0] = measure q[0];`. No new primitive needed.
+
+Lesson for future-you: when fixing a P2-axiom-violating bug, **double down on
+P2** — don't introduce parallel back-doors to make tests easier.
+
+### discard! is itself unidiomatic — filed three new beads
+
+User pushed back on `discard!` as a name. Analysis: it's unidiomatic on four
+axes (resource-management vocab in user code violates P5; bang-convention is
+wrong since it consumes rather than mutates; redundant with what GC should do;
+forces explicit cleanup that's the source of bead `hlk`). Filed three beads
+in dependency order to MINIMISE refactoring:
+
+- **`sv3` P2** — `@context` auto-cleanup of unconsumed quantum resources.
+  RAII-style: track allocations, partial-trace at scope exit. Subsumes hlk.
+  **Lands first** because it makes most existing `discard!` calls redundant.
+- **`cbl` P3** — `QBool(p) do q … end` do-block allocation. Independent
+  additive; matches Julia `open(f, path) do stream … end` idiom.
+- **`diy` P3** — Rename `discard!` → `ptrace!` (channel-theoretic name).
+  **Depends on sv3** so the rename touches ~5-10 sites instead of ~50.
+
+Sequencing rationale: each session is additive and low-risk; the eventual
+rename is small because auto-cleanup + do-block patterns have made `discard!`
+optional in most positions.
+
+### What landed this session
+
+| File | Change |
+|------|--------|
+| `src/control/cases.jl` (NEW, 130 LOC) | `cases(q, then, else_)` + `@cases` macro + per-context dispatch |
+| `src/context/tracing.jl` | dag::Vector{HotNode} → Vector{DAGNode}; measure! errors loudly; new `_emit_observe!` for cases() internal use |
+| `src/channel/trace.jl` | Auto-lower via `defer_measurements(strict=true)` before constructing Channel |
+| `src/passes/deferred_measurement.jl` | Added `strict` kwarg; empty-CasesNode handling (drop CasesNode, keep ObserveNode); strict errors on un-lowerable patterns |
+| `src/channel/openqasm.jl` | Rewrote with `_emit_node!(lines, node, idx, map, indent)` style; new `to_openqasm(dag, in_wires, out_wires)` entry; OpenQASM 3 dynamic-circuit `if (c[i] == 1) { … } [else { … }]` emission for CasesNode; recursive bit-index pre-pass |
+| `src/Sturm.jl` | Include cases.jl; export `cases`, `@cases` |
+| `test/test_cases.jl` (NEW, 36 tests) | EagerContext / HardwareContext / TracingContext / @cases macro / branch capture / auto-lower / nested measurement error / Bool(q) error / empty-cases idiom |
+| `test/test_openqasm_cases.jl` (NEW, 17 tests) | Then-only / both-branch / multiple measurements / Channel-level back-compat / empty-cases suppression |
+| `test/test_channel.jl, test_pixels.jl, test_draw.jl` | Migrated 3 sites `_ = Bool(q)` → `cases(q, ()->nothing)`; added new `_emit_observe!` test |
+| `test/runtests.jl` | Added test_cases + test_openqasm_cases |
+
+53/53 new tests pass. Regression-clean across test_channel, test_passes,
+test_tracing_deep_when, test_pixels, test_draw, test_qecc, all hardware tests,
+and ~15 other touched files.
+
+### Surprises and gotchas
+
+1. **Julia's chained double-do is a parse error** (verified empirically with
+   `f("X") do; …; end do; …; end` → `extra tokens after end of expression`).
+   Forced pivot from the originally-locked two-do-block syntax to a macro
+   form `@cases q begin … end begin … end`. Macros are stable across Julia
+   versions and parse cleanly. The function form `cases(q, then, else_)` is
+   the underlying primitive (e.g. for programmatic construction).
+
+2. **Empty `collect(())` returns `Vector{Union{}}`**, not `Vector{WireID}`.
+   Broke the new `to_openqasm(ch::Channel) → to_openqasm(dag, in_wires, out_wires)`
+   dispatch when the channel has no inputs/outputs (common in test fixtures).
+   Fix: use `WireID[ch.input_wires...]` instead of `collect(ch.input_wires)`.
+
+3. **TracingContext.dag::Vector{HotNode} can't hold CasesNode** because
+   CasesNode has Vector fields → not isbits → can't be in HotNode union (which
+   is isbits-optimized at 25 B/element per Session 3). Solution: relax dag
+   to Vector{DAGNode} during tracing, auto-lower via defer_measurements
+   before constructing the long-lived Channel (which keeps Vector{HotNode}).
+   Best of both worlds — slight perf regression during tracing (transient),
+   no impact on Channel-resident IR (perf-sensitive).
+
+4. **Rejected the observe! antipattern** (see above). User caught it; lesson
+   captured.
+
+5. **`@cases q begin ... end` macro args**: when called with just one block,
+   the `else_block` macro arg defaulted via `args...` length check. Julia
+   macros don't support default values in the signature; varargs + length
+   check is the idiom.
+
+### Beads state at end of session
+
+- Closed: `Sturm.jl-322` (P1 silent correctness bug), `Sturm.jl-tak` (P2
+  silent OpenQASM drop). Both bug beads from session 37 architecture audit
+  resolved.
+- Filed: `sv3` (P2 @context auto-cleanup, RAII), `cbl` (P3 do-block allocation),
+  `diy` (P3 discard!→ptrace! rename, blocked on sv3). Three follow-on
+  ergonomics beads.
+- Open beads now: 21 (was 20 at session start; +3 new − 2 closed).
+
+### Next-session pointers
+
+**Highest-value follow-on**: `sv3` (@context auto-cleanup). Per session
+analysis, this is the right next move because it (a) closes the long-standing
+hlk footgun, (b) makes the eventual `discard!→ptrace!` rename trivial, (c)
+purely additive. Estimated: 1 session.
+
+**Other ready P1/P2**:
+- `Sturm.jl-870` P1 — Steane [[7,1,3]] syndrome extraction (orthogonal).
+- `Sturm.jl-jrl` P2 — runway-in-middle type, unblocks `6oc` GE21 critical path.
+- `Sturm.jl-npd` P2 — Mosca-Ekert semi-classical iQFT.
+
+**Hygiene from session 37**:
+- `Sturm.jl-t1v` P3 — `_ORACLE_TABLE_CACHE` eviction policy.
+- `Sturm.jl-hlk` P3 — QBool/QInt finalizer (will likely be subsumed by sv3).
+
+---
+
 ## 2026-04-21 — Session 37: Hardware round-trip backend (epic `vvu`, 7 beads, 1327 tests)
 
 User asked to architect and ship a full hardware round-trip path for Sturm.jl
