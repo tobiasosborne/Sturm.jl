@@ -259,6 +259,70 @@ end
 
 3. **It's not Julia-idiomatic.** Julia's `if x` is defined on `x::Bool`. Types that want a boolean reading define `Base.Bool(::T)`, and `if x` becomes `if Bool(x)`. For `QBool`, `Bool(q)` is measurement — P2. `if q` with no overload already does the honest thing. The ForwardDiff.jl analogue is exact: `if x > 0` on a `Dual` also measures-then-branches (strips the dual); autodiff-safe code uses `ifelse` or similar branchless primitives. Sturm's `when` is the branchless-coherent primitive; `if` is the measure-then-branch one. Both have their place; one syntactic form may not mean both.
 
+### Classical control on a measurement outcome: `cases()`
+
+`if Bool(q) … end` works in eager execution (measure, classical branch). But under `TracingContext` it silently mis-traces — the trace records the false-branch only, because `Bool(q)` returns a placeholder during tracing. The fix is the explicit primitive **`cases()`** (and the `@cases` macro), distinct from both `if` and `when()`:
+
+```julia
+@context EagerContext() begin
+    target = QBool(0); ancilla = QBool(1.0)
+    cases(ancilla, () -> X!(target))    # measure ancilla; if 1, flip target
+    @assert Bool(target) === true        # syndrome correction pattern
+end
+```
+
+Macro form with two `begin` blocks (Julia doesn't support chained `do` blocks):
+
+```julia
+@cases q begin
+    X!(target)        # then-branch (measurement = 1)
+end begin
+    Z!(target)        # else-branch (measurement = 0, optional)
+end
+```
+
+Under `TracingContext`, both branches trace into separate sub-DAGs and combine into a `CasesNode`; `trace()` auto-lowers via Nielsen-Chuang's principle of deferred measurement (controlled gates from the measurement wire). Under `HardwareContext`, `cases()` round-trips for the measurement and dispatches classically — exactly the dynamic-circuit pattern that IBM/Quantinuum hardware supports.
+
+For tracing-only "record a measurement in the IR without classical branching" (e.g., to get `c[0] = measure q[0];` in OpenQASM output), use the empty form `cases(q, () -> nothing)`. Raw `Bool(q)` / `Int(q)` inside `TracingContext` errors loudly with a migration message.
+
+This sits in the same axiom space as `if`/`when`: three syntactic forms, three distinct channels — `if` is post-measurement classical, `when` is coherent control, `cases` is mid-circuit measurement with classical-conditioned operations. The 1:1 lowering target is OpenQASM 3's `if (c[i] == 1) { … } [else { … }]` (Qiskit-new `with circuit.if_test(...)`, Q# `if M(q) == One`, MQT `IfElseOperation` — same pattern across the field).
+
+### Resource lifetime: scope, not `free()` (corollary of P1 + P5)
+
+A QBool is a Julia object. When it leaves scope, what happens?
+
+In channel theory the answer is **partial trace** — the unique completely-positive map that "forgets" a subsystem. There is no `malloc`/`free` for qubits; partial trace IS the cleanup operation, mathematically. The questions are (a) what to call it in code and (b) when to invoke it.
+
+Sturm follows Julia's resource-management idiom, not C's. Julia has two patterns and Sturm uses both:
+
+- **GC for transient objects** — you don't `close()` a temporary array; the runtime reclaims it. Translated: a `QBool` allocated inside `@context EagerContext() begin … end` is partial-traced at block exit, the same way `lock(l) do … end` releases the lock at exit. You write no manual cleanup.
+- **`do`-block for short explicit lifetimes** — mirrors `open(f, path) do stream … end`. Translated: `QBool(p) do q … end` partial-traces `q` at the do-block exit, even on exception.
+
+```julia
+# Idiomatic — qubits live for the @context block, no manual cleanup
+@context EagerContext() begin
+    a = QBool(1/2); b = QBool(0)
+    b ⊻= a
+    Bool(b)
+    # a auto-partial-traced at `end`
+end
+
+# Do-block — explicit short lifetime, exception-safe
+QBool(0.5) do q
+    H!(q)
+    Bool(q)
+    # q partial-traced here regardless of how the block exits
+end
+```
+
+The channel-theoretic name for the explicit primitive is **`ptrace!(q)`** (partial trace) — used when scope-driven cleanup doesn't fit (e.g., a qubit must die mid-scope to free a slot for re-allocation on a capacity-bounded device). It should be rare in idiomatic code.
+
+**Why not `discard!`?** The current v0.1 spelling is `discard!(q)`, which is being deprecated in favour of `ptrace!(q)`. `discard!` is unidiomatic on four axes: (a) it speaks C-style resource-management vocabulary in user-facing code (P5 violation in spirit — Sturm shouldn't expose wire/resource concepts to users); (b) the bang-convention is wrong, since the qubit is **destroyed**, not mutated; (c) the name is silent on the physics — the operation IS partial trace and should be named for that; (d) requiring users to call it explicitly is the footgun behind bead `Sturm.jl-hlk` (forgotten `discard!` leaks slots until `MAX_QUBITS` errors).
+
+**v0.1 caveat (current shipped state)**: `@context` does NOT yet auto-partial-trace at exit, and `QBool(p) do q … end` is not yet implemented. Today, you call `discard!(q)` manually. Both auto-cleanup and the do-block form are tracked: `Sturm.jl-sv3` (auto-cleanup, RAII), `Sturm.jl-cbl` (do-block allocation), `Sturm.jl-diy` (rename `discard!` → `ptrace!`). They land in this dependency order — auto-cleanup first, so the eventual rename touches a handful of sites instead of fifty.
+
+The overall design target: **users don't write resource-cleanup primitives.** Quantum mechanics doesn't change the Julia resource-management story; partial trace is what GC means for qubits.
+
 ### Deutsch-Jozsa in One Line
 
 ```julia
