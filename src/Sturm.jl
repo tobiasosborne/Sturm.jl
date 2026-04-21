@@ -143,6 +143,7 @@ export depolarise!, dephase!, amplitude_damp!, classicalise
 
 # QECC
 export AbstractCode, Steane, encode!, decode!, encode
+export syndrome_extract!, correct!, decode_with_correction!
 
 # Simulation
 export PauliOp, pauli_I, pauli_X, pauli_Y, pauli_Z

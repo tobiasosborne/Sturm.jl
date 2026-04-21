@@ -4,6 +4,122 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-21 — Session 41: Steane 870 P1+P2 WIP — blocked on Pauli gate bug (`a1e` filed)
+
+Started bead 870 (Steane [[7,1,3]] syndrome extraction + correction). Did
+the ground-truth physics read (docs/physics/steane_1996.pdf §§3.3-4),
+wrote the red test first (21 weight-1 error cases + N=500 statistical),
+implemented the three new functions. 66/80 tests green. The 14 failures
+in P1 syndrome-value assertions led to discovering a **physics-correctness
+bug in src/gates.jl that predates this session**: `X!` and `Y!` are
+silently swapped.
+
+### User call-ins during this session
+
+- Q1 scope: **bundle P1 (syndrome_extract! + correct!) + P2
+  (decode_with_correction! + N=500 statistical)**. P3 (wire into
+  `encode(ch, Steane())`) deferred to a dedicated session.
+- Q2 classical-conditioned correction primitive: **(b) `cases()`** —
+  but for this session (P1+P2 only, EagerContext only) we actually use
+  runtime `Bool(anc)` + Julia `if` because `cases()` is needed for the
+  TracingContext story in P3 only. Documented that the current
+  `syndrome_extract!` errors loudly in TracingContext via `Bool(q)`'s
+  existing loud-fail (session 38) — pointing users at bead 870 P3.
+- Q3 `decode!` mutation vs new: **add-new** — `decode_with_correction!`
+  composes `syndrome_extract!` + `correct!` + the existing pure-inverse
+  `decode!`. Keeps the 14 existing Steane tests untouched.
+
+### Ground truth pinned to physics
+
+Steane 1996 quant-ph/9601029 §3.3 eq. 16-17 (parity check matrices
+H_C, H_{C+}), §3.5 Theorem 6 (correction in two bases is sufficient),
+p. 21 (ancilla + CNOT extraction protocol). Key observation: Steane's
+paper has **no literal "Table I/II"** — bead 870's wording is shorthand.
+The stabiliser placement is designed so the 3-bit syndrome in binary
+equals the qubit index of a weight-1 error directly — no lookup table
+needed, correction is the identity function on qubit index.
+
+Stabiliser supports (both X-type and Z-type, CSS self-dual):
+`g₁={1,3,5,7}` (bit 1), `g₂={2,3,6,7}` (bit 2), `g₃={4,5,6,7}` (bit 3).
+
+### What's committed this session (src/)
+
+`src/qecc/steane.jl` — three new exported functions:
+- `syndrome_extract!(NTuple{7,QBool}) → (sx::UInt8, sz::UInt8)`
+  Z-stab protocol: `anc = QBool(0); for i in support; anc ⊻= phys[i]; end; Bool(anc)`.
+  X-stab protocol: `anc = QBool(0); H!(anc); for i in support; phys[i] ⊻ anc; end; H!(anc); Bool(anc)`.
+- `correct!(NTuple{7,QBool}, sx, sz)` — `sx != 0 → X!(phys[sx]); sz != 0 → Z!(phys[sz])`.
+- `decode_with_correction!(::Steane, NTuple{7,QBool}) → QBool` — composes all three.
+
+`src/Sturm.jl` — new exports `syndrome_extract!, correct!, decode_with_correction!`.
+
+### What's committed but NOT wired (test/)
+
+`test/test_steane_syndrome.jl` — 80-test file, 66 green, 14 red (all
+P1 syndrome-value assertions). **Intentionally NOT added to
+runtests.jl** so CI stays green. Will be wired in once the Pauli
+bug (bead a1e) is fixed — the code in steane.jl is correct, only
+the Pauli-identity assertions need the fix to match.
+
+### The Pauli gate bug — bead `Sturm.jl-a1e` (P1)
+
+Discovered while investigating why my P1 X-error syndrome assertions
+failed. **`X!(q) = (q.θ += π; q)` is Ry(π), whose channel is Y, not X**.
+And **`Y!(q) = (q.φ += π; q.θ += π; q)` is Rz(π)·Ry(π), whose channel
+is X**. Verified by density-matrix action on |+⟩⟨+|:
+
+- `X!(|+⟩)` → `|-⟩` (Y-channel behaviour; pure X channel leaves |+⟩ invariant)
+- `Y!(|+⟩)` → `|+⟩` (X-channel behaviour)
+
+### Why the bug was silent for 40+ sessions
+
+1. **Freshly-prepared |0⟩ ancillas are indistinguishable.** Ry(π)|0⟩⟨0|Ry(π)† = |1⟩⟨1| = X|0⟩⟨0|X. Diagonal density matrices are identical channels under X vs Y vs Ry(π). All existing src/ callers of `X!` hit this regime: `library/patterns.jl` Grover diffusion (applied after H on freshly prepared qubits — but see #3), `block_encoding/prepare.jl` + `select.jl` on ancillas, `control/cases.jl` targets.
+2. **CSS self-dual X_L test symmetry.** Steane X_L = X^⊗7 and Y^⊗7 both flip |0⟩_L ↔ |1⟩_L. The existing `test_qecc.jl "X_L flips the logical bit"` test passes for either convention.
+3. **Grover may be silently wrong.** `library/patterns.jl:322,325` applies `X!` INSIDE the diffusion operator `H X (2|0⟩⟨0|-I) X H` where the qubits are in |+⟩. Y|+⟩ = i|-⟩, very different from X|+⟩ = |+⟩. test_grover.jl passes today — needs audit whether that's coincidental (e.g. from overall algorithm being tolerant, or from doubled use of X! cancelling) or correct-by-accident.
+4. **My own P2 Steane recovery tests passed** because injection and correction both use X!, so injected-Y + correction-Y cancel up to a Z residual, and Z on |0⟩_L or |1⟩_L is a global phase. If I had tested |+⟩_L or |-⟩_L inputs, the bug would manifest. My P1 syndrome-value assertions caught it because they expose the syndrome bits directly.
+
+### Recommended fix (not done this session)
+
+Swap the two definitions in src/gates.jl — literally interchange the
+right-hand sides of X! and Y!. One-line operation per gate. Risk profile:
+- `src/library/patterns.jl` Grover diffusion — **must re-test**. This is where superposition interference happens.
+- `src/qecc/steane.jl:249` my correction code — no net change (injection + correction both use X!, both shift together).
+- All other src/ sites — identical channel on freshly |0⟩ ancillas.
+
+Acceptance: `X!(|+⟩) → |+⟩`, `Y!(|+⟩) → |-⟩`, full regression clean,
+test_grover still green, and when 870's test file is wired in, all
+80 tests pass with zero code changes to steane.jl.
+
+### Beads state at end of session
+
+- **Filed**: `Sturm.jl-a1e` P1 bug — X!/Y! swap.
+- **Updated**: `Sturm.jl-870` in `open` again (was in_progress), with notes documenting WIP state and dependency on a1e. bd-tool bug (`wisp_dependencies` table missing) prevented formal `bd dep add` — dependency is in the notes field.
+- Other open beads unchanged from end of session 40.
+
+### Next-session pointer
+
+**Do a1e first.** It's a one-commit fix: swap X!/Y! in gates.jl, run
+test_grover + test_qecc + test_block_encoding for regressions, verify
+the channel-level assertions (X!(|+⟩) = |+⟩). Then add
+test_steane_syndrome.jl to runtests.jl, re-run — all 80 green. Then
+close both a1e and 870 in the same session.
+
+If a1e reveals that Grover was silently relying on the swapped
+convention, file an additional bead and take it one at a time.
+
+### Files touched this session
+
+- `src/qecc/steane.jl` +~100 LOC (three new exported functions, docstrings with paper references)
+- `src/Sturm.jl` +1 -1 (exports)
+- `test/test_steane_syndrome.jl` new, 190 LOC, 80 testsets (66 green, 14 red — not in runtests yet)
+- `WORKLOG.md` this entry
+
+No commits in `library/patterns.jl` or other modules this session — the
+Pauli fix is deferred to bead a1e under a separate commit with its own
+regression story.
+
+---
+
 ## 2026-04-21 — Session 40: discard! → ptrace! rename (close `diy`)
 
 Mechanical refactor — the channel-theoretic partial-trace primitive gets its
