@@ -80,6 +80,13 @@ include("qsvt/polynomials.jl")
 include("qsvt/phase_factors.jl")
 include("qsvt/circuit.jl")
 
+# Hardware backend (HardwareContext + IdealisedSimulator + protocol)
+include("hardware/protocol.jl")
+include("hardware/simulator.jl")
+include("hardware/transport.jl")
+include("hardware/hardware_context.jl")
+include("hardware/server.jl")
+
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()
     _set_omp_threads!()
@@ -161,5 +168,10 @@ export qsvt_combined_reflect!, oaa_amplify!
 # Bennett integration
 export apply_reversible!, apply_oracle!, build_wire_map, estimate_oracle_resources
 export oracle, quantum, QuantumOracle
+
+# Hardware backend
+export HardwareContext, IdealisedSimulator, with_hardware
+export AbstractTransport, InProcessTransport, TCPTransport
+export start_server, stop_server!
 
 end # module Sturm

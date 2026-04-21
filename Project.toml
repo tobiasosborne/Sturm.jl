@@ -11,6 +11,7 @@ FixedPointNumbers = "53c48c17-4a7d-5ca2-90c5-79b7896eea93"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 PNGFiles = "f57f5aa1-a3ce-4bc8-8ab9-96f992907883"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [compat]

@@ -41,4 +41,13 @@ using Sturm
     include("test_qint_bitwise.jl")
     include("test_qint_shifts.jl")
     include("test_implicit_cast.jl")
+    include("test_hardware_protocol.jl")
+    include("test_hardware_simulator.jl")
+    include("test_hardware_transport.jl")
+    include("test_hardware_context.jl")
+    include("test_hardware_recycle.jl")
+    include("test_hardware_rus.jl")
+    include("test_hardware_qecc.jl")
+    include("test_hardware_tcp.jl")
+    include("test_hardware_lifecycle.jl")
 end
