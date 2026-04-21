@@ -50,4 +50,6 @@ using Sturm
     include("test_hardware_qecc.jl")
     include("test_hardware_tcp.jl")
     include("test_hardware_lifecycle.jl")
+    include("test_cases.jl")
+    include("test_openqasm_cases.jl")
 end

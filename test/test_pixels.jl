@@ -116,7 +116,7 @@ using ColorTypes: RGB, N0f8
 
     @testset "measurement drain paints classical wire" begin
         ch = trace(2) do a, b
-            H!(a); _ = Bool(a)
+            H!(a); cases(a, () -> nothing)   # record measurement in IR (no branching)
             H!(b); H!(b)
             b
         end

@@ -48,8 +48,12 @@ function trace(f::Function, n_in::Int)
         error("trace: unexpected return type $(typeof(result))")
     end
 
+    # Auto-lower CasesNode via defer_measurements (strict: error on un-lowerable
+    # patterns like nested measurements). Channel.dag stays Vector{HotNode}.
+    lowered = defer_measurements(ctx.dag; strict=true)
+
     N_out = length(out_wires)
-    return Channel{n_in, N_out}(ctx.dag, in_wires, out_wires)
+    return Channel{n_in, N_out}(lowered, in_wires, out_wires)
 end
 
 """
@@ -88,6 +92,7 @@ function trace(f::Function, ::Val{W}) where {W}
         error("trace(Val{$W}): expected QInt{$W} return, got $(typeof(result))")
     end
 
+    lowered = defer_measurements(ctx.dag; strict=true)
     N_out = length(out_wires)
-    return Channel{W, N_out}(ctx.dag, in_wires, out_wires)
+    return Channel{W, N_out}(lowered, in_wires, out_wires)
 end

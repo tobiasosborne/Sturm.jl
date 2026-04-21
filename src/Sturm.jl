@@ -30,6 +30,7 @@ include("channel/pixels.jl")
 
 # Quantum control (must come before gates, passes, and library)
 include("control/when.jl")
+include("control/cases.jl")
 
 # Bennett.jl reversible circuit integration
 include("bennett/bridge.jl")
@@ -104,7 +105,7 @@ export QCoset, QRunway, QROMTable, QROMTableLarge
 export coset_add!, runway_add!, runway_decode!
 
 # Quantum control
-export when
+export when, cases, @cases
 export current_controls, with_controls, with_empty_controls
 
 # Gates (standard library, not primitives)

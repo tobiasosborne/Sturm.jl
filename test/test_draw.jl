@@ -104,7 +104,7 @@ using Sturm
     @testset "measurement renders with classical wire" begin
         ch = trace(1) do q
             H!(q)
-            _ = Bool(q)
+            cases(q, () -> nothing)   # record measurement in IR (no branching)
             nothing
         end
         s = Sturm.to_ascii(ch)
