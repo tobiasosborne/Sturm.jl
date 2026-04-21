@@ -48,6 +48,14 @@ function trace(f::Function, n_in::Int)
         error("trace: unexpected return type $(typeof(result))")
     end
 
+    # Scope-based cleanup (bead sv3): emit DiscardNodes for any wires allocated
+    # inside f that were never returned, measured, or discarded. Designated
+    # output wires are removed from the live set first so they are preserved.
+    for w in out_wires
+        filter!(!=(w), ctx.live)
+    end
+    cleanup!(ctx)
+
     # Auto-lower CasesNode via defer_measurements (strict: error on un-lowerable
     # patterns like nested measurements). Channel.dag stays Vector{HotNode}.
     lowered = defer_measurements(ctx.dag; strict=true)
@@ -91,6 +99,14 @@ function trace(f::Function, ::Val{W}) where {W}
     else
         error("trace(Val{$W}): expected QInt{$W} return, got $(typeof(result))")
     end
+
+    # Scope-based cleanup (bead sv3): emit DiscardNodes for any wires allocated
+    # inside f that were never returned, measured, or discarded. Designated
+    # output wires are removed from the live set first so they are preserved.
+    for w in out_wires
+        filter!(!=(w), ctx.live)
+    end
+    cleanup!(ctx)
 
     lowered = defer_measurements(ctx.dag; strict=true)
     N_out = length(out_wires)

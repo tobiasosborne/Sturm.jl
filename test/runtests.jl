@@ -52,4 +52,5 @@ using Sturm
     include("test_hardware_lifecycle.jl")
     include("test_cases.jl")
     include("test_openqasm_cases.jl")
+    include("test_autocleanup.jl")
 end

@@ -108,6 +108,15 @@ function deallocate!(ctx::HardwareContext, wire::WireID)
     push!(ctx.pending, op_discard(slot))
 end
 
+live_wires(ctx::HardwareContext) = collect(keys(ctx.wire_to_qubit))
+
+function cleanup!(ctx::HardwareContext)
+    # Don't attempt cleanup on a closed session — with_hardware / finalizer own close().
+    ctx.closed && return
+    _default_cleanup!(ctx)
+    return nothing
+end
+
 # ── Control stack ─────────────────────────────────────────────────────────────
 
 function push_control!(ctx::HardwareContext, wire::WireID)

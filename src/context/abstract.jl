@@ -121,6 +121,54 @@ emitting spurious controls on gates the physics says are unconditional.
 """
 with_empty_controls(f, ctx::AbstractContext) = with_controls(f, ctx, WireID[])
 
+# ── Scope-based cleanup (bead sv3) ────────────────────────────────────────────
+
+"""
+    live_wires(ctx::AbstractContext) -> Vector{WireID}
+
+Snapshot of wires currently allocated in `ctx` and not yet consumed.
+Returned as a fresh vector — `cleanup!` iterates while mutating the context.
+Ordering is implementation-defined but must be stable within a single call.
+
+Each backend implements this in terms of its own live-set representation:
+EagerContext/DensityMatrixContext/HardwareContext use `keys(wire_to_qubit)`;
+TracingContext maintains its own insertion-ordered `live::Vector{WireID}`.
+"""
+function live_wires(ctx::AbstractContext)
+    error("live_wires not implemented for $(typeof(ctx))")
+end
+
+"""
+    cleanup!(ctx::AbstractContext)
+
+Partial-trace every wire returned by `live_wires(ctx)`. Called automatically
+by the `@context` macro at block exit (in `finally`, so also on exception).
+
+Default implementation loops over `live_wires(ctx)` and calls `deallocate!`
+on each, catching per-wire errors into `@warn` — one bad wire does not poison
+the rest of cleanup. Backends can override for bulk-discard optimisations
+(e.g. `HardwareContext` short-circuits when `ctx.closed`).
+
+This is deterministic cleanup tied to scope (mirrors `lock(l) do … end` /
+`open(f, path) do stream … end`), NOT a Julia finalizer. Finalizer + FFI is
+unsafe (runs in arbitrary GC contexts); scope-driven cleanup is safe.
+"""
+function cleanup!(ctx::AbstractContext)
+    _default_cleanup!(ctx)
+end
+
+function _default_cleanup!(ctx::AbstractContext)
+    wires = live_wires(ctx)
+    for w in wires
+        try
+            deallocate!(ctx, w)
+        catch err
+            @warn "Sturm @context: cleanup failed for wire" wire=w exception=(err, catch_backtrace())
+        end
+    end
+    return nothing
+end
+
 # ── Context propagation via task-local storage ────────────────────────────────
 
 """
@@ -140,19 +188,51 @@ end
 
 Execute a block with `ctx` as the active Sturm context.
 Nested `@context` blocks override the outer context.
+
+Unconsumed quantum resources allocated inside the block are partial-traced at exit (bead sv3).
 """
 macro context(ctx_expr, body)
     quote
+        local ctx = $(esc(ctx_expr))
         local old = get(task_local_storage(), :sturm_context, nothing)
-        task_local_storage(:sturm_context, $(esc(ctx_expr)))
+        task_local_storage(:sturm_context, ctx)
+        local result
+        local body_threw = false
         try
-            $(esc(body))
+            try
+                result = $(esc(body))
+            catch
+                body_threw = true
+                rethrow()
+            end
         finally
+            # Scope-based cleanup of any unconsumed quantum resources (bead sv3).
+            # Runs BEFORE TLS restoration so deallocate! paths that consult
+            # current_context() still see their own ctx.
+            try
+                cleanup!(ctx)
+            catch cleanup_err
+                # Body exception wins — a cleanup failure during an unwind is
+                # almost always a consequence of the body's error, and losing
+                # the user's exception to expose ours is worse.
+                if body_threw
+                    @warn "Sturm @context: cleanup! failed during exception unwind" exception=(cleanup_err, catch_backtrace())
+                else
+                    # Restore TLS before rethrowing so the caller sees a sane stack.
+                    if old === nothing
+                        delete!(task_local_storage(), :sturm_context)
+                    else
+                        task_local_storage(:sturm_context, old)
+                    end
+                    rethrow(cleanup_err)
+                end
+            end
             if old === nothing
                 delete!(task_local_storage(), :sturm_context)
             else
                 task_local_storage(:sturm_context, old)
             end
         end
+        result
     end
 end
