@@ -4,6 +4,95 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 50: `6oc` criterion (d) — Toffoli-count trace bench
+
+Session 49 left the bead 6oc blocked on wall-clock perf. This session
+pivots to the CORRECT metric for the bead's criterion (d): **Toffoli count
+on TracingContext**, not wall-clock time on EagerContext. Per user
+insight: windowed arithmetic (impl E) trades qubits for gate count. On a
+statevector simulator, qubits dominate wall-clock; on a fault-tolerant
+quantum computer, Toffolis dominate spacetime volume. Different machines,
+different winners. The bead's acceptance criterion measures the FT cost.
+
+### The Toffoli bench
+
+`probe_toffoli_DE.jl` traces one controlled mulmod at (L, N, a) for both
+impls D and E, counts DAG nodes by (op type × control depth), and reports
+a weighted T-count proxy. No simulation — pure symbolic trace.
+
+Weights:
+  * CNOT (nc=0): 0 T
+  * Plain rotation (nc=0): 1 T
+  * CCX / Toffoli (nc=1): 7 T
+  * Controlled rotation (nc=1): 2 T
+  * Doubly-controlled rotation (nc=2): 6 T
+  * CCCX (nc=2 CXNode): 14 T
+
+### L-sweep at c_mul=2 (Session 50a)
+
+Tracking E/D T-proxy ratio as L grows:
+
+    L=4: 0.99   (essentially tied)
+    L=5: 0.82
+    L=6: 0.80
+    L=7: 0.70
+    L=8: 0.71
+
+Trend confirms E wins at T-count for L ≥ 5, with the gap widening with L.
+Mechanism: E has 10× more CCX (QROM overhead) but ~3× fewer controlled-Rz
+(windowing reduces adder work). At scale, the cRz savings dominate.
+
+### c_mul sweep at L=8 N=255 (Session 50b)
+
+`probe_toffoli_cmul_sweep.jl` — fixed L=8, sweep c_mul ∈ {1..5}:
+
+    c_mul | CCX  | cRz  | ccRz | T-proxy | E/D T-proxy
+    ------+------+------+------+---------+------------
+    D     |   24 | 2592 |  432 |    9344 | 1.000
+    E=1   |  174 | 1458 |  810 |    9861 | 1.055  (worse — windowing overhead, no cRz win)
+    E=2   |  238 |  882 |  450 |    6645 | 0.711
+    E=3   |  366 |  594 |  270 |    5709 | 0.611  ← optimal, 39% T-count saving
+    E=4   |  526 |  594 |  270 |    6829 | 0.731
+    E=5   |  766 |  450 |  180 |    7593 | 0.813
+
+**Optimal c_mul = 3** at L=8 without measurement-based uncompute. Beyond
+c_mul=3, the QROM CCX cost outgrows the cRz savings.
+
+### Bead criterion (d) status
+
+The bead target is ≤0.5× at L=8. Achieved WITHOUT MBU: **0.61×** at
+c_mul=3. Not fully met.
+
+Gap analysis: to reach 0.5× we need either larger L (trend line suggests
+≤0.5 around L=11-12) or **measurement-based uncompute** (`Sturm.jl-9ij`).
+MBU cuts QROM reverse cost from 2^c_mul - 1 CCX to ~√(2^c_mul). At
+c_mul=5 without MBU: 62 CCX per lookup pair. With MBU: 43 CCX. Saving
+~19 CCX per lookup at c_mul=5 — enough to make c_mul=5 the new optimum,
+likely bringing the ratio below 0.5×.
+
+### The core insight
+
+The "wall-clock regression" observed in Session 49 was misdirected —
+impl E is NOT slower than impl D in the metric that matters for FT
+hardware. On a simulator, it trades qubits (2L+3 → 3L+O(log L)) for
+Toffoli count, which shows up as statevector-size wall-clock. That's the
+simulator punishing impl E for the extra qubits, not impl E being worse.
+
+The honest story:
+  * Simulator wall-clock: impl D wins at all L (smaller statevector)
+  * Toffoli / T-count: impl E wins at L ≥ 5 (fewer logical gates)
+  * Qubit count: impl D wins (fewer qubits)
+
+These are **orthogonal metrics**. Choose based on target hardware.
+
+### Files touched
+
+  * `probe_toffoli_DE.jl` (new): L-sweep, D vs E, T-count proxy
+  * `probe_toffoli_cmul_sweep.jl` (new): c_mul optimisation at L=8
+  * `WORKLOG.md`: this entry
+
+---
+
 ## 2026-04-22 — Session 49: `6oc` solid stretch — perf fix + N=5 all-bases
 
 Stretches Session 48's N=5 statistical demonstration into a "solid"
