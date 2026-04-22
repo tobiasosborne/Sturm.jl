@@ -88,10 +88,17 @@ function _grow_state!(ctx::EagerContext)
     end
 
     old_dim = 1 << old_cap
+    new_dim = 1 << new_cap
     new_orkan = OrkanState(ORKAN_PURE, new_cap)
-    for i in 0:old_dim-1
-        new_orkan[i] = ctx.orkan[i]
-    end
+
+    # Bulk copy via unsafe_wrap + unsafe_copyto!. The old FFI-per-element loop
+    # (orkan_state_get for each i) made state growth O(2^n) FFI crossings,
+    # which was catastrophic past ~16 qubits inside _multi_controlled_gate!'s
+    # workspace allocation. See bead Sturm.jl-059.
+    old_amps = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, old_dim)
+    new_amps = unsafe_wrap(Array{ComplexF64,1}, new_orkan.raw.data, new_dim)
+    unsafe_copyto!(new_amps, 1, old_amps, 1, old_dim)
+    # Remaining entries [old_dim+1 : new_dim] stay 0 (state_init! zeroed them).
 
     ctx.orkan = new_orkan
     ctx.capacity = new_cap
@@ -211,11 +218,22 @@ function measure!(ctx::EagerContext, wire::WireID)::Bool
     dim = 1 << ctx.n_qubits
     mask = 1 << qubit
 
+    # Zero-copy view of the Orkan PURE-state amplitude buffer as a Julia
+    # Vector{ComplexF64}. Avoids 2^n FFI crossings per measurement — those
+    # per-element `orkan_state_get` calls dominated the cost at 20+ qubits
+    # (~100ms per measure vs ~1ms expected), blowing up
+    # _shor_mulmod_E_controlled! to 7–20 min per call (bead Sturm.jl-059).
+    #
+    # Safety: valid for the duration of this function only — `amps` aliases
+    # Orkan's internal buffer. No gate or allocation happens between
+    # unsafe_wrap and the last access, so the pointer stays live.
+    amps = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, dim)
+
     # Compute P(|1>)
     p1 = 0.0
-    for i in 0:dim-1
+    @inbounds for i in 0:dim-1
         if (i & mask) != 0
-            p1 += abs2(ctx.orkan[i])
+            p1 += abs2(amps[i + 1])
         end
     end
 
@@ -224,21 +242,21 @@ function measure!(ctx::EagerContext, wire::WireID)::Bool
 
     # Collapse: zero out inconsistent amplitudes, renormalize
     norm_sq = 0.0
-    for i in 0:dim-1
+    @inbounds for i in 0:dim-1
         bit_set = (i & mask) != 0
         if bit_set != outcome
-            ctx.orkan[i] = 0.0 + 0.0im
+            amps[i + 1] = 0.0 + 0.0im
         else
-            norm_sq += abs2(ctx.orkan[i])
+            norm_sq += abs2(amps[i + 1])
         end
     end
 
     if norm_sq > 0
         factor = 1.0 / sqrt(norm_sq)
-        for i in 0:dim-1
-            amp = ctx.orkan[i]
+        @inbounds for i in 0:dim-1
+            amp = amps[i + 1]
             if abs2(amp) > 0
-                ctx.orkan[i] = amp * factor
+                amps[i + 1] = amp * factor
             end
         end
     end
@@ -247,12 +265,12 @@ function measure!(ctx::EagerContext, wire::WireID)::Bool
     # If outcome was |1>, we need to move all surviving amplitudes from
     # bit=1 positions to bit=0 positions (effectively applying X to this qubit).
     if outcome
-        for i in 0:dim-1
+        @inbounds for i in 0:dim-1
             if (i & mask) == 0
                 # Swap (i, i|mask): surviving amps are at i|mask, move to i
                 j = i | mask
-                ctx.orkan[i] = ctx.orkan[j]
-                ctx.orkan[j] = 0.0 + 0.0im
+                amps[i + 1] = amps[j + 1]
+                amps[j + 1] = 0.0 + 0.0im
             end
         end
     end
