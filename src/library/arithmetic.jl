@@ -551,13 +551,25 @@ and the operation is deterministic per shot.
     bits stay `|0⟩`).
 
 # Preconditions (all fail-loud per Rule 1)
-  * `window | Ly`, `1 ≤ window ≤ Ly`.
+  * `1 ≤ window ≤ Ly`. `window` need not divide Ly — the final iteration
+    uses a smaller `window_last = Ly - i` bits if necessary (Phase C1).
   * `target.reg.ctx === y.ctx`.
   * `Ly < 62` (UInt64 margin on `2^i` during table construction).
 
-# Automatic control
-Reuses `qrom_lookup_xor!` and `add_qft_quantum!`, both of which
-auto-control under `when(…) do … end` via Sturm's control stack.
+# Controls (`ctrls` kwarg) — Beauregard pattern
+  * `ctrls = ()`      — unconditional (default).
+  * `ctrls = (c1,)`   — apply only to the quantum addition step; the
+    QFT/IQFT and QROM compute/uncompute run unconditionally and
+    self-cancel on the `c1=|0⟩` branch.
+
+  This is **NOT** equivalent to `when(c1) do plus_equal_product_mod!(…) end`.
+  The `when`-wrapped form puts `c1` on the control stack for every
+  primitive inside — including the QROM's Toffolis, which would then need
+  `_multi_controlled_cx!` workspace ancillae and blow Orkan's 30-qubit cap
+  at N=15, c_mul=2. The `ctrls` kwarg keeps those Toffolis at depth 1 and
+  still produces the correct channel (QFT·QFT⁻¹ = I, QROM·QROM = I).
+
+  Matches the same kwarg pattern used by [`modadd!`](@ref).
 
 # References
   * Gidney (2019) arXiv:1905.07682 §3.3.
@@ -568,7 +580,8 @@ auto-control under `when(…) do … end` via Sturm's control stack.
     `docs/physics/gidney_2019_approximate_encoded_permutations.pdf`.
 """
 function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
-                                  y::QInt{Ly}; window::Int) where {W, Cpad, Wtot, Ly}
+                                  y::QInt{Ly}; window::Int,
+                                  ctrls::Tuple = ()) where {W, Cpad, Wtot, Ly}
     check_live!(target); check_live!(y)
     target.reg.ctx === y.ctx ||
         error("plus_equal_product_mod!: target and y must share a context")
@@ -594,7 +607,7 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
     i = 0
     while i < Ly
         w = min(window, Ly - i)
-        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N)
+        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N, ctrls)
         i += w
     end
 
@@ -603,14 +616,23 @@ end
 
 # Helper: one iteration of the plus_equal_product_mod! sweep. Factored out
 # so each distinct window size (`w`) triggers its own Julia specialisation
-# via `Val(w)` dispatch. In practice only two values of w (the full window
-# and maybe one ragged-last window) are ever seen per top-level call.
+# via `Val(w)` dispatch.
+#
+# The `ctrls` kwarg follows the `modadd!` pattern: only the (quantum)
+# addition step needs to be controlled, not the self-inverse surroundings.
+#   qrom_lookup_xor! (compute) + qrom_lookup_xor! (uncompute) = I  unconditionally
+#   superpose! + interfere!                                    = I  unconditionally
+# so wrapping only `add_qft_quantum!` in the controls preserves the
+# ctrl=|0⟩ identity branch while avoiding a full when(ctrl) cascade over
+# the QROM Toffolis (which would bump them to CCCX via _multi_controlled_cx!
+# and cost workspace ancillae past Orkan's 30-qubit cap).
 @inline function _pep_mod_iter!(target::QCoset{W, Cpad, Wtot},
                                   k_mod_N::Int,
                                   y::QInt{Ly},
                                   i::Int,
                                   ::Val{w},
-                                  N::Int) where {W, Cpad, Wtot, Ly, w}
+                                  N::Int,
+                                  ctrls::Tuple) where {W, Cpad, Wtot, Ly, w}
     ctx = target.reg.ctx
     n_entries = 1 << w
 
@@ -629,13 +651,15 @@ end
     tbl = QROMTable{w, Wtot}(entries, N)
 
     scratch = QInt{Wtot}(0)
-    qrom_lookup_xor!(scratch, y_win, tbl)        # scratch = T[y_win]
+    qrom_lookup_xor!(scratch, y_win, tbl)        # unconditional — scratch = T[y_win]
 
-    superpose!(target.reg)
-    add_qft_quantum!(target.reg, scratch)
-    interfere!(target.reg)
+    superpose!(target.reg)                       # unconditional
+    _apply_ctrls(ctrls) do                       # only the add is controlled
+        add_qft_quantum!(target.reg, scratch)
+    end
+    interfere!(target.reg)                       # unconditional
 
-    qrom_lookup_xor!(scratch, y_win, tbl)        # uncompute → |0⟩
+    qrom_lookup_xor!(scratch, y_win, tbl)        # unconditional — scratch → |0⟩
     ptrace!(scratch)
     return nothing
 end
