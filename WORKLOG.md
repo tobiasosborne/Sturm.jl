@@ -4,6 +4,160 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 52: `goi-type` (Sturm.jl-9aa) — 3+1 proposer round, implementer deferred
+
+Claimed `Sturm.jl-9aa` (QMod{d} type + EagerContext prep primitive — the
+foundational brick of the qudit epic). This is a core-type change, so
+CLAUDE.md Rule 2 (3+1 protocol) applies: 2 independent proposer subagents
+dispatched in parallel, neither seeing the other's output. Session
+stopped after proposers reported — implementer runs in next session per
+user instruction.
+
+### Proposers converged hard
+
+Both designs land at `/tmp/qmod_design_A.md` (596 lines) and
+`/tmp/qmod_design_B.md` (548 lines); copied to `docs/design/
+qmod_design_proposer_{a,b}.md` for durability (/tmp won't survive).
+
+**Wire layout**: both picked `mutable struct QMod{d, K} <: Quantum`
+holding `wires::NTuple{K, WireID}` where `K = ⌈log₂ d⌉` is a **derived
+hidden second type parameter** (same pattern QCoset uses at
+`src/types/qcoset.jl:45-50` with its `{W, Cpad, Wtot}` trick — user
+only writes `QMod{d}`, Julia figures K from d via an inner constructor).
+At d=2 this collapses to K=1 (single wire), recovering the QBool shape
+exactly — Rule 11 preserved.
+
+**Context-d strategy**: both picked **compile-time d via the type
+parameter**, no `wire_dims::Dict` on any context, no new
+`allocate_group!` on AbstractContext. Mixed-d operations (`QMod{3} ⊻=
+QMod{5}`) error at Julia dispatch time rather than runtime dict lookup —
+loud-fail is structural, matches Rule 1.
+
+**Leakage strategy**: both picked a 3-layer approach:
+  1. **Trust prep** — fresh wires from `allocate!` are always |0⟩, always
+     in-subspace. No runtime check at prep time.
+  2. **Proof obligation on primitive authors** — each primitive
+     (Ry, Rz, θ₂, θ₃, SUM in later beads) must preserve the d-level
+     subspace by construction. Documented as a TODO header in the 9aa
+     type file; referenced in each primitive bead.
+  3. **Unconditional check at measurement** — inside `Int(::QMod{d})`,
+     if the observed bitstring is ≥ d, fail loud with a clear message.
+     Optional amplitude-buffer sweep behind a `:sturm_qmod_check_leakage`
+     TLS flag (mirrors `with_silent_casts` / `with_orkan_*` precedents).
+
+This convergence across two independent agents is strong evidence the
+design is right. The implementer can lift it directly.
+
+### Two tradeoffs flagged (implementer's call, but my leans below)
+
+**R1. `Base.Bool(::QMod{2})` interop — does it exist?**
+  * Proposer A's lean: NO — strict non-interop matches survey §8.5
+    ("QBool and QMod{2} are distinct types by design, same reason Julia
+    keeps `Bool` and `Mod{2}` separate — logical vs. arithmetic API").
+  * Cost of NO: `Int(q) == 1` at every measurement site of a `QMod{2}`.
+  * My lean: agree with A, no interop. Add a docstring pointing users to
+    `QBool` if they want logical ops at d=2.
+
+**R2. Leakage-guard default — on or off?**
+  * Proposer B's flag: default-off keeps tight-loop performance clean
+    (no O(2^n) amp sweep per measurement); default-on catches silently-
+    buggy primitives during prototyping but hurts hot paths (Shor
+    iterations, QFT loops).
+  * My lean: **default-off + easy TLS toggle**. Mirror `with_silent_
+    casts`. Primitives are supposed to be correct by construction (layer
+    2 above); the sweep is for debugging. `with_qmod_leakage_checks(do
+    ... end)` wraps the block.
+
+### Bikeshed: K vs W naming for derived type param
+
+Proposer A chose `K`, Proposer B chose `W`. Both work. **Implementer
+should use `K`**: rationale is that `W` will be reused with a DIFFERENT
+meaning in the future `QInt{W, d}` bead (Sturm.jl-dj3 — where W = number
+of digits, not qubits-per-digit). Using K for QMod{d} avoids a name
+collision when QInt{W,d} composes QMod wires as
+`NTuple{W, QMod{d, K}}`. Also: K is the first letter of Kubit-encoding
+storage width, a weak mnemonic.
+
+### What the implementer needs to do (next session's brief)
+
+Scope:
+  * `src/types/qmod.jl` (new) — the type + prep + Bool/Int measurement.
+  * `src/types/quantum.jl` — update the "future QDit{D}" comment at
+    `src/types/quantum.jl:4-5` to `QMod{d}`.
+  * `src/Sturm.jl` — export `QMod`.
+  * `test/test_qmod.jl` (new) — TDD FIRST, implement SECOND.
+  * Possibly `src/context/eager.jl` if either proposer's design needs a
+    context-side hook (check both designs — if neither requires it,
+    skip).
+
+TDD tests to write FIRST (per Rule 10):
+  1. `QMod{3}(ctx)` constructs, type-checks, is live, deallocates on
+     ptrace.
+  2. `Int(QMod{3}(ctx)) == 0` — prep'd at |0⟩, measurement returns 0.
+  3. `QMod{4}(ctx)` — d=4 power-of-2, K=2, no leakage states.
+  4. `QMod{3}(ctx)` — d=3 in 2 qubits (K=2), leakage check catches a
+     synthetic |11⟩ corruption.
+  5. Backwards-compat: full `test_types_qbool.jl` (or equivalent)
+     passes unchanged. All `test_qint_*` pass unchanged.
+  6. `@context EagerContext() begin q = QMod{3}() end` — TLS context.
+  7. `ptrace!` / `discard!` work on QMod{3}.
+  8. `Base.convert(::Type{Int}, q::QMod{3})` emits the P2 implicit-cast
+     warning exactly once per source location.
+
+Rules to honour:
+  * Rule 0 — update WORKLOG when you finish.
+  * Rule 1 — fail fast on leakage, fail fast on mixed-d (even though SUM
+    is a later bead, the error site should be tight-scoped).
+  * Rule 5 — docstrings: WHAT / WHY / WHICH reference.
+  * Rule 10 — tests before code.
+  * Rule 14 P5 — QMod{d} is user-facing; no raw wire manipulation in
+    public API.
+
+### Tradeoff the implementer should NOT resolve
+
+**P9 / Bennett compatibility (classical_type for QMod{d}).** Both
+proposers flagged this honestly: Bennett currently compiles against
+power-of-2 integer types, not modular arithmetic for arbitrary d. This
+is a real gap (`oracle(f, q::QMod{3})` wouldn't Just Work). Implementer
+should stub `classical_type(::Type{QMod{d}}) where {d}` with a clear
+`error("Bennett compilation not yet supported for QMod{d>2}; see bead
+...")` — file a follow-on bead "QMod Bennett interop — modular
+arithmetic in reversible IR" for later scope.
+
+### Files for next session
+
+Before writing code, the implementer reads:
+  * `docs/design/qmod_design_proposer_a.md` (596 lines, NTuple + compile-
+    time d + 3-layer leakage)
+  * `docs/design/qmod_design_proposer_b.md` (548 lines, same but different
+    leakage-default wording)
+  * `docs/physics/qudit_magic_gate_survey.md` §8 (locked design decisions)
+  * `src/types/qbool.jl` + `src/types/qint.jl` + `src/types/qcoset.jl`
+    (templates — QCoset's hidden-type-param trick is the key pattern)
+
+### `bd dolt push` STILL BLOCKED
+
+Secret-scanning on a historical OAuth blob (same token across multiple
+dolt blobs). This session's `bd dolt push` attempt failed with the
+same unblock URL pointing at commit `2ebc38db890ec54c54cc64bc73024eff7c5e4ce3`
+path `vfupa118n12u09cfs5ppi791p43sh6s0.darc:7715`. User action required
+at `https://github.com/tobiasosborne/Sturm.jl/security/secret-scanning/
+unblock-secret/3CitIms2IwRs2Ixan0CiUzUFuLk`.
+
+Until unblocked, beads are local-only. Before starting 9aa implementation
+in the next session, the implementer should re-attempt `bd dolt push`
+(in case user cleared the block) and verify via `git ls-remote origin
+'refs/dolt/*'` that the remote ref updates.
+
+### Files touched this session
+
+  * `docs/design/qmod_design_proposer_a.md` (new, 596 lines)
+  * `docs/design/qmod_design_proposer_b.md` (new, 548 lines)
+  * `WORKLOG.md` — this entry
+  * `Sturm.jl-9aa` bead claimed (local dolt, not synced to remote)
+
+---
+
 ## 2026-04-22 — Session 51: `goi` qudit research rounds 1+2 — primitives + T-gate / MSD
 
 Claim `Sturm.jl-goi` (P7 dimension lift, qudit d>2 support). Pure-research
