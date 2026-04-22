@@ -4,6 +4,166 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 43: Steane 870 P3 — `encode(ch, Steane())` with interleaved syndrome correction
+
+Close bead `870`. P1 (syndrome_extract!) and P2 (correct! + decode_with_correction!)
+already shipped in session 41 and went 80/80 after session 42's X!/Y! fix;
+P3 wires continuous distance-3 protection into the higher-order
+`encode(ch::Channel, ::Steane)` dispatch — the PRD P6 endpoint.
+
+### Ground truth (Steane 1996 §3.3–3.5, docs/physics/steane_1996.pdf)
+
+- Eq. 16–17: parity-check matrices H_C and H_{C+} for the [[7,1,3]] CSS
+  code (same supports as P1/P2 — the code is self-dual).
+- p. 21 (alternative approach): "A set of n - k₁ (respectively n - k₂)
+  ancilla qubits is introduced, and the error syndrome is stored into
+  this ancilla by means of multiple CNOT operations… The ancilla is
+  measured… and the result used to calculate which qubits in the
+  quantum computer are to undergo a NOT operation."
+- Theorem 6 (p. 21–22): error correction in basis 1 followed by basis
+  2 is sufficient to restore the encoded state from any single-qubit
+  arbitrary error.
+
+### The P3 blocker
+
+`syndrome_extract!` calls `Bool(anc)` directly → errors loudly in
+TracingContext (session 38 decision: raw `Bool(q)` inside trace is a
+P2 anti-pattern and error-level). `encode(ch, Steane())` wraps its
+body in `trace(In) do … end`, so it creates a TracingContext — the
+P1 pipeline can't be used as-is.
+
+Choices: (a) add `cases()` nesting (3 deep per basis, 16 leaves); (b)
+go fully coherent — no measurement — and use `when()` with X!-sandwich
+for negative polarity. Picked (b): same CNOT syndrome protocol, but
+instead of "measure + classical correction" do "coherent multi-
+controlled X/Z on phys[j] from 3 ancillas encoding binary(j)", then
+`ptrace!` the ancillas. Fewer IR nodes than a nested-cases tree, no
+ObserveNode emission needed, and works identically in every concrete
+context because `when()` + `ptrace!` are universal.
+
+### Correctness sketch (weight-≤1 error input, per-basis)
+
+1. 3 ancillas in |0⟩ (or |+⟩⊗3 for X-type). CNOTs fan data parity
+   into ancillas: ancilla register = |binary(error_location)⟩
+   deterministically (0 for no error).
+2. For each candidate j=1..7, controlled-X/Z on phys[j] gated by
+   ancs==binary(j). Exactly one branch fires; correction applied.
+3. Post-correction, data & ancillas are in a **product state** —
+   ancilla still holds |binary(k)⟩ but is classical and uncoupled
+   from the (now corrected) data. `ptrace!` acts on a classical
+   bitstring; the data reduced density matrix is the intended logical
+   state. Verified at 500 samples per error location for X on |0⟩_L
+   and |1⟩_L, Z on |+⟩_L (H-sandwich decodes to |0⟩), and Y on |0⟩_L
+   — all 7×4×500 = 14,000 trials deterministic.
+
+### Architecture
+
+- `src/qecc/steane.jl`: added `syndrome_correct!(NTuple{7, QBool})`
+  (~100 LOC) + internal `_when_ancs_equal!(ancs, j, action)` helper
+  for the multi-controlled polarity-inverted control idiom.
+- `src/qecc/channel_encode.jl`: added `correct::Bool=true` kwarg to
+  `encode(ch, code)`; interleaves `_syndrome_correct_all_blocks!` after
+  every transversal DAG node. A Steane-specialised helper
+  `_syndrome_correct_all_blocks!(::AbstractContext, ::Steane, wire_map)`
+  dispatches on the code to call `syndrome_correct!`.
+- `src/Sturm.jl`: export `syndrome_correct!`.
+
+### `correct=false` opt-out — preserving the structural tests
+
+The pre-P3 `test_qecc.jl` assertions on encoded-channel DAG structure
+(`length(ch_enc.dag) == 54`, `rz_pi_count == 13`, `cx_nodes_enc == 51`,
+`n_discard == 6`) are purely about transversalisation. With P3's
+interleaved syndrome correction these counts balloon — the same single-
+`X!` channel now encodes to 702 nodes (vs 54 bare). Added a
+`correct::Bool=true` kwarg so:
+- default call `encode(ch, Steane())` → **corrected channel** (bead spec).
+- `encode(ch, Steane(); correct=false)` → bare transversal, old tests
+  still assert structure directly.
+
+This is consistent with PRD P6 framing (the higher-order `encode` IS
+the error-correcting wrapper by default) while keeping
+transversalisation visibly testable in isolation.
+
+### Gotchas
+
+1. **NTuple immutability bit me again.** Wrote
+   `sx_ancs[k] ⊻= physical[i]` → MethodError on `setindex!(::Tuple, …)`.
+   Same bug pattern the session-41 `syndrome_extract!` had already
+   documented a workaround for on the data side ("raw `a ⊻ b` is
+   in-place on `a`, evaluate for the side effect and discard"). Fix:
+   use `sx_ancs[k] ⊻ physical[i]` (no `=`) — the primitive mutates
+   the target (= `sx_ancs[k]`) in place and returns it; the binding
+   doesn't need to change.
+2. **Cwd drift through `cd` in subshells.** When I ran
+   `cd .beads/embeddeddolt/Sturm_jl && dolt log …` in a Bash tool call
+   earlier this session, subsequent calls retained the new cwd — later
+   `julia --project …` ran from inside the dolt repo and couldn't
+   find `test/`. Fix: prefix with `cd /home/tobias/Projects/Sturm.jl`
+   or use explicit absolute paths. Worth noting for future me.
+3. **Node budget under `correct=true`.** A single logical `X!` encodes
+   to 702 DAG nodes post-P3 (vs 54 bare). Per-block syndrome correction
+   overhead is ~648 nodes — dominated by the 7 `_when_ancs_equal!`
+   expansions (each has up to 3 X!-sandwich pairs + nested when body).
+   If `correct=true` is the hot path, bead `7pz` (atomic XNode IR)
+   and a future "peephole for 3-ancilla multi-control → native MCX"
+   would both help. Not urgent for v0.1 correctness.
+
+### Test coverage added (all 500-sample statistical where applicable)
+
+`test/test_steane_channel_correct.jl` — 437 assertions across 11
+testsets, all green:
+
+- `syndrome_correct!` identity on error-free |0⟩_L / |1⟩_L (200 trials each)
+- `syndrome_correct!` recovers X error on |0⟩_L / |1⟩_L at each of 7
+  locations (500 trials × 7 × 2 = 7000 trials)
+- `syndrome_correct!` recovers Z error on |+⟩_L via H-sandwich
+  discriminator (500 × 7 = 3500 trials)
+- `syndrome_correct!` recovers Y error on |0⟩_L (500 × 7 = 3500 trials)
+- `encode(id-channel, Steane())` + `encode(X-channel, Steane())` build
+  without error — the TracingContext-compat property.
+- DAG `n_discard >= 12` (6 from `decode!` + ≥6 from syndrome ancillas)
+- `syndrome_correct!` runs inside `trace(1) do q; … end` without
+  triggering the P2 `Bool(q)` guard — the whole reason for P3.
+
+### Regressions
+
+Adjacent test files: test_qecc (1175, 4 structural-count assertions
+migrated to `correct=false`), test_steane_syndrome (80), test_channel
+(44), test_cases (36), test_tracing_deep_when (18), test_hardware_qecc
+(80 + 80 + …). ~1,500 adjacent green.
+
+### Files touched this session
+
+- `src/qecc/steane.jl` — added `syndrome_correct!` + helper (~100 LOC).
+- `src/qecc/channel_encode.jl` — `correct::Bool=true` kwarg,
+  `_syndrome_correct_all_blocks!` dispatch (~40 LOC).
+- `src/Sturm.jl` — export `syndrome_correct!`.
+- `test/test_steane_channel_correct.jl` — new, 155 LOC, 437 asserts.
+- `test/test_qecc.jl` — 3 testsets updated to `correct=false` (+ comment).
+- `test/runtests.jl` — wire the new test file.
+- `WORKLOG.md` — this entry.
+
+### Beads state
+
+- **Closed**: `Sturm.jl-870` (P1 + P2 shipped session 41; P3 shipped
+  this session). The PRD-P6 encode-with-correction endpoint is live.
+- `35s`, `9g5`, `7pz` remain open (audit hardening + atomic-XNode design,
+  filed session 42).
+
+### Next-session pointer
+
+Ready work in priority order (from `bd ready`):
+- **`6oc` P1**: shor_order_E — windowed arithmetic mulmod (Gidney-Ekerå
+  2021 §2.5, Fig 2). Fresh thread; independent of current QECC work.
+- **`35s`/`9g5` P3**: audit-hardening tests for Grover / block-encoding
+  invariance, cheap while X↔Y invariance reasoning is still loaded.
+- **`npd` P2**: shor_factor_EH_semi — Mosca-Ekert semi-classical iQFT.
+- **`di1` P2**: Backend scaffolding (tensor-network / hardware).
+- **`7pz` P3**: atomic XNode in IR — relevant if the 702-node encoded
+  channel starts causing pain in passes or QASM emission.
+
+---
+
 ## 2026-04-22 — Session 42: fix the X!/Y! swap (bead `3yz`), unblock 870, wire tests
 
 Ship the Pauli-swap fix that session 41 had deferred. (Session 41's

@@ -37,23 +37,33 @@ const _CLIFFORD_ANGLE_TOL = 1e-10
 end
 
 """
-    encode(ch::Channel{In, Out}, code::AbstractCode) -> Channel{In, Out}
+    encode(ch::Channel{In, Out}, code::AbstractCode; correct::Bool=true) -> Channel{In, Out}
 
 Wrap a logical channel in the given error-correcting code (PRD P6). The
 result is a new Channel with the same logical input/output signature,
 but internally every logical qubit is represented as a code-block of
 physical qubits, and every logical gate is implemented transversally.
 
+With `correct=true` (default, bead 870 P3) a coherent `syndrome_correct!`
+pass is interleaved after each logical gate on every block, giving
+continuous distance-3 protection (Steane 1996 §3.3–3.5 Theorem 6:
+correction in both bases after any single-qubit error is sufficient).
+
+With `correct=false` the channel is the bare transversal replay — useful
+for inspecting the logical-gate-to-physical-gate mapping without the
+syndrome ancillas / coherent corrections / ancilla discards.
+
 Currently supports Clifford unitary channels only. See the file header
 for v0.1 scope and v0.2 deferred work.
 
-# Example
+# Examples
 ```julia
 ch = trace(1) do q; X!(q); q; end          # Channel{1,1}, logical X
-ch_enc = encode(ch, Steane())              # Channel{1,1}, transversal X on [[7,1,3]]
+ch_enc = encode(ch, Steane())              # with syndrome correction
+ch_raw = encode(ch, Steane(); correct=false)  # bare transversal
 ```
 """
-function encode(ch::Channel{In, Out}, code::AbstractCode) where {In, Out}
+function encode(ch::Channel{In, Out}, code::AbstractCode; correct::Bool=true) where {In, Out}
     _assert_clifford_unitary(ch)
 
     # Build the encoded channel by tracing a new circuit in a fresh context.
@@ -74,10 +84,15 @@ function encode(ch::Channel{In, Out}, code::AbstractCode) where {In, Out}
             wire_map[ch.input_wires[i]] = ntuple(j -> blocks[i][j].wire, length(blocks[i]))
         end
 
-        # Replay each node of the original DAG transversally.
+        # Replay each node of the original DAG transversally. If `correct`,
+        # interleave a coherent syndrome_correct! on every block after each
+        # logical gate (bead 870 P3) — continuous distance-3 protection, so
+        # any single-qubit error is corrected before the next transversal
+        # gate can propagate it across blocks.
         ctx = current_context()
         for node in ch.dag
             _emit_transversal!(ctx, node, wire_map)
+            correct && _syndrome_correct_all_blocks!(ctx, code, wire_map)
         end
 
         # Decode each logical output.
@@ -180,4 +195,26 @@ function _emit_transversal!(ctx::AbstractContext, n::CXNode,
     for i in 1:length(c_wires)
         apply_cx!(ctx, c_wires[i], t_wires[i])
     end
+end
+
+# ── Interleaved syndrome correction (bead 870 P3) ────────────────────────────
+
+"""
+Apply a coherent syndrome-correction pass to every logical block in
+`wire_map`. Called by `encode()` after each transversal gate emission so
+that single-qubit errors are caught before the next logical op propagates
+them across blocks.
+
+Steane-specific for now (the only code in v0.1). Extending to other codes
+means adding a `syndrome_correct!` dispatch on the code + block type.
+"""
+function _syndrome_correct_all_blocks!(ctx::AbstractContext, ::Steane,
+                                       wire_map::Dict{WireID, Tuple{Vararg{WireID}}})
+    for (_, phys_wires) in wire_map
+        length(phys_wires) == 7 || error(
+            "encode(::Channel, ::Steane): block has $(length(phys_wires)) wires, expected 7")
+        block = ntuple(i -> QBool(phys_wires[i], ctx, false), 7)
+        syndrome_correct!(block)
+    end
+    return nothing
 end
