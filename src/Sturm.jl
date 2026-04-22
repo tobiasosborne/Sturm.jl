@@ -120,7 +120,7 @@ export add_qft!, sub_qft!, add_qft_quantum!, sub_qft_quantum!,
        modadd!, mulmod_beauregard!
 
 # Windowed arithmetic (Gidney 2019 arXiv:1905.07682, GE21 arXiv:1905.09749 §2.5)
-export plus_equal_product!
+export plus_equal_product!, plus_equal_product_mod!
 
 # Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
 export oracle_table, qrom_lookup_xor!
