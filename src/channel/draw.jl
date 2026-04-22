@@ -575,8 +575,11 @@ end
 
 function _gate_label(n::RyNode)
     θ = n.angle
-    _isclose(θ,  π) && return "X"
-    _isclose(θ, -π) && return "X"
+    # Ry(π) = -iY up to global phase → channel is Y. X requires Rz(π)·Ry(π).
+    # Single-node pattern match → "Y"; the two-node Rz(π)→Ry(π) sequence that
+    # constitutes X! is not pattern-recognised here (see bead Sturm.jl-7pz).
+    _isclose(θ,  π) && return "Y"
+    _isclose(θ, -π) && return "Y"
     return "Ry(" * _fmt_angle(θ) * ")"
 end
 

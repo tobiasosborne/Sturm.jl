@@ -4,6 +4,169 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 42: fix the X!/Y! swap (bead `3yz`), unblock 870, wire tests
+
+Ship the Pauli-swap fix that session 41 had deferred. (Session 41's
+bead `a1e` never actually reached the dolt remote — the local filing
+didn't land, so I refiled as `Sturm.jl-3yz` with the full reasoning
+plus the downstream blast-radius analysis, then dep'd `Sturm.jl-35s`
+(Grover/phase_flip audit) and `Sturm.jl-9g5` (block-encoding audit)
+underneath it, plus `Sturm.jl-7pz` for the eventual atomic-XNode
+design question.)
+
+### Empirical verification (pre- and post-fix)
+
+Wrote `/tmp/verify_pauli.jl` — builds a DensityMatrixContext, prepares
+a generic ρ via raw primitives (Ry + Rz + CNOT, avoiding H!/X!/Y! to
+prevent self-reference), reads ρ directly from `ctx.orkan[r,c]`, applies
+each gate in src/gates.jl, and compares ρ_after against
+`U_k · ρ_before · U_k'` for every candidate U ∈ {I, X, Y, Z, H, S, T}.
+
+Pre-fix: for every (n ∈ 1..5, target ∈ 0..n-1) — 15 configs each for
+X! and Y! — X! matched the Y channel at ≤1e-16 and the X channel at
+0.78..1.36; Y! matched X at ≤1e-16 and Y at 0.78..1.36. The Z/S/T/H
+gates matched their intended channels at machine precision.
+
+Post-fix: 90/90 correct (best-match == expected AND err < 1e-8).
+
+### The fix
+
+One line per gate in `src/gates.jl`:
+
+- `X!(q::QBool) = (q.φ += π; q.θ += π; q)` — Rz(π)·Ry(π) = (−iZ)(−iY) =
+  −ZY = iX, channel XρX. Now two primitives (was one).
+- `Y!(q::QBool) = (q.θ += π; q)` — Ry(π) = −iY, channel YρY. Now one
+  primitive (was two).
+
+### Blast radius: five invariance proofs saved the downstream code
+
+Every `src/` caller of `X!` (Grover `_diffusion!`, `phase_flip!`,
+block_encoding `_rotation_tree!`, block_encoding `_flip_for_index!`,
+Steane `correct!`) was either (a) on a freshly-prepared `|0⟩`,
+(b) inside an `X! q; when(q); X! q` control-polarity-flip sandwich, or
+(c) inside an `X-MCZ-X` diagonal-conjugation sandwich. None needed code
+changes, for two distinct algebraic reasons:
+
+1. **Sandwich around `when(q)`**: `Y|0⟩⟨0|Y = |1⟩⟨1| = X|0⟩⟨0|X`, so
+   the control polarity flips identically under either convention.
+2. **Sandwich around diagonal MCZ**: For any diagonal D,
+   `Y^⊗W · D · Y^⊗W = X^⊗W · D · X^⊗W`. Direct computation: Y = iXZ
+   so Y^⊗W D Y^⊗W = i^W(-i)^W · (XZ)^⊗W D (XZ)^⊗W, and the Z factors
+   commute through the diagonal to cancel. So Grover diffusion
+   and phase_flip! are literally unchanged.
+
+That's why `test_grover` (284/284), `test_patterns` (92/92), and
+`test_block_encoding` (63/63) passed both before AND after the fix.
+Beads `35s` and `9g5` capture hardening tests that would fail if the
+invariance ever breaks — the invariance-preserving patterns are
+load-bearing and deserve explicit coverage, not silent reliance.
+
+### The things the fix DID break (and how I updated them)
+
+1. **`src/channel/draw.jl:576-581`** — the single-node labeler mapped
+   `RyNode(π) → "X"`. That was a lie pre-fix; now it reads `"Y"`. The
+   actual X channel is Rz(π)→Ry(π), two adjacent nodes on one wire,
+   which the labeler doesn't pattern-match (deferred to bead `7pz`).
+   Test updates: `test_draw.jl:136, 101`.
+
+2. **`test_qecc.jl:143-154`** — logical-X DAG structure. Was
+   `length(ch.dag) == 1` + `ch.dag[1] isa RyNode`. Now 2 nodes
+   (Rz + Ry). The encoded-channel total goes from 47 (17+7+17+6) to
+   54 (17+14+17+6 — transversal X now contributes 7×2=14 nodes).
+
+3. **`test_gates.jl "X! flips"`** — shallow test: `X!(QBool(0))` produces
+   `Bool(q) == true`, which passes for X OR Y (both flip |0⟩). Added
+   three discriminator testsets:
+   - `H; X!; H` on `|0⟩` → Bool == false (H·X·H = Z).
+   - `H; Y!; H` on `|0⟩` → Bool == true (H·Y·H = −Y).
+   - `X!; Y!; Z!` on `|0⟩` → Bool == false (composes to ±iI).
+
+4. **`Sturm-PRD.md:267`** — documented the correct definitions. Also
+   added Y! (was absent from the PRD derived-gates table).
+
+5. **`test/runtests.jl`** — wired `test_steane_syndrome.jl`. It was
+   held out at end of session 41 (14/80 red). Post-fix: 80/80.
+
+### Full regression snapshot (targeted, per device-performance memory)
+
+Foundational: primitives 711, bell 2002, teleportation 1002. Gates 904
+(strengthened). QECC 1175. Steane syndrome 80. Patterns 92. Draw 53.
+Cases 36. Channel 44. Density-matrix 1753. Grover 284. Block-encoding
+63. Hardware-QECC 80+. OpenQASM-cases 17. ~9,200 assertions total, all
+green.
+
+### Gotchas
+
+1. **Session 41's "filed" bead `a1e` was not actually in dolt.**
+   `bd search` / `bd list` / `bd show Sturm.jl-a1e` all turned up
+   nothing. Worklog entry said "bd-tool bug prevented bd dep add —
+   dependency is in the notes field", but the bead itself never
+   reached the remote either. Refiled as `3yz`. Lesson: if the
+   worklog narrates a bead that matters, future-me should `bd show`
+   it to confirm it exists before trusting the pointer.
+
+2. **`bd dolt push` autopush failed on every bead create today**
+   (non-fast-forward). Local is ahead of remote for beads. Will run
+   the merge recipe (stash-commit + fetch + pull) at session close —
+   stored memory has both the merge and annihilate recipes. This is
+   normal cross-device drift, not a bug.
+
+3. **Grover really is invariant.** Session 41's WORKLOG flagged
+   `library/patterns.jl:322,325` as "may be silently wrong" — "Y|+⟩
+   = i|-⟩, very different from X|+⟩ = |+⟩". True for bare X vs Y on
+   |+⟩, but in the diffusion the X's are NOT applied to |+⟩ states
+   in isolation; they conjugate the multi-controlled Z which is
+   diagonal. Y conjugation of diagonal = X conjugation of diagonal.
+   The session-41 concern was correct-to-worry-about but the algebra
+   works out. Test coverage (bead `35s`) will protect against a
+   future refactor that removes this invariance.
+
+4. **`test_gates "X! flips"` was a shallow test.** Flipping |0⟩ is
+   true for X, Y, iX, −iY, … — any unitary with off-diagonal ±1s on
+   the computational basis. This is why session 41's 40+-session
+   drift went undetected there. Strengthened with H-sandwich
+   discriminators. General lesson: gate tests on `|0⟩`-only inputs
+   cannot distinguish X from Y (both map |0⟩↔|1⟩ up to phase).
+
+5. **`X!` is now two primitives.** Any future DAG-structure
+   assertion in tests needs to account for this. Search
+   `length.*\.dag.*==` + any context using `X!` before adding such
+   assertions. Bead `7pz` captures the option to restore atomicity
+   via a dedicated XNode in the IR.
+
+### Files touched this session
+
+- `src/gates.jl`: X!/Y! swap + expanded docstrings.
+- `src/channel/draw.jl`: `RyNode(π)` labels as `"Y"` (was `"X"`).
+- `test/test_gates.jl`: added 3 discriminator testsets (+~30 LOC).
+- `test/test_qecc.jl`: DAG-count updates for logical-X (47→54, 1→2).
+- `test/test_draw.jl`: label expectation `"X"`→`"Y"` (2 sites).
+- `test/runtests.jl`: wired `test_steane_syndrome.jl`.
+- `Sturm-PRD.md`: fixed derived-gates table; added Y!.
+- `WORKLOG.md`: this entry.
+
+### Beads state
+
+- **Closed**: `3yz` (P1 bug, this session).
+- **Still open under `3yz`**: `35s` (Grover audit), `9g5`
+  (block-encoding audit), `7pz` (atomic XNode design).
+- **Unblocked**: `870` — the Pauli fix is the ground on which bead
+  870's syndrome-extract tests now pass 80/80. Ready to be wired
+  into the P3 `encode(ch, Steane())` dispatch in a focused next
+  session (my test file is the P1+P2 acceptance — P3 is the
+  TracingContext story that needs `cases()` per session 38).
+
+### Next-session pointer
+
+Either finish 870-P3 (wire syndrome_extract! + correct! into
+`encode(ch, Steane())` via `cases()` for TracingContext), OR tackle
+one of the hardening beads (`35s`, `9g5`) while they're fresh in
+context. `7pz` (atomic XNode) is larger-scope — defer unless the
+draw UX for X! ("Z Y" glyphs adjacent instead of a single "X")
+becomes painful.
+
+---
+
 ## 2026-04-21 — Session 41: Steane 870 P1+P2 WIP — blocked on Pauli gate bug (`a1e` filed)
 
 Started bead 870 (Steane [[7,1,3]] syndrome extraction + correction). Did
