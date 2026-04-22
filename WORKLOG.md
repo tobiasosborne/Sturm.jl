@@ -4,6 +4,149 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 51: `goi` qudit research rounds 1+2 — primitives + T-gate / MSD
+
+Claim `Sturm.jl-goi` (P7 dimension lift, qudit d>2 support). Pure-research
+pass — no Sturm source code touched. Two ground-truth survey rounds
+produce the locked 6-primitive hybrid-B + cubic-phase design.
+
+### Round 1: primitive choice (`docs/physics/qudit_primitives_survey.md`)
+
+Three candidate continuous 1-parameter families for `q.θ` / `q.φ`
+evaluated across 7 axes (d=2 recovery, root-of-unity → Weyl-Heisenberg,
+1-qudit universality, CV limit, P9/Bennett compatibility, count, Sturm
+idiom fit). 11 PDFs downloaded (Gottesman 1998 quant-ph/9802007 anchor,
+Brylinski² universality theorem, Bartlett-deGuise-Sanders, Brennen-
+Bullock-O'Leary ×3, Muthukrishnan-Stroud, Howard-Vala, Farinholt, Wang
+review, de Beaudrap). Luo-Wang 2014 has no arxiv preprint, not a blocker.
+
+**Decision**: hybrid spin-$j$ $su(2)$ (Candidate B) for continuous
+primitives. Cleanest d=2 match (exact Ry/Rz), cleanest CV limit via
+Holstein-Primakoff $\hat J_\pm \to \hat x \pm i\hat p$. Three continuous
+primitives: `q.θ` ($\hat J_y$), `q.φ` ($\hat J_z$), `q.θ₂` ($\hat J_z^2$
+squeezing). SUM as 4th primitive (`a ⊻= b` at d=2 → CNOT, at d>2 →
+Gottesman Eq. G12). 5 primitives total.
+
+### Round 2: T-gate / magic state distillation (`docs/physics/qudit_magic_gate_survey.md`)
+
+User flagged: "I don't know what is the natural analogue of the T gate
+for qudits." Second research round dispatched. 7 more PDFs downloaded
+(Campbell 2014 canonical form, Campbell-Anwar-Browne, Anwar-Campbell-
+Browne, Watson 2015, Beverland et al., Krishna-Tillich, Prakash 2020
+ternary Golay, Veitch resource theory).
+
+**Key finding — and the redirect this session made**: the Howard-Vala
+qudit π/8 is **cubic** in the computational-basis label, not quadratic.
+Campbell 2014 Eq. 1 gives the canonical form $M_\mu = \omega^{\mu
+\hat n^3}$ at prime $d \ge 5$. Three independent proofs that our locked
+$q.\theta_2$ (quadratic $\hat J_z^2$) cannot realise it:
+  1. Distinct eigenvalue count at d=3: 2 vs 3
+  2. Parity symmetry: quadratic is parity-symmetric, cubic is not
+  3. Polynomial degree invariance under linear relabelling
+
+And `q.φ + q.θ₂` together give exactly the Clifford diagonal group
+$\omega^{\alpha \hat n + \beta \hat n^2}$ (Campbell 2014 $\mathcal Z_{
+\alpha,\beta}$) — Clifford-complete, magic-incomplete. To reach
+universal unitaries on qudits, something has to give.
+
+**Decision**: add **6th primitive** `q.θ₃ += δ` ($\exp(-i\delta \hat n^3)$,
+cubic phase). At $\delta = -2\pi/d$ (prime $d \ge 5$) this is Campbell's
+$M_1$, the canonical magic gate.
+
+**The pleasant surprise**: at d=2, primitives 4 and 5 collapse naturally:
+  - $\hat n^2 = \hat n$ on {0,1}, so `q.θ₂` becomes global phase (trivial)
+  - $\hat n^3 = \hat n$ on {0,1}, so `q.θ₃` collapses to Rz-equivalent
+The 6-primitive qudit set reduces **exactly** to the 4-primitive qubit
+set at d=2. Rule 11 (CLAUDE.md: 4 primitives ONLY) is preserved at the
+qubit specialisation; the two extra primitives are d>2-only.
+
+**CV-limit sanity (P7)**: $\hat J_z^3$ in the Holstein-Primakoff limit
+gives $\hat n^3$; conjugated by Ry(π/2) it becomes $\hat J_x^3 \sim
+\hat x^3$ at large j — the canonical **GKP cubic-phase gate**, the
+textbook non-Gaussian resource for universal CV (Gottesman-Kitaev-Preskill
+2001). The qudit cubic primitive is precisely the right non-Gaussian
+resource in the CV limit. P7 is enhanced, not strained.
+
+**Level-structured design**: primitives stratify by Clifford hierarchy
+level — Ry/Rz at level 1, $\hat n^2$ at level 2 (Clifford diagonal),
+$\hat n^3$ at level 3 (magic). Higher levels don't form groups, so the
+set is complete at 3 levels. This is a structural argument for stopping
+at 6 primitives.
+
+### Non-prime d gotcha
+
+Watson 2015 Eq. 7 explicitly excludes d ∈ {2, 3, 6} from the clean
+$\omega^{\hat n^3}$ form:
+  - prime d ≥ 5: $M_1 = \omega^{\hat n^3}$, $\omega = e^{2\pi i/d}$
+  - d = 3: $T_3 = \gamma^{\hat n^3}$, $\gamma = e^{2\pi i / 9}$ (Watson Eq. 7)
+  - d = 2: standard qubit T = Rz(π/4)
+  - d ∈ {4, 6, 8, 9, …}: open in literature. Filed as lit-gap bead.
+
+### Orkan impact — feature request, not PR
+
+User decision: Orkan-side native d-level statevector is a feature
+request, not an immediate PR. Memory-bound, deep, subtle. Prepared PR
+plan at `/home/tobiasosborne/Projects/orkan/docs/qudit-support-pr-plan.md`
+(334 lines) + feature-request body at `/home/tobiasosborne/Projects/orkan/
+ISSUES/qudit-support.md` — push to GH when `gh` re-authenticated.
+Sturm v0.1 qudit ships on qubit-encoded fallback simulator.
+
+### Beads filed
+
+Epic `Sturm.jl-goi` description rewritten with locked-design summary. 15
+new beads:
+
+  * Lit-gap (P3, non-blocking v0.1):
+    - `Sturm.jl-dcv` non-prime d magic gate
+    - `Sturm.jl-egh` prime-power d via Galois F_{p^k}
+    - `Sturm.jl-kba` composite-d MSD
+    - `Sturm.jl-b9r` CV-limit formal derivation (Holstein-Primakoff → GKP)
+
+  * Implementation spine (P2):
+    - `Sturm.jl-9aa` QDit{d,W} type + prep primitive
+    - `Sturm.jl-ak2` spin-j Ry/Rz primitives (q.θ, q.φ)
+    - `Sturm.jl-os4` squeezing primitive (q.θ₂)
+    - `Sturm.jl-mle` cubic-phase magic primitive (q.θ₃)
+    - `Sturm.jl-p38` SUM entangler (a ⊻= b at d>2)
+    - `Sturm.jl-nrs` qubit-encoded fallback simulator
+    - `Sturm.jl-u2n` library gates: X_d!, Z_d!, F_d! QFT
+    - `Sturm.jl-tws` library gate T_d! (per-d branch)
+    - `Sturm.jl-70a` library gate QuditToffoli!
+    - `Sturm.jl-csw` full-pipeline tests at d=3, d=5 (v0.1 acceptance)
+    - `Sturm.jl-dhn` QECC prime-d trait (P3)
+
+29 dep edges inserted via direct dolt SQL — **bd bug found**: `bd dep
+add` and `bd blocked` query `wisp_dependencies` but the table is named
+`dependencies` in the embedded Dolt install. Worked around; filed as a
+known-issue for the next bd upgrade. Edges verified via join query.
+
+### Dolt push blocked by GH secret scanning
+
+`bd dolt push` fails because a historical blob (commit `5bf30ae` in dolt
+blobstore) contains an OAuth token. Pre-existing issue, not caused by
+this session. Unblock URL: `https://github.com/tobiasosborne/Sturm.jl/
+security/secret-scanning/unblock-secret/3CitIms2IwRs2Ixan0CiUzUFuLk`.
+User decision required (security judgement).
+
+### Files touched this session
+
+Surveys + downloads (`docs/physics/`):
+  * `qudit_primitives_survey.md` (round 1, 343 lines + decisions pointer)
+  * `qudit_magic_gate_survey.md` (round 2, with §8 locked decisions)
+  * 20 new PDFs: Gottesman, Brylinski², Bartlett-deGuise-Sanders,
+    Brennen-Bullock-O'Leary ×3, Muthukrishnan-Stroud, Howard-Vala,
+    Farinholt, Wang review, de Beaudrap, Campbell 2014, Campbell-Anwar-
+    Browne, Anwar-Campbell-Browne, Watson, Beverland et al., Krishna-
+    Tillich, Prakash 2020 ×2, Veitch.
+
+Orkan (separate repo, feature request):
+  * `docs/qudit-support-pr-plan.md` (PR design doc, 334 lines)
+  * `ISSUES/qudit-support.md` (GH issue body)
+
+`WORKLOG.md`: this entry.
+
+---
+
 ## 2026-04-22 — Session 50: `6oc` criterion (d) — Toffoli-count trace bench
 
 Session 49 left the bead 6oc blocked on wall-clock perf. This session
