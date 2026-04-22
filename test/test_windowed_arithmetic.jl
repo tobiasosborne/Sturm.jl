@@ -1,6 +1,6 @@
 using Test
 using Sturm
-using Sturm: qrom_lookup_xor!, plus_equal_product!
+using Sturm: qrom_lookup_xor!, plus_equal_product!, plus_equal_product_mod!, decode!
 
 # Eager-flushed staged output (feedback_verbose_eager_flush).
 _t0 = time_ns()
@@ -186,6 +186,100 @@ end
     end
 
     _log("EXIT plus_equal_product!")
+end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# plus_equal_product_mod! — Gidney 2019 §3.3 (Sturm.jl-6oc Phase B step 1)
+#
+# Modular variant of plus_equal_product!. Target is a QCoset (GE21 §2.4
+# coset representation); the inner add is non-modular, but the coset
+# structure makes it ≈ modular add mod N with deviation ≤ 2^{-Cpad} per op.
+# The position factor 2^i is folded into each window's lookup table, so
+# there is no target-slice pattern — every iteration adds into the full
+# Wtot-bit reg.
+#
+# For these tests, N < 2^W is the QCoset invariant and table entries are
+# reduced mod N (≤ N-1). The resulting max branch value per iteration is
+# (2^Cpad - 1)·N + (N - 1) = 2^Cpad · N - 1 < 2^(W+Cpad) = 2^Wtot, so
+# NO coset branch wraps → deterministic per-shot, no statistical slack.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@testset "plus_equal_product_mod! (QCoset, no-wrap regime)" begin
+    _log("ENTER plus_equal_product_mod!")
+
+    @testset "basis state, target_coset += k·y mod N" begin
+        _log("  ENTER basis state  [peak ≤ 15 qubits, no-wrap regime]")
+        # (N, W, Cpad, k, y0, window, Ly)
+        # peak_live = (W+2·Cpad) + Ly + (W+Cpad) + window = 2W + 3·Cpad + Ly + window
+        for (N, W, Cpad, k, y0, window, Ly) in [
+            (5, 3, 1, 3, 2, 1, 2),   # peak 12; (3·2) mod 5 = 1
+            (5, 3, 1, 2, 3, 1, 2),   # peak 12; (2·3) mod 5 = 1
+            (5, 3, 1, 4, 1, 1, 2),   # peak 12; (4·1) mod 5 = 4
+            (5, 3, 1, 1, 0, 1, 2),   # peak 12; (1·0) mod 5 = 0 (zero-y path)
+            (5, 3, 1, 0, 3, 1, 2),   # peak 12; k=0 identity
+            (7, 3, 2, 3, 2, 1, 2),   # peak 15; (3·2) mod 7 = 6
+            (7, 3, 2, 3, 3, 1, 2),   # peak 15; (3·3) mod 7 = 2 — Cpad=2 (Cpad=1 hits the wrap bound 2^Cpad·(2^W-N)+N = 9 exactly at a_total=9)
+            (5, 3, 1, 3, 3, 2, 2),   # peak 13; window=Ly single lookup; (3·3) mod 5 = 4
+        ]
+            _log("    case N=$N W=$W Cpad=$Cpad k=$k y0=$y0 window=$window Ly=$Ly")
+            @context EagerContext() begin
+                target = QCoset{W, Cpad}(0, N)   # encode residue 0 mod N
+                y = QInt{Ly}(y0)
+                plus_equal_product_mod!(target, k, y; window=window)
+                expected = mod(k * y0, N)
+                @test decode!(target) == expected
+                @test Int(y) == y0
+            end
+        end
+        _log("  EXIT basis state")
+    end
+
+    @testset "target_coset non-zero initial residue" begin
+        _log("  ENTER non-zero initial  [peak ≤ 13 qubits]")
+        # Starting from residue r0, add k·y: expect (r0 + k·y) mod N.
+        for (N, W, Cpad, r0, k, y0, window, Ly) in [
+            (5, 3, 1, 2, 3, 1, 1, 2),   # (2 + 3·1) mod 5 = 0
+            (7, 3, 1, 3, 2, 2, 1, 2),   # (3 + 2·2) mod 7 = 0
+        ]
+            _log("    case N=$N Cpad=$Cpad r0=$r0 k=$k y0=$y0 window=$window")
+            @context EagerContext() begin
+                target = QCoset{W, Cpad}(r0, N)
+                y = QInt{Ly}(y0)
+                plus_equal_product_mod!(target, k, y; window=window)
+                expected = mod(r0 + k * y0, N)
+                @test decode!(target) == expected
+                @test Int(y) == y0
+            end
+        end
+        _log("  EXIT non-zero initial")
+    end
+
+    @testset "k = 0: identity on coset target" begin
+        _log("  ENTER k=0 identity  [peak 7 qubits, early-return]")
+        @context EagerContext() begin
+            target = QCoset{3, 1}(3, 5)
+            y = QInt{2}(2)
+            plus_equal_product_mod!(target, 0, y; window=1)
+            @test decode!(target) == 3
+            @test Int(y) == 2
+        end
+        _log("  EXIT k=0 identity")
+    end
+
+    @testset "preconditions fire loudly" begin
+        _log("  ENTER preconditions  [tiny]")
+        @context EagerContext() begin
+            target = QCoset{3, 1}(0, 5)
+            y = QInt{3}(5)
+            @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=2)  # 3 % 2 ≠ 0
+            @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=0)
+            @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=4)  # window > Ly
+            ptrace!(target); ptrace!(y)
+        end
+        _log("  EXIT preconditions")
+    end
+
+    _log("EXIT plus_equal_product_mod!")
 end
 
 _log("EXIT test_windowed_arithmetic.jl")

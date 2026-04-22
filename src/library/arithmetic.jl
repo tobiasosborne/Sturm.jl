@@ -521,3 +521,103 @@ function plus_equal_product!(target::QInt{Lt}, k::Integer, y::QInt{Ly};
 
     return target
 end
+
+"""
+    plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
+                             y::QInt{Ly}; window::Int) -> target
+
+Windowed modular product-addition on a coset-encoded target: the encoded
+residue r of `target` becomes `(r + k·y) mod N` where `N = target.modulus`,
+`k` is classical, and `y` is quantum. Implements Gidney 2019 §3.3
+(arXiv:1905.07682) combined with the Gidney-Ekerå 2021 §2.4 coset trick.
+
+# How it works
+GE21 §2.4: on a coset-encoded register, ordinary (non-modular) addition of
+a value `a ∈ [0, N)` acts as modular addition mod N, with per-op deviation
+bounded by `2^{-Cpad}` (Gidney 1905.08488 Thm 3.2). The deviation only
+fires when a coset branch wraps past `2^Wtot`; when table entries are
+reduced mod N (and `N < 2^W`, the QCoset invariant), the max branch value
+is `(2^Cpad − 1)·N + (N − 1) = 2^Cpad·N − 1 < 2^Wtot`, so no wrap occurs
+and the operation is deterministic per shot.
+
+# Loop structure vs `plus_equal_product!` (§3.1)
+  * No target slicing — every iteration adds into the full `Wtot`-bit
+    `target.reg`. There is no `target[i:]` because mod-N addition cannot
+    be localised to a bit slice.
+  * Position factor `2^i` is folded into each window's lookup table:
+    `T[j] = (j · k · 2^i) mod N`. The table is rebuilt per window.
+  * Entries are pre-reduced mod N (stored via `QROMTable(…, modulus=N)`),
+    fit in W bits, hence cleanly into the Wtot-bit scratch (top Cpad
+    bits stay `|0⟩`).
+
+# Preconditions (all fail-loud per Rule 1)
+  * `window | Ly`, `1 ≤ window ≤ Ly`.
+  * `target.reg.ctx === y.ctx`.
+  * `Ly < 62` (UInt64 margin on `2^i` during table construction).
+
+# Automatic control
+Reuses `qrom_lookup_xor!` and `add_qft_quantum!`, both of which
+auto-control under `when(…) do … end` via Sturm's control stack.
+
+# References
+  * Gidney (2019) arXiv:1905.07682 §3.3.
+    `docs/physics/gidney_2019_windowed_arithmetic.pdf`.
+  * Gidney-Ekerå (2021) arXiv:1905.09749 §2.4, §2.5.
+    `docs/physics/gidney_ekera_2021_rsa2048.pdf`.
+  * Gidney (2019) arXiv:1905.08488 Thm 3.2 (coset deviation bound).
+    `docs/physics/gidney_2019_approximate_encoded_permutations.pdf`.
+"""
+function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
+                                  y::QInt{Ly}; window::Int) where {W, Cpad, Wtot, Ly}
+    check_live!(target); check_live!(y)
+    target.reg.ctx === y.ctx ||
+        error("plus_equal_product_mod!: target and y must share a context")
+    window >= 1 || error("plus_equal_product_mod!: window must be ≥ 1, got $window")
+    window <= Ly ||
+        error("plus_equal_product_mod!: window=$window exceeds Ly=$Ly")
+    Ly % window == 0 ||
+        error("plus_equal_product_mod!: window=$window must divide Ly=$Ly")
+    Ly < 62 ||
+        error("plus_equal_product_mod!: Ly=$Ly exceeds 2^i arithmetic margin (max 61)")
+    ctx = target.reg.ctx
+    N = Int(target.modulus)
+
+    # k = 0 — identity, no lookups, no QFT.
+    k == 0 && return target
+
+    n_entries = 1 << window
+    k_mod_N = mod(Int(k), N)
+
+    for i in 0:window:(Ly - 1)
+        # y window view.
+        y_win_wires = ntuple(j -> y.wires[i + j], Val(window))
+        y_win = QInt{window}(y_win_wires, ctx, false)
+
+        # Table entries T[j] = (j · k · 2^i) mod N, j ∈ [0, 2^window).
+        # All entries fit in W bits (< N < 2^W), hence in Wtot bits too.
+        two_pow_i_modN = powermod(2, i, N)
+        entries = Vector{UInt64}(undef, n_entries)
+        @inbounds for j in 0:(n_entries - 1)
+            jk_mod = mod(Int(j) * k_mod_N, N)
+            v = mod(jk_mod * two_pow_i_modN, N)
+            entries[j + 1] = UInt64(v)
+        end
+        tbl = QROMTable{window, Wtot}(entries, N)    # modulus=N → canonicalisation
+
+        # Scratch: full-Wtot register at |0⟩. QROM xors T[y_win] in; top
+        # Cpad bits remain |0⟩ because entries < N < 2^W.
+        scratch = QInt{Wtot}(0)
+        qrom_lookup_xor!(scratch, y_win, tbl)             # scratch = T[y_win]
+
+        # Non-modular quantum addition into the coset register — GE21 §2.4
+        # coset trick makes this mod N on the encoded residue.
+        superpose!(target.reg)
+        add_qft_quantum!(target.reg, scratch)
+        interfere!(target.reg)
+
+        qrom_lookup_xor!(scratch, y_win, tbl)             # uncompute scratch → |0⟩
+        ptrace!(scratch)
+    end
+
+    return target
+end

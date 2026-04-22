@@ -4,6 +4,74 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 46: `6oc` Phase B step 1 — `plus_equal_product_mod!`
+
+Red-green for the modular variant. Lands `plus_equal_product_mod!(target::QCoset,
+k, y; window)` — Gidney 2019 §3.3 combined with GE21 §2.4 coset trick. 25
+new tests (72 total in file), all GREEN in ~26s wall. Bead 6oc stays
+in_progress for next steps: `_shor_mulmod_E_controlled!` + `shor_order_E`.
+
+### Design pivot: QCoset target vs. a new `modadd_quantum!` primitive
+
+Gidney 2019 §3.3 pseudocode uses `target += table[w]` with `target: QuintMod`.
+A literal port would need `modadd_quantum!(y::QInt, b::QInt, N)` — a modular
+quantum adder for quantum addends, which Sturm didn't have. Instead, took
+the GE21 §2.4 path: target is a `QCoset{W, Cpad, Wtot}`, and the inner add
+is just `add_qft_quantum!(target.reg, scratch)` (non-modular on the full
+Wtot-bit reg). Coset state makes non-modular add ≈ modular add mod N.
+Zero new primitives; reuses the QFT quantum-addend adder already shipped.
+
+### No-wrap deterministic regime for tests
+
+GE21 deviation fires only when a coset branch wraps `2^Wtot`. Deterministic
+bound derivation: max branch value after total offset `a_total` is
+`(2^Cpad - 1)·N + a_total`. No wrap iff `a_total < 2^Cpad · (2^W - N) + N`
+(strict). In the test's no-wrap regime, decode is deterministic per shot
+— no statistical slack needed.
+
+### Gotcha #1 — boundary case caught by a RED test
+
+First implementation GREEN'd 24/25; the one failure was `(N=7, W=3, Cpad=1,
+k=3, y0=3)`: `a_total = 3 + 6 = 9`, bound `= 2·1 + 7 = 9`. **At** the bound,
+not under it — branch j=1's value hits `7 + 9 = 16 = 2^Wtot` exactly and
+wraps to 0, giving residue 0 instead of 2. Fixed by bumping Cpad=1→2 for
+that case (bound becomes 11, a_total=9 is safely under). Lesson: the
+`<` in the bound formula matters — not `≤`. Worth keeping in mind when
+choosing Shor parameters: deviation is a real budget, not just a worst
+case.
+
+### Gotcha #2 — table value-width must match scratch width
+
+`QROMTable{window, Wtot}(entries, N)` — value-width is Wtot (full coset
+register width), not W (residue width). Entries are `≤ N-1 < 2^W`, so
+their top Cpad bits are zero; the QROM emits no gates for those bits,
+and scratch's top Cpad wires stay at `|0⟩`. Using `QROMTable{window, W}`
+would produce a W-bit scratch that can't be the addend of
+`add_qft_quantum!(target.reg::QInt{Wtot}, scratch::QInt{W})` — width
+mismatch error.
+
+### Files touched
+
+  * `src/library/arithmetic.jl` (+90): `plus_equal_product_mod!`
+  * `src/Sturm.jl` (+1): export `plus_equal_product_mod!`
+  * `test/test_windowed_arithmetic.jl` (+100): 25 new tests
+
+### Phase B next steps
+
+1. **`_shor_mulmod_E_controlled!(y::QCoset, a::Integer, N, ctrl::QBool; c_mul=2)`**
+   — controlled modular multiplication on a coset-encoded target via two
+   `plus_equal_product_mod!` calls (cmult-swap pattern, Gidney 2019 §3.4
+   Fig 6). Sibling to `mulmod_beauregard!` at `src/library/arithmetic.jl:356`.
+
+2. **`shor_order_E` + `shor_factor_E`** — copy `shor_order_D_semi` and
+   swap `mulmod_beauregard!` → `_shor_mulmod_E_controlled!`. N=15 L=4
+   acceptance: 50 shots, r=4 hit rate ≥ 30%.
+
+3. **Toffoli-count bench** — defer; needs √L measurement-based
+   uncomputation primitive (Gidney 2019 Fig 3) to actually win vs impl D.
+
+---
+
 ## 2026-04-22 — Session 45: `6oc` Phase A — `qrom_lookup_xor!` + `plus_equal_product!` atoms
 
 Red-green TDD for the Sturm.jl-6oc windowed-arithmetic bead (P1). Phase A
