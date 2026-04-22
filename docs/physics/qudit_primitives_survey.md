@@ -306,7 +306,7 @@ At $d=2$ Sturm's project policy is "live in SU(2), pay the $H^2 = -I$ cost" (CLA
 
 Gottesman 1998 explicitly restricts the fault-tolerance theorem to prime $d$ (abstract, §2 p.3, and comment after Eq. G5: "the structure is somewhat more complicated when $d$ is not prime, and I have not verified that these gates are sufficient for the nonprime case"). Brylinski–Brylinski Theorem 1.3 and Brennen–Bullock–O'Leary both state exact-universality for arbitrary integer $d \ge 2$ — no primality needed for unitary universality. So:
 - Unitary universality: any $d \ge 2$. OK.
-- Stabiliser codes / FT: prime $d$ only (for now). Library gate restrictions are fine; the type `QDit{d,W}` should not foreclose $d=4,6,\dots$.
+- Stabiliser codes / FT: prime $d$ only (for now). Library gate restrictions are fine; the type `QMod{d}` should not foreclose $d=4,6,\dots$.
 
 Sturm probably wants to allow any $d \ge 2$ at the type level, and document "QECC on prime $d$ only for v0.1" as a constraint in the QECC module.
 

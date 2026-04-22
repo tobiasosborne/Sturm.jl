@@ -72,7 +72,7 @@ At $d=2$, Campbell 2014 (after Eq. (1) p.2) notes that $3\mu \bmod 2 = \mu$ is n
 - **Prime-power $d = p^k$**: Bermejo-Vega–Van den Nest (Campbell 2014 ref [37]) gives hope; Gottesman 1998 §2 tackles qupits via $\mathbb{F}_{p^k}$. Watson 2015 references prime-power results via [20]. The stabilizer formalism is cleaner on $\mathbb{F}_{p^k}$ than on $\mathbb{Z}_{p^k}$ — but this requires Galois-field arithmetic, not modular arithmetic, which is a bigger structural change.
 - **Composite $d = p_1 p_2 \dots$ (e.g. $d = 6$)**: by CRT, $\mathbb{Z}_6 \cong \mathbb{Z}_2 \oplus \mathbb{Z}_3$. In principle, a $d=6$ qudit factorises as a qubit ⊗ qutrit, and the "right" thing is to run qubit MSD on the $\mathbb{Z}_2$ factor and qutrit MSD on the $\mathbb{Z}_3$ factor. **But this is a convention** — the Sturm user who writes $|0\rangle, \dots, |5\rangle$ with SUM mod 6 is not obviously picking this tensor factorisation, and the `d=6` displacement operator $X_6$ is NOT the tensor product of $X_2 \otimes X_3$ (the cycle structure is different). As a consequence: **no self-contained "qudit-T" at $d=6$** has been published as of 2025. Watson 2015 Eq. (7) is the closest — it gives *a* level-3 gate at $d=6$ by going to a $3 \cdot 6 = 18$-th root of unity.
 
-**Bottom line for Sturm type system**: `QDit{d, W}` should allow any $d \ge 2$ at the type level (no change from round 1), but the library-level `T_d!` gate should:
+**Bottom line for Sturm type system**: `QMod{d}` should allow any $d \ge 2$ at the type level (no change from round 1), but the library-level `T_d!` gate should:
 - Prime $d \ge 5$: $M_1 = \omega^{\hat n^3}$ (Campbell canonical form), $\omega = e^{2\pi i /d}$
 - $d = 3$: $T_3 = \gamma^{\hat n^3}$, $\gamma = e^{2\pi i / 9}$ (Watson Eq. 7)
 - $d = 2$: standard qubit $T = \mathrm{diag}(1, e^{i\pi/4})$
@@ -346,7 +346,7 @@ After rounds 1 + 2 of research and discussion with Tobias, the qudit design is p
 
 | # | Syntax | Semantics | Clifford-hierarchy level |
 |---|--------|-----------|--------------------------|
-| 1 | `QDit{d,W}(ctx)` (or equivalent prep) | Prepare d-level system in $\|0\rangle$ | — |
+| 1 | `QMod{d}(ctx)` (or equivalent prep) | Prepare single d-level wire in $\|0\rangle$ | — |
 | 2 | `q.θ += δ`  | $R_y(\delta) = \exp(-i\delta \hat{J}_y)$ (spin-$j$, $d=2j+1$) | level 1 |
 | 3 | `q.φ += δ`  | $R_z(\delta) = \exp(-i\delta \hat{J}_z)$ (spin-$j$) | level 1 |
 | 4 | `q.θ₂ += δ` | $\exp(-i\delta \hat{n}^2)$ (quadratic phase / squeezing) | level 2 |
@@ -373,7 +373,11 @@ Library gates (NOT primitives):
 
 ### 8.5 Dimension range
 
-**Any $d \ge 2$** at the `QDit{d,W}` type level. Restrictions are library-module scoped:
+**Any $d \ge 2$** at the `QMod{d}` type level. Restrictions are library-module scoped:
+
+Type hierarchy (parallel to `QBool` / `QInt`):
+- `QMod{d}` — single d-level wire with **modular-arithmetic** API (Z/dZ). Parallels `Mod{d}` (Mods.jl). Reduces to `QBool` semantics at d=2 though the two remain distinct types (logical vs. arithmetic API — same reason Julia keeps `Bool` and `Mod{2}` separate).
+- `QInt{W,d}` — W-digit base-d positional integer register. `d=2` default recovers existing `QInt{W}`. Values in $[0, d^W)$. Built on `QMod{d}` wires with mod-$d$ ripple-carry arithmetic. **Not v0.1 scope** — see bead `goi-qint-d`.
 - **QECC module**: prime $d$ only for v0.1 (Gottesman 1998 stabilizer-code assumption). Non-prime is a research gap (see §8.7 below).
 - **`T_d!` library gate**: defined only for $d \in \{2, 3\}$ and prime $d \ge 5$ in v0.1; $d \in \{4, 6, 8, 9, \dots\}$ open (see follow-on bead).
 
@@ -389,10 +393,10 @@ The ideal $T_d$ channel and the MSD-injected $T_d$ channel are equal as CPTP map
 ### 8.7 Accepted literature gaps (filed as follow-on beads)
 
 1. **Non-prime $d$ magic gate.** $T_d$ for $d = 4, 6, 8, 9, \dots$ is not given in closed form by any paper we downloaded. Watson 2015 Eq. 7 has a higher-root-of-unity candidate; prime-power $d = p^k$ may work via $\mathbb{F}_{p^k}$ stabiliser formalism. Out of scope for v0.1.
-2. **Prime-power $d = p^k$ via Galois-field arithmetic.** Gottesman 1998 §2 uses $\mathbb{F}_{p^k}$ rather than $\mathbb{Z}_{p^k}$ for stabiliser codes. Sturm's `QDit{d,W}` currently implies modular arithmetic on $\mathbb{Z}_d$. Reconciling these requires a structural refactor.
+2. **Prime-power $d = p^k$ via Galois-field arithmetic.** Gottesman 1998 §2 uses $\mathbb{F}_{p^k}$ rather than $\mathbb{Z}_{p^k}$ for stabiliser codes. Sturm's `QMod{d}` currently implies modular arithmetic on $\mathbb{Z}_d$. Reconciling these requires a structural refactor.
 3. **Composite-$d$ magic state distillation.** $d = 6, 10, 12, 15, \dots$ — literature is surprisingly thin. Natural approach is CRT tensor factorisation but this conflicts with the user-level semantics of SUM mod $d$.
 4. **CV-limit formal derivation.** The Holstein-Primakoff argument for $\hat{J}_z^3 \to $ GKP cubic-phase (via $R_y$ conjugation) is sketched in §5.5 but needs a rigorous large-$j$ derivation. P7 correctness depends on this; should live as a standalone `docs/physics/qudit_cv_limit.md`.
 
 ### 8.8 Orkan impact
 
-Filed as Orkan-repo feature request (`/home/tobiasosborne/Projects/orkan/ISSUES/qudit-support.md`). Native d-level statevector is long-horizon; Sturm ships v0.1 qudit on a **qubit-encoded fallback simulator** (each `QDit{d,W}` stored as $W\lceil \log_2 d \rceil$ qubits with leakage guards on unused levels). Two extra diagonal kernels (`apply_n2`, `apply_n3`) once Orkan-native lands.
+Filed as Orkan-repo feature request (`/home/tobiasosborne/Projects/orkan/ISSUES/qudit-support.md`). Native d-level statevector is long-horizon; Sturm ships v0.1 qudit on a **qubit-encoded fallback simulator** (each `QMod{d}` stored as $\lceil \log_2 d \rceil$ qubits with leakage guards on unused levels). Two extra diagonal kernels (`apply_n2`, `apply_n3`) once Orkan-native lands.
