@@ -426,3 +426,98 @@ function mulmod_beauregard!(x::QInt{L}, a::Integer, N::Integer,
 
     return x
 end
+
+"""
+    plus_equal_product!(target::QInt{Lt}, k::Integer, y::QInt{Ly}; window::Int) -> target
+
+Windowed product-addition: `target += k·y` mod `2^Lt`, with classical `k`
+and quantum `y`. Implements Gidney 2019 §3.1 (arXiv:1905.07682) using a
+window of `window` qubits of `y` per iteration.
+
+# Semantics
+For each `window`-qubit chunk `y[i:i+window]` of `y` (little-endian,
+starting at bit `i = 0, window, 2·window, …`), precompute a
+`2^window`-entry classical table `T[j] = j·k` truncated to `Lt − i` bits,
+then compute `target[i:] += T[y[i:i+window]]` via a QROM lookup of the
+quantum window into a scratch register, QFT-basis addition into the
+target tail, and uncomputation of the scratch.
+
+# Asymptotic cost
+`O(Ly·(Lt + 2^window) / window)` Toffoli. With `window ≈ lg Ly`:
+`O(Lt·Ly / lg Ly)`, one log-factor below the naïve ripple-carry over
+classical `k`. GE21 Eq. 2 uses this repeatedly inside windowed mulmod.
+
+# Preconditions
+  * `window` divides `Ly`.
+  * `1 ≤ window ≤ Ly`.
+  * `Lt ≤ 62` (UInt64 margin for `j·k` table entries).
+  * `target` and `y` share a context.
+
+# Automatic control
+Wraps `qrom_lookup_xor!` and `add_qft_quantum!`, both of which auto-control
+under `when(…) do … end` via Sturm's control stack.
+
+# References
+  * Gidney (2019) "Windowed quantum arithmetic", arXiv:1905.07682 §3.1.
+    `docs/physics/gidney_2019_windowed_arithmetic.pdf`.
+  * Gidney-Ekerå (2021) arXiv:1905.09749 §2.5.
+    `docs/physics/gidney_ekera_2021_rsa2048.pdf`.
+"""
+function plus_equal_product!(target::QInt{Lt}, k::Integer, y::QInt{Ly};
+                             window::Int) where {Lt, Ly}
+    check_live!(target); check_live!(y)
+    target.ctx === y.ctx ||
+        error("plus_equal_product!: target and y must share a context")
+    window >= 1 || error("plus_equal_product!: window must be ≥ 1, got $window")
+    window <= Ly ||
+        error("plus_equal_product!: window=$window exceeds Ly=$Ly")
+    Ly % window == 0 ||
+        error("plus_equal_product!: window=$window must divide Ly=$Ly")
+    Lt <= 62 ||
+        error("plus_equal_product!: Lt=$Lt exceeds UInt64 margin (max 62)")
+    ctx = target.ctx
+
+    # k = 0 is the identity — no lookups, no QFT, no ancillae.
+    k == 0 && return target
+
+    # Little-endian window iteration: window 0 covers wires y[1..window] (LSB),
+    # window 1 covers wires y[window+1..2·window], etc.
+    for i in 0:window:(Ly - 1)
+        W_tail = Lt - i
+        W_tail >= 1 || break      # target exhausted; higher windows are invisible
+
+        # Non-owning view of y's window chunk as QInt{window}.
+        y_win_wires = ntuple(j -> y.wires[i + j], Val(window))
+        y_win = QInt{window}(y_win_wires, ctx, false)
+
+        # Non-owning view of target's tail as QInt{W_tail}.
+        target_tail_wires = ntuple(j -> target.wires[i + j], Val(W_tail))
+        target_tail = QInt{W_tail}(target_tail_wires, ctx, false)
+
+        # Classical table T[j] = (j·k) mod 2^W_tail, j ∈ [0, 2^window).
+        n_entries = 1 << window
+        mask = W_tail >= 64 ? typemax(UInt64) :
+                              (UInt64(1) << W_tail) - UInt64(1)
+        entries = Vector{UInt64}(undef, n_entries)
+        @inbounds for j in 0:(n_entries - 1)
+            entries[j + 1] = (UInt64(j) * UInt64(k)) & mask
+        end
+        tbl = QROMTable{window, W_tail}(entries)
+
+        # Scratch |0⟩_{W_tail} — compute T[y_win], add into tail, uncompute.
+        scratch = QInt{W_tail}(0)
+        qrom_lookup_xor!(scratch, y_win, tbl)          # scratch = T[y_win]
+
+        # QFT sandwich on the target tail. Per-iteration sandwich is simplest;
+        # batching the QFT across iterations is an optimisation opportunity
+        # (each iteration's tail is a different width, so batching needs care).
+        superpose!(target_tail)
+        add_qft_quantum!(target_tail, scratch)         # target_tail += scratch
+        interfere!(target_tail)
+
+        qrom_lookup_xor!(scratch, y_win, tbl)          # uncompute: scratch → |0⟩
+        ptrace!(scratch)
+    end
+
+    return target
+end

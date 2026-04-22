@@ -403,3 +403,64 @@ function (qo::QuantumOracle)(x::QInt{W}; signed::Bool=true, kw...) where W
 
     return QInt{W}(output_wires_tuple, ctx, false)
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# qrom_lookup_xor!: XOR-into-existing-target QROM (Sturm.jl-6oc Phase A)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qrom_lookup_xor!(target::QInt{W}, addr::QInt{Ccmul},
+                     table::QROMTable{Ccmul, W, N}) -> target
+
+XOR a classical table entry into an existing quantum target register,
+indexed by a quantum address: `|a⟩|t⟩ → |a⟩|t ⊕ T[a]⟩`.
+
+Atomic lookup primitive for windowed quantum arithmetic (Gidney 2019
+arXiv:1905.07682 §3.1 Fig 2) and the QROM of Babbush et al. 2018
+(arXiv:1805.03662 §III.C Fig 10, unary-iteration tree). Unlike
+[`oracle_table`](@ref), this variant XORs into an *existing* target register
+rather than allocating a fresh one — required by `plus_equal_product!`
+and the windowed mulmod path.
+
+Self-inverse: two successive calls with the same `addr` return `target` to
+its prior state (naïve O(L) uncomputation). The O(√L) measurement-based
+alternative (Babbush 2018 Appendix C, Gidney 2019 Fig 3) is a future
+optimisation.
+
+# Cost
+  `4·(2^Ccmul − 1)` Toffoli via Babbush-Gidney unary iteration.
+
+# Automatic control
+Called inside `when(c) do … end`, the entire QROM inherits `c` via Sturm's
+control stack (same mechanism as [`oracle_table`](@ref)).
+"""
+function qrom_lookup_xor!(target::QInt{W},
+                          addr::QInt{Ccmul},
+                          table::QROMTable{Ccmul, W, N}) where {W, Ccmul, N}
+    check_live!(target); check_live!(addr)
+    addr.ctx === target.ctx ||
+        error("qrom_lookup_xor!: addr and target must share a context")
+    ctx = target.ctx
+
+    data = collect(UInt64, table.data)
+    key = (hash(data), Ccmul, W)
+    circuit = get!(_QROM_LOOKUP_XOR_CACHE, key) do
+        wa = WireAllocator()
+        gates = ReversibleGate[]
+        idx_wires_b = _bennett_wa_allocate!(wa, Ccmul)
+        data_out_b  = emit_qrom!(gates, wa, data, idx_wires_b, W)
+        lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
+                            [Ccmul], [W], Set{Int}())
+        bennett(lr)
+    end
+
+    input_wires = WireID[addr.wires[i]   for i in 1:Ccmul]
+    output_vec  = WireID[target.wires[i] for i in 1:W]
+    wm = build_wire_map(circuit, input_wires, output_vec)
+    apply_reversible!(ctx, circuit, wm)
+
+    return target
+end
+
+const _QROM_LOOKUP_XOR_CACHE = Dict{Tuple{UInt64, Int, Int}, ReversibleCircuit}()
+
