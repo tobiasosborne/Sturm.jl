@@ -575,8 +575,6 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
     window >= 1 || error("plus_equal_product_mod!: window must be ≥ 1, got $window")
     window <= Ly ||
         error("plus_equal_product_mod!: window=$window exceeds Ly=$Ly")
-    Ly % window == 0 ||
-        error("plus_equal_product_mod!: window=$window must divide Ly=$Ly")
     Ly < 62 ||
         error("plus_equal_product_mod!: Ly=$Ly exceeds 2^i arithmetic margin (max 61)")
     ctx = target.reg.ctx
@@ -585,39 +583,59 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
     # k = 0 — identity, no lookups, no QFT.
     k == 0 && return target
 
-    n_entries = 1 << window
     k_mod_N = mod(Int(k), N)
 
-    for i in 0:window:(Ly - 1)
-        # y window view.
-        y_win_wires = ntuple(j -> y.wires[i + j], Val(window))
-        y_win = QInt{window}(y_win_wires, ctx, false)
-
-        # Table entries T[j] = (j · k · 2^i) mod N, j ∈ [0, 2^window).
-        # All entries fit in W bits (< N < 2^W), hence in Wtot bits too.
-        two_pow_i_modN = powermod(2, i, N)
-        entries = Vector{UInt64}(undef, n_entries)
-        @inbounds for j in 0:(n_entries - 1)
-            jk_mod = mod(Int(j) * k_mod_N, N)
-            v = mod(jk_mod * two_pow_i_modN, N)
-            entries[j + 1] = UInt64(v)
-        end
-        tbl = QROMTable{window, Wtot}(entries, N)    # modulus=N → canonicalisation
-
-        # Scratch: full-Wtot register at |0⟩. QROM xors T[y_win] in; top
-        # Cpad bits remain |0⟩ because entries < N < 2^W.
-        scratch = QInt{Wtot}(0)
-        qrom_lookup_xor!(scratch, y_win, tbl)             # scratch = T[y_win]
-
-        # Non-modular quantum addition into the coset register — GE21 §2.4
-        # coset trick makes this mod N on the encoded residue.
-        superpose!(target.reg)
-        add_qft_quantum!(target.reg, scratch)
-        interfere!(target.reg)
-
-        qrom_lookup_xor!(scratch, y_win, tbl)             # uncompute scratch → |0⟩
-        ptrace!(scratch)
+    # Ragged-last-window support (Gidney 2019 §3.1/§3.3 allow this implicitly).
+    # If window doesn't divide Ly, the final iteration uses window_last = Ly-i
+    # bits instead of `window`. Semantically identical: the last chunk of y
+    # is narrower, the lookup table has fewer entries (2^window_last), and
+    # the position factor 2^i still multiplies the entries. Julia dispatches
+    # on the Val(w) boxing per distinct w seen at runtime (at most 2 here).
+    i = 0
+    while i < Ly
+        w = min(window, Ly - i)
+        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N)
+        i += w
     end
 
     return target
+end
+
+# Helper: one iteration of the plus_equal_product_mod! sweep. Factored out
+# so each distinct window size (`w`) triggers its own Julia specialisation
+# via `Val(w)` dispatch. In practice only two values of w (the full window
+# and maybe one ragged-last window) are ever seen per top-level call.
+@inline function _pep_mod_iter!(target::QCoset{W, Cpad, Wtot},
+                                  k_mod_N::Int,
+                                  y::QInt{Ly},
+                                  i::Int,
+                                  ::Val{w},
+                                  N::Int) where {W, Cpad, Wtot, Ly, w}
+    ctx = target.reg.ctx
+    n_entries = 1 << w
+
+    # y window view: wires [i+1 .. i+w] as QInt{w}.
+    y_win_wires = ntuple(j -> y.wires[i + j], Val(w))
+    y_win = QInt{w}(y_win_wires, ctx, false)
+
+    # Table entries T[j] = (j · k · 2^i) mod N.
+    two_pow_i_modN = powermod(2, i, N)
+    entries = Vector{UInt64}(undef, n_entries)
+    @inbounds for j in 0:(n_entries - 1)
+        jk_mod = mod(Int(j) * k_mod_N, N)
+        v = mod(jk_mod * two_pow_i_modN, N)
+        entries[j + 1] = UInt64(v)
+    end
+    tbl = QROMTable{w, Wtot}(entries, N)
+
+    scratch = QInt{Wtot}(0)
+    qrom_lookup_xor!(scratch, y_win, tbl)        # scratch = T[y_win]
+
+    superpose!(target.reg)
+    add_qft_quantum!(target.reg, scratch)
+    interfere!(target.reg)
+
+    qrom_lookup_xor!(scratch, y_win, tbl)        # uncompute → |0⟩
+    ptrace!(scratch)
+    return nothing
 end

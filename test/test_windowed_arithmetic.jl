@@ -267,12 +267,33 @@ end
         _log("  EXIT k=0 identity")
     end
 
+    @testset "ragged last window (Ly not divisible by window)" begin
+        _log("  ENTER ragged window  [peak ≤ 15 qubits]")
+        # Final iteration uses a smaller window_last = Ly - i_last bits when
+        # window does not divide Ly. Semantically equivalent to Gidney 2019
+        # §3.3 — the only change is the last window size.
+        for (N, W, Cpad, k, y0, window, Ly, expected) in [
+            (5, 3, 1, 3, 3, 2, 3, 4),   # 3·3 mod 5 = 4; Ly=3, window=2 → full+ragged(1)
+            (7, 3, 2, 2, 5, 2, 3, 3),   # 2·5 mod 7 = 3; Ly=3, window=2
+            (5, 3, 1, 2, 3, 3, 4, 1),   # 2·3 mod 5 = 1; Ly=4, window=3 → full+ragged(1)
+        ]
+            _log("    case N=$N k=$k y0=$y0 window=$window Ly=$Ly expected=$expected")
+            @context EagerContext() begin
+                target = QCoset{W, Cpad}(0, N)
+                y = QInt{Ly}(y0)
+                plus_equal_product_mod!(target, k, y; window=window)
+                @test decode!(target) == expected
+                @test Int(y) == y0
+            end
+        end
+        _log("  EXIT ragged window")
+    end
+
     @testset "preconditions fire loudly" begin
         _log("  ENTER preconditions  [tiny]")
         @context EagerContext() begin
             target = QCoset{3, 1}(0, 5)
             y = QInt{3}(5)
-            @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=2)  # 3 % 2 ≠ 0
             @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=0)
             @test_throws ErrorException plus_equal_product_mod!(target, 3, y; window=4)  # window > Ly
             ptrace!(target); ptrace!(y)
