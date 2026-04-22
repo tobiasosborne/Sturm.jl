@@ -97,13 +97,20 @@ green.
 
 ### Gotchas
 
-1. **Session 41's "filed" bead `a1e` was not actually in dolt.**
-   `bd search` / `bd list` / `bd show Sturm.jl-a1e` all turned up
-   nothing. Worklog entry said "bd-tool bug prevented bd dep add —
-   dependency is in the notes field", but the bead itself never
-   reached the remote either. Refiled as `3yz`. Lesson: if the
-   worklog narrates a bead that matters, future-me should `bd show`
-   it to confirm it exists before trusting the pointer.
+1. **Session 41's "filed" bead `a1e` WAS on the dolt remote — my
+   local was stale.** I initially thought `a1e` had never reached
+   remote because `bd search` / `bd list` / `bd show Sturm.jl-a1e`
+   all turned up empty. Refiled as `3yz` and landed the fix. Only
+   at session-close dolt sync did `dolt log origin/main` reveal
+   `a1e` on the remote — the stored "merge recipe 1"
+   (`dolt add/commit + fetch + pull origin main`) brought it in.
+   Closed `a1e` as superseded by `3yz`. Lesson: **always `dolt
+   fetch origin` and inspect `origin/main` BEFORE filing a bead
+   that might duplicate prior work.** The `bd search`/`bd list`
+   path only sees local — not remote — so it cannot detect
+   out-of-sync duplication. Working across multiple devices with
+   the known-broken `bd dolt pull` requires the dolt merge
+   recipe proactively, not just at session close.
 
 2. **`bd dolt push` autopush failed on every bead create today**
    (non-fast-forward). Local is ahead of remote for beads. Will run
