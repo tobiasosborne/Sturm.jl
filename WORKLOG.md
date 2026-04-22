@@ -4,6 +4,109 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 48: `6oc` Phase C1+C2 — ragged last window + ctrls kwarg refactor
+
+Two back-to-back refactors to unblock bead 6oc's statistical acceptance
+(criterion a: ≥30% r=4 hit rate on (7,15;t=3), 50 shots). Both land clean
+with the existing test suite (80/80 GREEN, ~2 min at OMP_NUM_THREADS=16).
+
+### C1 — Ragged last window in `plus_equal_product_mod!`
+
+Removes the `window | Ly` precondition. When `window` doesn't divide Ly,
+the final iteration uses `window_last = Ly - i_last` bits: the lookup
+table shrinks to `2^window_last` entries, the y-window view narrows,
+everything else stays the same. Gidney 2019 §3.1/§3.3 allow this
+implicitly (their Python `y[i:i+window]` slice just narrows at the end).
+
+Implementation: factored the iteration body into `_pep_mod_iter!` with
+`Val(w)` dispatch. At most two Julia specialisations per top-level call
+(full window and maybe one ragged). 5 new tests — 3 ragged-case round-
+trips + 2 updated preconditions. Test file grows to 80/80.
+
+### C2 — `ctrls` kwarg on `plus_equal_product_mod!` (modadd! pattern)
+
+Replaces the `when(ctrl) do plus_equal_product_mod!(...) end` wrap in
+`_shor_mulmod_E_controlled!` with a `ctrls::Tuple` kwarg. Now only the
+`add_qft_quantum!` step inside the function is gated by the control;
+QROM compute/uncompute and QFT/IQFT run unconditionally and self-cancel
+on the ctrl=|0⟩ branch.
+
+**Why this refactor**: the 50-shot probe at (N=15, cpad=1, c_mul=2) blew
+Orkan's 30-qubit hard cap during smoke shot. Error:
+
+    EagerContext: capacity would grow to 32 qubits (64.000 GiB).
+
+Root cause: `when(ctrl) do` wrapping the whole function pushed `ctrl`
+onto the control stack for every internal primitive. The QROM's internal
+Toffolis became CCCX, routed through `_multi_controlled_cx!` which
+allocates workspace ancillae. Peak = 20 live qubits (target+b+ctrl+
+scratch+qrom_anc) + 2 workspace for the depth-3 gate = 22, which fits…
+but during a `when()` nested on top it climbed past 30.
+
+**Fix mechanism**: QROM·QROM⁻¹ = I on scratch, QFT·QFT⁻¹ = I on target.reg.
+Running them unconditionally gives the same net channel either way; only
+the (quantum) addition step actually needs the control. Now every
+Toffoli stays at depth 1 (native CCX), no cascade, fits comfortably
+under 30.
+
+Matches the same `ctrls` kwarg pattern already used by `modadd!` —
+see `src/library/arithmetic.jl` line 177–180 for the `_apply_ctrls`
+helper. Beauregard 2003 p. 6's insight ("doubly control only the φADD(a)
+gates") is the same trick.
+
+### Performance note: 16 threads beats 32
+
+User's preference (saved as bd memory `orkan-thread-limit`): use
+`OMP_NUM_THREADS=16` on this device. 16 threads actually outperforms 32
+on this workload size AND avoids WSL OOM-kill risk. Strict limit — never
+use more. Applied to all test runs, probes, bench scripts this session.
+
+### Diagnostic gotcha: `| tail -N` defeats streaming
+
+Earlier in Session 47, tried monitoring a slow test run via
+`julia … 2>&1 | tail -15` in a `run_in_background` call. `tail -N` buffers
+**everything** until the upstream process exits, then prints the last N
+lines — so the output file stayed 0 bytes for the entire ~10-minute run,
+making the eager-flushed `_log()` progress markers inside the test file
+useless. Fix: route raw output straight to the background-task file
+(no downstream tail), monitor via `tail -F | grep` in Monitor.
+
+### D2 probe kicked off: 50-shot acceptance at (7, 15; t=3, c_mul=2)
+
+`probe_shor_E_N15.jl` now runnable at c_mul=2 post-C2. Running
+overnight to gather criterion-(a) and criterion-(c) hit rates. Each shot
+is ~1 min wall at 19 live qubits with 16 threads.
+
+### Phase D (what's next — probe-results-dependent)
+
+Decision branches on D2 outcome:
+  * If hit rate ≥ 30% → bead 6oc criteria (a)(b)(c) structurally met.
+    Criterion (d) Toffoli-count bench remains blocked pending D3.
+  * If hit rate < 30% → likely needs larger cpad (coset deviation
+    swamping the signal). Increase to cpad=2 and re-probe; peak live
+    climbs to 25 qubits, ~4× slower per shot but should stay under 30.
+
+**D3** — Gidney 2019 Fig 3 measurement-based O(√L) QROM uncomputation.
+Replaces the second `qrom_lookup_xor!` in each `_pep_mod_iter!` with
+measure-scratch-in-X + classical fixup table + low/high-half unary
+iteration. Cost drops from 2·(2^c_mul − 1) Toffoli per lookup pair to
+2^c_mul + 2·√(2^c_mul). At c_mul=5 (bead default): 31+8=39 vs 62, so
+~37% saving. At c_mul=2 (our current): 4+2.8=6.8 vs 6, actually WORSE
+for tiny cases — the O(√L) win is asymptotic. Defer to its own bead.
+
+### Files touched this session
+
+  * `src/library/arithmetic.jl`: `plus_equal_product_mod!` gains `ctrls`
+    kwarg (+ factored `_pep_mod_iter!` helper for `Val(w)` dispatch +
+    ragged-window support)
+  * `src/library/shor.jl`: `_shor_mulmod_E_controlled!` switches to
+    `plus_equal_product_mod!(…; ctrls=(ctrl,))` instead of `when(ctrl) do`
+  * `test/test_windowed_arithmetic.jl`: 5 new tests, updated preconditions
+  * `probe_shor_E_N15.jl` (new): 50-shot + 20-shot statistical acceptance
+    probe for bead 6oc criteria (a)(c)
+
+---
+
 ## 2026-04-22 — Session 47: `6oc` Phase B steps 2+3 — `_shor_mulmod_E_controlled!` + `shor_order_E`
 
 Red-green TDD for both the controlled windowed mulmod and the end-to-end
