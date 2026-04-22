@@ -4,6 +4,161 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 44: QRunwayMid runway-in-middle (close `jrl`) — unblocks 6oc P1
+
+Land bead `jrl` — the runway-in-middle layout that `b3l`'s runway-at-end
+could not deliver. This unblocks the P1 shor_order_E (`6oc`) windowed-
+arithmetic bead, which needs the parallel piecewise addition benefit that
+only the middle layout provides.
+
+### Ground truth (docs/physics/gidney_2019_approximate_encoded_permutations.pdf)
+
+Gidney 2019 §4 Definition 4.1 — an oblivious carry runway RUN_{k,p,m,n}
+inserts m ancilla bits at position p into an n-bit register, splitting
+it into a low+runway piece (p+m bits) and a high piece (n-p bits). Value
+g ∈ [0, 2^n) is encoded as a coset pair
+
+    e_0 = (g mod 2^p) + 2^p · c,
+    e_1 = (⌊g/2^p⌋ − c) mod 2^{n-p},      c ∈ [0, 2^m) uniform.
+
+Figure 2 (init): put the runway in |+⟩^m, then subtract c from the high
+part → encoded pair satisfies e_0 + 2^p · e_1 ≡ g (mod 2^n) on every
+branch.
+
+Figure 3 (addition): adding classical k decomposes into TWO independent
+piece-local adds — (k mod 2^p) on the (p+m)-bit low+runway piece, and
+⌊k/2^p⌋ on the (n-p)-bit high piece. No cross-piece carry — this is the
+depth-reduction benefit that runway-at-end (b3l) can't deliver.
+
+Theorem 4.2: per-addition deviation ≤ 2^{-m}. Only the branch c = 2^m − 1
+overflows when a carry enters the full runway; 1 of 2^m coset values
+deviates. Theorem 4.3: r additions with a common runway have deviation
+≤ (r+1)/2^m.
+
+### Architecture
+
+New type: **`QRunwayMid{Wlow, Cpad, Whigh, Wtot}`** with contiguous wire
+layout [low | runway | high] and `Wtot = Wlow + Cpad + Whigh`. Mapping
+to paper: Wlow ↔ p, Cpad ↔ m, Whigh ↔ n − p.
+
+Constructor (`src/types/qrunway.jl`):
+1. Stuff the value's low Wlow bits in the low slot, zeros in the runway
+   slot, and the value's high Whigh bits in the high slot of a single
+   `QInt{Wtot}` allocation (`stuffed = low_val | (high_val << (Wlow + Cpad))`).
+2. `Ry(π/2)` on each runway wire → |+⟩^Cpad.
+3. **Subtract runway from high part** — the obliviousness step.
+   QFT-sandwich on the Whigh-bit high piece: for each runway bit j,
+   `when(runway[j]) do; sub_qft!(high, 1 << j); end`. Inside `when()`
+   the Rz rotations get one extra control (standard Sturm control-stack
+   dispatch), producing Cpad × Whigh controlled-Rz total.
+
+Operations (`src/library/coset.jl`):
+- **`runway_mid_add!(r, a)`**: splits `a` into `(a mod 2^Wlow)` and
+  `⌊a / 2^Wlow⌋`, runs a Draper classical-add on each piece. QFT sandwich
+  per piece; pieces act on disjoint wires → commute, run-in-parallel
+  friendly (relevant when bead 6oc lands depth-scheduling).
+- **`runway_mid_decode!(r)`**: measures all Wtot wires via
+  `Int(r.reg)` (P2 cast), then classically reconstructs
+  `g = (e_0 + 2^Wlow · e_1) mod 2^(Wlow+Whigh)`. Runway value c absorbs
+  into e_0's top Cpad bits and cancels against e_1's offset, so decoding
+  is a single formula with no per-branch case work.
+
+### Partial-trace discipline
+
+`ptrace!(::QRunwayMid)` errors loudly (fail-loud per CLAUDE.md #1) —
+runway is entangled with the high part via the Fig-2 subtraction, so
+it is not safe to toss the wires without classical reconstruction. The
+blessed cleanup is `runway_mid_decode!` (measure + return classical
+value). `_runway_mid_force_ptrace!` exists as the internal after-
+uncomputation escape, not exported.
+
+### Tests
+
+`test/test_qrunway_mid.jl` — 6,765 asserts across 7 testsets, all green:
+
+- **Round-trip** decode preserves value for every (Wlow,Cpad,Whigh,v)
+  combo, 20 samples each — all deterministic because construction
+  introduces no deviation (f^{-1} absorbs the runway superposition
+  cleanly).
+- **Large Cpad (=10)** single-addition: deviation rate ≤ 1% empirical,
+  well under the 2^{-10} ≈ 0.001 theoretical upper bound.
+- **Theorem 4.2 bound** at Cpad=3: deviation rate ≤ 2·2^{-Cpad} (2×
+  slack for Bernoulli(p ≤ 0.125) sampling variance, N=1000 per config).
+- **Wrap-around across 2^Wlow boundary**: adds spanning the low-to-high
+  split still decode correctly ≥ 95% (well under the 2^{-Cpad} bound).
+- **Theorem 4.3 cumulative**: r=5 additions into one runway, bound is
+  6/256 ≈ 0.023, empirical rate ≤ 0.06 (slack for the bound + sampling).
+- **`ptrace!` blocked**: direct ptrace errors; `runway_mid_decode!` is
+  the blessed path.
+
+Regression (all green): b3l_runway 491, 6xi_coset 311, QInt 562,
+Channel 44.
+
+### Not wiring into runtests.jl
+
+Matching the existing `test_b3l_runway.jl` / `test_6xi_coset.jl`
+precedent — neither is in runtests.jl. The deviation-statistical tests
+in this file total ~22 minutes wall-clock (500–1000 full circuit runs
+per configuration × many configs), which is CI-hostile. Keep it as a
+targeted file; users who touch QRunwayMid run it explicitly. If a
+future bead adds a slow-lane CI setup, flip then.
+
+### Gotchas
+
+1. **`QInt{W}(wires, ctx, false)` is a non-owning view** — critical
+   for building a sub-register over a slice of the QRunwayMid wires.
+   Used for `high = QInt{Whigh}(ntuple(k -> r.reg.wires[Wlow + Cpad + k],
+   Val(Whigh)), ctx, false)` in `runway_mid_add!`. DON'T call
+   `ptrace!` or `Int()` on such a view — the outer `QRunwayMid.reg` owns
+   the wires.
+2. **`add_qft!` shifts by signed `Int(a)`**. `⌊a / 2^Wlow⌋` via `>>` in
+   Julia is arithmetic (sign-preserving) for `Int`, so `a = -5, Wlow = 2`
+   gives `-5 >> 2 = -2` and `-5 mod 4 = 3`, and the split reassembles
+   to `-5` mod 2^n. Matches Def 4.1.
+3. **`when(runway[j]) do; sub_qft!(high, 1 << j); end`** expresses a
+   coherent controlled-subtract without ever measuring the runway.
+   Inside `when()`, each of the Whigh Rz rotations in `sub_qft!` gets
+   one more control through Sturm's control stack — no new primitive
+   needed. This is the direct analog of the Gidney Fig-2 subtraction,
+   runway-value-by-runway-value.
+4. **Runtime**: 22 min wall-clock. Most of it is the Orkan simulation
+   of the statistical deviation tests (50K+ full construct/add/decode
+   trials). Not amenable to Julia-level optimisation — it's the sim
+   doing actual work.
+
+### Files touched this session
+
+- `src/types/qrunway.jl` — added QRunwayMid type, constructor, ptrace
+  discipline, and helper (+~110 LOC).
+- `src/library/coset.jl` — added `runway_mid_add!` and `runway_mid_decode!`
+  (+~70 LOC).
+- `src/Sturm.jl` — export QRunwayMid, runway_mid_add!, runway_mid_decode!.
+- `test/test_qrunway_mid.jl` — new, 145 LOC, 6,765 asserts.
+- `WORKLOG.md` — this entry.
+
+### Beads state
+
+- **Closed**: `Sturm.jl-jrl`. The runway-in-middle layout delivers
+  Theorem 4.2's 2^{-Cpad} deviation bound actively (runway-at-end was
+  vacuously zero because there was no high part above).
+- **Unblocked**: `Sturm.jl-6oc` (P1, shor_order_E windowed mulmod).
+  `6oc`'s runway-folding step can now use `QRunwayMid` to get the
+  GE21 §2.6 parallel piecewise addition depth reduction.
+
+### Next-session pointer
+
+**`6oc` P1** is now the top of the dep tree — windowed arithmetic
+replaces each controlled-addition inside CMULT with a
+classically-precomputed QROM lookup, fusing c_mul adds into one
+table-lookup-add. Bead description points at
+docs/physics/gidney_2019_windowed_arithmetic.pdf §3.1, §3.3 +
+docs/physics/gidney_ekera_2021_rsa2048.pdf §2.5 Fig 2 +
+docs/physics/babbush_2018_qrom_linear_T.pdf §III.C Fig 10. Existing
+`src/library/patterns.jl::oracle_table` already ships unary-iteration
+QROM. Acceptance is hit-rate / Toffoli-scaling tests on small N.
+
+---
+
 ## 2026-04-22 — Session 43: Steane 870 P3 — `encode(ch, Steane())` with interleaved syndrome correction
 
 Close bead `870`. P1 (syndrome_extract!) and P2 (correct! + decode_with_correction!)

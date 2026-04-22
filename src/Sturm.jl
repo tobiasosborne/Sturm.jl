@@ -101,8 +101,8 @@ export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @con
 # Types
 export QBool, QInt, WireID, ptrace!, discard!, Quantum
 export with_silent_casts
-export QCoset, QRunway, QROMTable, QROMTableLarge
-export coset_add!, runway_add!, runway_decode!
+export QCoset, QRunway, QRunwayMid, QROMTable, QROMTableLarge
+export coset_add!, runway_add!, runway_decode!, runway_mid_add!, runway_mid_decode!
 
 # Quantum control
 export when, cases, @cases
