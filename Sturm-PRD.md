@@ -264,7 +264,8 @@ Attempting to read `q.θ` as a value (rather than using `+=`) returns a `BlochPr
 # These live in src/gates.jl as convenience functions.
 # They are NOT part of the language spec.
 
-X!(q::QBool)  = q.θ += π
+X!(q::QBool)  = (q.φ += π; q.θ += π)     # Rz(π)·Ry(π), channel X — bead 3yz
+Y!(q::QBool)  = q.θ += π                  # Ry(π), channel Y
 Z!(q::QBool)  = q.φ += π
 S!(q::QBool)  = q.φ += π/2
 T!(q::QBool)  = q.φ += π/4

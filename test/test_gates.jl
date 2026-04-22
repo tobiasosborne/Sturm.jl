@@ -43,6 +43,45 @@ using Sturm
         end
     end
 
+    # X!/Y! channel discriminators — bead 3yz.
+    # X! on |0⟩ and Y! on |0⟩ both give |1⟩ (up to phase), so that test
+    # alone can't tell them apart. HXH = Z and HYH = -Y, so:
+    #   X correct ⇒ H·X·H|0⟩ = Z|0⟩ = |0⟩   → Bool == false deterministically
+    #   Y correct ⇒ H·Y·H|0⟩ = -Y|0⟩ = -i|1⟩ → Bool == true  deterministically
+    # A swapped X!/Y! convention inverts both.
+    @testset "X! on |+⟩ is |+⟩ (H·X·H|0⟩ = |0⟩ deterministically)" begin
+        @context EagerContext() begin
+            for _ in 1:100
+                q = QBool(0)
+                H!(q); X!(q); H!(q)
+                @test Bool(q) == false
+            end
+        end
+    end
+
+    @testset "Y! on |+⟩ is |-⟩ (H·Y·H|0⟩ = |1⟩ deterministically)" begin
+        @context EagerContext() begin
+            for _ in 1:100
+                q = QBool(0)
+                H!(q); Y!(q); H!(q)
+                @test Bool(q) == true
+            end
+        end
+    end
+
+    @testset "X!·Y!·Z! composes to identity channel on |0⟩" begin
+        # Applying X then Y then Z means operator = Z·Y·X = -i·I (pure phase).
+        # Channel is identity, so |0⟩ stays |0⟩ and measurement = 0 deterministic.
+        # Any one of X!/Y!/Z! being wrong would almost certainly break this.
+        @context EagerContext() begin
+            for _ in 1:100
+                q = QBool(0)
+                X!(q); Y!(q); Z!(q)
+                @test Bool(q) == false
+            end
+        end
+    end
+
     @testset "Z! has no effect on |0>" begin
         @context EagerContext() begin
             for _ in 1:100

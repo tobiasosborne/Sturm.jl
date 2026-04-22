@@ -98,7 +98,7 @@ using Sturm
         s = Sturm.to_ascii(ch)
         # One gate with ncontrols=1: ● on a, Ry(π) glyph on b
         @test occursin("●", s)
-        @test occursin("X", s) || occursin("Ry", s)  # Ry(π) → X or Ry(π)
+        @test occursin("Y", s) || occursin("Ry", s)  # Ry(π) → Y or Ry(π) — bead 3yz
     end
 
     @testset "measurement renders with classical wire" begin
@@ -133,7 +133,7 @@ using Sturm
         @test Sturm._gate_label(Sturm.RzNode(w, -π/2)) == "S†"
         @test Sturm._gate_label(Sturm.RzNode(w, π/4)) == "T"
         @test Sturm._gate_label(Sturm.RzNode(w, -π/4)) == "T†"
-        @test Sturm._gate_label(Sturm.RyNode(w, π)) == "X"
+        @test Sturm._gate_label(Sturm.RyNode(w, π)) == "Y"  # Ry(π) channel is Y — bead 3yz
         # Generic angles fall through to Rz(θ) / Ry(θ)
         @test Sturm._gate_label(Sturm.RzNode(w, 0.3)) == "Rz(0.3)"
         @test occursin("Ry", Sturm._gate_label(Sturm.RyNode(w, 0.7)))

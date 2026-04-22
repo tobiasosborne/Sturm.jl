@@ -22,6 +22,7 @@ using Sturm
     include("test_tracing_deep_when.jl")
     include("test_noise.jl")
     include("test_qecc.jl")
+    include("test_steane_syndrome.jl")
     include("test_grover.jl")
     include("test_memory_safety.jl")
     include("test_simulation.jl")

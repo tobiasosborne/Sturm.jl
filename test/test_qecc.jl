@@ -135,23 +135,25 @@ _pack_bits(bits::NTuple{7, Bool}) = UInt8(reduce(
     end
 
     @testset "encoded channel DAG has transversal structure" begin
-        # Logical X: one RyNode in the original DAG.
+        # Logical X: X! = Rz(π)·Ry(π) → RzNode then RyNode (bead 3yz).
         ch = trace(1) do q
             X!(q)
             q
         end
-        @test length(ch.dag) == 1
-        @test ch.dag[1] isa Sturm.RyNode
+        @test length(ch.dag) == 2
+        @test ch.dag[1] isa Sturm.RzNode
         @test ch.dag[1].angle ≈ π
+        @test ch.dag[2] isa Sturm.RyNode
+        @test ch.dag[2].angle ≈ π
 
         ch_enc = encode(ch, Steane())
 
-        # Original: 1 RyNode. Encoded: encoder + 7 transversal RyNodes + decoder.
+        # Original: 1 RzNode + 1 RyNode. Encoded: encoder + 7 transversal X! + decoder.
         # Steane encoder: 2 CNOTs + 3 H! (each 1 Rz + 1 Ry) + 9 CNOTs = 17 nodes.
-        # Transversal X: 7 RyNodes.
+        # Transversal X: 7 * (Rz + Ry) = 14 nodes.
         # Steane decoder: mirror of encoder = 17 nodes + 6 DiscardNodes (ancilla cleanup).
-        # Total expected: 17 + 7 + 17 + 6 = 47 nodes.
-        @test length(ch_enc.dag) == 47
+        # Total expected: 17 + 14 + 17 + 6 = 54 nodes.
+        @test length(ch_enc.dag) == 54
 
         # No non-unitary nodes should leak from the original (the original was
         # pure unitary). DiscardNodes appear only from decode!'s ancilla cleanup.
