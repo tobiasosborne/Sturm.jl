@@ -166,3 +166,182 @@ Convenience constructor: uses `current_context()`.
 """
 QRunway{W, Cpad}(value::Integer) where {W, Cpad} =
     QRunway{W, Cpad}(current_context(), value)
+
+# ── QRunwayMid: runway-in-middle layout (bead jrl) ──────────────────────────
+#
+# Gidney 2019 §4 Definition 4.1: RUN_{k,p,m,n} — oblivious carry runway of
+# length m at bit position p in a register of size n. The classical value
+# g ∈ [0, 2^n) is encoded as a pair (e_0, e_1) ∈ (Z/2^{p+m}) × (Z/2^{n-p}):
+#   e_0 = (g mod 2^p) + 2^p · c,
+#   e_1 = (⌊g/2^p⌋ − c) mod 2^{n-p},
+# where c ∈ [0, 2^m) is the runway (coset) index in uniform superposition.
+# Theorem 4.2 bounds the per-addition deviation by 2^{-m}: only the single
+# branch c = 2^m − 1 overflows when a carry enters the full runway.
+#
+# This layout is a strict generalisation of QRunway (which has no high part,
+# p = n, trivially 0-deviation): QRunwayMid actually delivers the depth
+# reduction from GE21 §2.6 by letting the (p+m)-bit low+runway piece and
+# the (n-p)-bit high piece be added **in parallel** (no inter-piece carry).
+#
+# Sturm parameters: Wlow ↔ p, Cpad ↔ m, Whigh ↔ n−p, Wtot = Wlow+Cpad+Whigh.
+# Wire layout is contiguous [low | runway | high].
+
+"""
+    QRunwayMid{Wlow, Cpad, Whigh, Wtot}
+
+Runway-in-middle oblivious carry runway (Gidney 1905.08488 §4 Def 4.1,
+Fig 2–3). Splits a value register of size `Wlow + Whigh` into a low part
+below a `Cpad`-wire runway and a high part above it, allowing the two
+pieces to be added independently in parallel.
+
+# Type parameters
+  * `Wlow`  — low part width (bits 0..Wlow−1 of the encoded value).
+  * `Cpad`  — runway length. Per-addition deviation is ≤ 2^{−Cpad}
+              (Theorem 4.2); r additions give ≤ (r+1)/2^{Cpad}
+              (Theorem 4.3).
+  * `Whigh` — high part width (bits Wlow..Wlow+Whigh−1 of the value).
+  * `Wtot`  — total wire count: must equal `Wlow + Cpad + Whigh`.
+
+# Layout
+`reg.wires[1..Wlow]`                               = low part (LSB=1).
+`reg.wires[Wlow+1..Wlow+Cpad]`                     = runway.
+`reg.wires[Wlow+Cpad+1..Wlow+Cpad+Whigh]`          = high part.
+
+# Partial-trace discipline
+Same as QRunway: direct `ptrace!` is an error (fail-loud per CLAUDE.md).
+The blessed cleanup is `runway_mid_decode!` — measure and classical
+reconstruct — or `_runway_mid_force_ptrace!` after explicit
+uncomputation.
+
+# References
+  Gidney (2019) arXiv:1905.08488 §4 Def 4.1, Thm 4.2, Fig 2–3.
+  Gidney-Ekerå (2021) arXiv:1905.09749 §2.6 (depth reduction use case).
+"""
+mutable struct QRunwayMid{Wlow, Cpad, Whigh, Wtot} <: Quantum
+    reg::QInt{Wtot}
+    consumed::Bool
+end
+
+classical_type(::Type{<:QRunwayMid}) = Int8
+classical_compile_kwargs(::Type{<:QRunwayMid{Wlow, Cpad, Whigh}}) where {Wlow, Cpad, Whigh} =
+    (bit_width = Wlow + Whigh,)
+
+function check_live!(q::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot}
+    q.consumed && error(
+        "Linear resource violation: QRunwayMid{$Wlow,$Cpad,$Whigh,$Wtot} already consumed"
+    )
+end
+
+function consume!(q::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot}
+    check_live!(q)
+    q.consumed = true
+end
+
+"""
+    ptrace!(q::QRunwayMid)
+
+ERROR: direct partial-trace of a QRunwayMid is forbidden. The runway bits
+are entangled with the high part by construction (Fig 2 subtract step).
+Blessed cleanup paths: `runway_mid_decode!` (measure and reconstruct) or
+`_runway_mid_force_ptrace!` after explicit uncomputation.
+"""
+function ptrace!(q::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot}
+    error(
+        "QRunwayMid: runway is entangled with the high part. Call " *
+        "runway_mid_decode! to measure-and-reconstruct, or uncompute " *
+        "the runway first and then _runway_mid_force_ptrace!."
+    )
+end
+
+"""
+    _runway_mid_force_ptrace!(r::QRunwayMid)
+
+Internal: release all wires after explicit uncomputation (reverse of the
+Fig-2 init subtraction). NOT safe without prior uncomputation.
+"""
+function _runway_mid_force_ptrace!(r::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot}
+    check_live!(r)
+    ptrace!(r.reg)
+    r.consumed = true
+end
+
+# ── Wire access ─────────────────────────────────────────────────────────────
+
+function Base.getindex(q::QRunwayMid{Wlow, Cpad, Whigh, Wtot}, i::Int) where {Wlow, Cpad, Whigh, Wtot}
+    check_live!(q)
+    return q.reg[i]
+end
+
+Base.length(::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot} = Wtot
+
+# ── Constructor ─────────────────────────────────────────────────────────────
+
+"""
+    QRunwayMid{Wlow, Cpad, Whigh}(ctx, value::Integer) -> QRunwayMid{Wlow, Cpad, Whigh, Wtot}
+
+Allocate a runway-in-middle register holding `value` ∈ [0, 2^(Wlow+Whigh))
+with `Cpad` runway qubits inserted between the low and high parts.
+
+# Circuit (Gidney 2019 Fig 2 Init)
+  1. Allocate Wtot = Wlow+Cpad+Whigh wires as `QInt{Wtot}` with `value`'s
+     low Wlow bits in the low slot, `value`'s high Whigh bits in the high
+     slot, and zeros in the runway slot.
+  2. Apply Ry(π/2) to each runway wire → |+⟩^Cpad. Runway is now in uniform
+     superposition over c ∈ [0, 2^Cpad).
+  3. Subtract the runway value c from the high part: `high -= c`. This is
+     the "obliviousness" step — after subtraction the high part is
+     (⌊value/2^Wlow⌋ - c) mod 2^Whigh, correlated with the runway so that
+     e_0 + 2^Wlow · e_1 still decodes to `value`.
+
+# Preconditions
+  * `Wlow ≥ 0`, `Cpad ≥ 1`, `Whigh ≥ 1`.
+  * `0 ≤ value < 2^(Wlow+Whigh)`.
+"""
+function QRunwayMid{Wlow, Cpad, Whigh}(ctx::AbstractContext, value::Integer) where {Wlow, Cpad, Whigh}
+    Wlow  >= 0 || error("QRunwayMid: Wlow must be ≥ 0, got $Wlow")
+    Cpad  >= 1 || error("QRunwayMid: Cpad must be ≥ 1, got $Cpad")
+    Whigh >= 1 || error("QRunwayMid: Whigh must be ≥ 1, got $Whigh")
+    n = Wlow + Whigh
+    0 <= value < (1 << n) || error(
+        "QRunwayMid: value=$value out of range [0, $(1<<n - 1)] for Wlow+Whigh=$n"
+    )
+
+    Wtot = Wlow + Cpad + Whigh
+
+    # Stuff value with a zero-filled runway gap: low bits at [0..Wlow),
+    # zeros at [Wlow..Wlow+Cpad), high bits at [Wlow+Cpad..Wtot).
+    low_val  = value & ((1 << Wlow) - 1)
+    high_val = value >> Wlow
+    stuffed  = low_val | (high_val << (Wlow + Cpad))
+    reg = QInt{Wtot}(ctx, stuffed)
+
+    # Step 2: runway → |+⟩^Cpad.
+    for p in 0:(Cpad - 1)
+        apply_ry!(ctx, reg.wires[Wlow + p + 1], π / 2)
+    end
+
+    # Step 3: subtract runway from high part (Fig 2). Runway is the Cpad-bit
+    # integer c = Σ 2^j · runway[j+1]. For each j, if runway[j+1] = 1, the
+    # classical subtraction "high -= 2^j" fires — coherently controlled by
+    # the runway bit. QFT-sandwich on the high piece turns each controlled
+    # subtract into a chain of controlled Rz rotations.
+    high = QInt{Whigh}(ntuple(k -> reg.wires[Wlow + Cpad + k], Val(Whigh)), ctx, false)
+    superpose!(high)
+    for j in 0:(Cpad - 1)
+        runway_bit = QBool(reg.wires[Wlow + j + 1], ctx, false)
+        when(runway_bit) do
+            sub_qft!(high, 1 << j)
+        end
+    end
+    interfere!(high)
+
+    return QRunwayMid{Wlow, Cpad, Whigh, Wtot}(reg, false)
+end
+
+"""
+    QRunwayMid{Wlow, Cpad, Whigh}(value::Integer) -> QRunwayMid{...}
+
+Convenience constructor: uses `current_context()`.
+"""
+QRunwayMid{Wlow, Cpad, Whigh}(value::Integer) where {Wlow, Cpad, Whigh} =
+    QRunwayMid{Wlow, Cpad, Whigh}(current_context(), value)

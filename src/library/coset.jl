@@ -268,3 +268,85 @@ function runway_decode!(r::QRunway{W, Cpad, Wtot}) where {W, Cpad, Wtot}
     r.consumed = true
     return x & ((1 << W) - 1)     # low W bits
 end
+
+# ── Runway-in-middle arithmetic (Gidney 2019 §4 Fig 3) — bead jrl ───────────
+
+"""
+    runway_mid_add!(r::QRunwayMid{Wlow, Cpad, Whigh, Wtot}, a::Integer) -> r
+
+Add the classical constant `a` into the runway-in-middle register, in-place.
+Gidney 1905.08488 Figure 3 / Definition 4.1 `v_k`: the scalar addition of `k`
+decomposes as **two independent piece-local additions**:
+
+  * low+runway piece (bits 0..Wlow+Cpad−1): add `a mod 2^Wlow`.
+  * high piece (bits Wlow+Cpad..Wtot−1):     add `⌊a / 2^Wlow⌋`.
+
+No carry propagates between the pieces — this is what the runway buys. The
+per-addition deviation is ≤ 2^{-Cpad} (Theorem 4.2): only the branch where
+the runway is full (c = 2^Cpad − 1) overflows and loses a carry.
+
+# Circuit
+QFT sandwich around each piece's Draper add. The two QFT-add-IQFT triples
+act on disjoint wires and therefore commute — in a parallel-depth setting
+(bead 6oc) they run simultaneously. Emitted here in sequence for
+simulation.
+
+# Reference
+  Gidney (2019) arXiv:1905.08488 §4 Definition 4.1, Theorem 4.2, Figure 3.
+  `docs/physics/gidney_2019_approximate_encoded_permutations.pdf`.
+"""
+function runway_mid_add!(r::QRunwayMid{Wlow, Cpad, Whigh, Wtot}, a::Integer) where {Wlow, Cpad, Whigh, Wtot}
+    check_live!(r)
+    ctx = r.reg.ctx
+    a_int = Int(a)
+
+    # Low+runway piece: (Wlow+Cpad) bits, wires [1..Wlow+Cpad].
+    Wlr = Wlow + Cpad
+    lr_wires = ntuple(i -> r.reg.wires[i], Val(Wlr))
+    lr = QInt{Wlr}(lr_wires, ctx, false)
+    lr_add = mod(a_int, 1 << Wlow)
+    if lr_add != 0
+        superpose!(lr)
+        add_qft!(lr, lr_add)
+        interfere!(lr)
+    end
+
+    # High piece: Whigh bits, wires [Wlow+Cpad+1 .. Wtot].
+    high_wires = ntuple(k -> r.reg.wires[Wlow + Cpad + k], Val(Whigh))
+    high = QInt{Whigh}(high_wires, ctx, false)
+    high_add = a_int >> Wlow              # ⌊a / 2^Wlow⌋, signed shift
+    if high_add != 0
+        superpose!(high)
+        add_qft!(high, high_add)
+        interfere!(high)
+    end
+
+    return r
+end
+
+"""
+    runway_mid_decode!(r::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) -> Int
+
+Measure all Wtot wires and return the decoded logical value in
+`[0, 2^(Wlow+Whigh))`. Consumes `r`.
+
+Reconstructs per Gidney 2019 Def 4.1 `f^{-1}`:
+  g_decoded = (e_0 + 2^Wlow · e_1) mod 2^(Wlow+Whigh)
+where e_0 is the (Wlow+Cpad)-bit measurement of the low+runway piece and
+e_1 is the Whigh-bit measurement of the high piece. The runway value c
+(which lives in the top Cpad bits of e_0) is absorbed automatically:
+e_0 + 2^Wlow · e_1 = (g mod 2^Wlow) + 2^Wlow · c + 2^Wlow · (⌊g/2^Wlow⌋ − c)
+                   = g.
+
+# Reference
+  Gidney (2019) arXiv:1905.08488 §4 Definition 4.1.
+"""
+function runway_mid_decode!(r::QRunwayMid{Wlow, Cpad, Whigh, Wtot}) where {Wlow, Cpad, Whigh, Wtot}
+    check_live!(r)
+    x = Int(r.reg)                              # measures all Wtot wires
+    r.consumed = true
+    e0 = x & ((1 << (Wlow + Cpad)) - 1)         # low+runway piece
+    e1 = x >> (Wlow + Cpad)                     # high piece
+    n  = Wlow + Whigh
+    return mod(e0 + (1 << Wlow) * e1, 1 << n)
+end
