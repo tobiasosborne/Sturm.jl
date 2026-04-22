@@ -849,6 +849,103 @@ end
 # ── Fig. 7 c-U_a: (x, 0) ↦ (a·x mod N, 0)                    ──────────────
 # ── Eq. 5.43 cascade: Π_j c-U_{a^{2^j}} on |1⟩_L              ──────────────
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Impl E — Gidney-Ekerå 2021 windowed arithmetic  (Sturm.jl-6oc Phase B step 2)
+#
+# Ground truth: Gidney 2019 "Windowed quantum arithmetic" arXiv:1905.07682 §3.4
+#   Fig 6, and Gidney-Ekerå 2021 arXiv:1905.09749 §2.5.
+#   docs/physics/gidney_2019_windowed_arithmetic.pdf
+#   docs/physics/gidney_ekera_2021_rsa2048.pdf
+#
+# Controlled modular multiplication on a coset-encoded target, via the
+# cmult-swap-cmult⁻¹ pattern (Fig 6):
+#   1. b := 0_coset                                       (fresh scratch QCoset)
+#   2. b += a · x  (mod N)    [controlled by ctrl]        — plus_equal_product_mod!
+#   3. SWAP(x, b)             [controlled by ctrl]        — 3 Toffoli / wire
+#   4. b -= a⁻¹ · x  (mod N)  [controlled by ctrl]        — plus_equal_product_mod!
+#   5. free b                                              — clean |0⟩ on both branches
+#
+# Control flow:
+#   ctrl = |1⟩:  after step 2, b = a·r.  After step 3, x = a·r, b = r.
+#                after step 4, b = r - a⁻¹·(a·r) = 0.  Final: x = a·r. ✓
+#   ctrl = |0⟩:  every step is a no-op.  b stays |0⟩, x unchanged. ✓
+#
+# This is NOT the Beauregard structure (which uses an unconditional QFT
+# sandwich and doubly-controlled modadds). Here the when(ctrl) wrapper
+# around each plus_equal_product_mod! forces controlled QFTs inside —
+# correct but higher Toffoli cost. Optimising to hoist the QFT out of
+# the ctrl wrapper is tracked as a Phase C follow-on.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot}, a::Integer,
+                                ctrl::QBool; c_mul::Int=2) -> target
+
+Controlled modular multiplication on a coset-encoded register:
+`target ← (a · target) mod N` when `ctrl = |1⟩`, identity when `ctrl = |0⟩`.
+`N = target.modulus`.
+
+# Preconditions
+  * `gcd(a, N) == 1` (so `a⁻¹ mod N` exists).
+  * `target.reg.ctx === ctrl.ctx`.
+
+# Cost
+Each of the two `plus_equal_product_mod!` sweeps fires ⌈Wtot/c_mul⌉ lookup-
+adds. Each lookup emits a Babbush-Gidney QROM (2^c_mul − 1 Toffoli forward,
+same backward in Phase A — √L measurement-based uncompute is Phase C).
+Controlled-SWAP costs 3 Toffoli per wire × (Wtot + Cpad) wires.
+
+# References
+  Gidney (2019) arXiv:1905.07682 §3.4 Fig 6.
+  Gidney-Ekerå (2021) arXiv:1905.09749 §2.5.
+"""
+function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
+                                     a::Integer, ctrl::QBool;
+                                     c_mul::Int=2) where {W, Cpad, Wtot}
+    check_live!(target); check_live!(ctrl)
+    target.reg.ctx === ctrl.ctx ||
+        error("_shor_mulmod_E_controlled!: target and ctrl must share a context")
+    N = Int(target.modulus)
+    a_mod = mod(Int(a), N)
+    gcd(a_mod, N) == 1 ||
+        error("_shor_mulmod_E_controlled!: need gcd(a, N)=1, got gcd($(a_mod), $N)=$(gcd(a_mod, N))")
+    a_inv = invmod(a_mod, N)
+    ctx = target.reg.ctx
+
+    # Fresh |0⟩ coset for the scratch accumulator b.
+    b = QCoset{W, Cpad}(ctx, 0, N)
+
+    # Step 1: b += a · target  (ctrl-controlled)
+    when(ctrl) do
+        plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul)
+    end
+
+    # Step 2: controlled-SWAP(target, b) wire-by-wire on reg + pad_anc.
+    # Under ctrl=|1⟩: state exchange. Under ctrl=|0⟩: no-op.
+    when(ctrl) do
+        for j in 1:Wtot
+            swap!(QBool(target.reg.wires[j], ctx, false),
+                  QBool(b.reg.wires[j],      ctx, false))
+        end
+        for j in 1:Cpad
+            swap!(QBool(target.pad_anc[j], ctx, false),
+                  QBool(b.pad_anc[j],      ctx, false))
+        end
+    end
+
+    # Step 3: b -= a⁻¹ · target  (controlled). Equivalent to adding
+    # (N - a⁻¹) mod N, since subtraction mod N is add-of-negation.
+    minus_a_inv = mod(N - a_inv, N)
+    when(ctrl) do
+        plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul)
+    end
+
+    # b is now |0⟩ coset on both ctrl branches — free it.
+    ptrace!(b)
+
+    return target
+end
+
 """
     shor_order_D(a::Int, N::Int; t::Int=3, verbose::Bool=true) -> Int
     shor_order_D(a::Int, N::Int, ::Val{t}) where {t}

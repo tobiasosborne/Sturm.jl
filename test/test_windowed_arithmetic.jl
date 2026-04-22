@@ -1,6 +1,7 @@
 using Test
 using Sturm
 using Sturm: qrom_lookup_xor!, plus_equal_product!, plus_equal_product_mod!, decode!
+using Sturm: _shor_mulmod_E_controlled!
 
 # Eager-flushed staged output (feedback_verbose_eager_flush).
 _t0 = time_ns()
@@ -280,6 +281,47 @@ end
     end
 
     _log("EXIT plus_equal_product_mod!")
+end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# _shor_mulmod_E_controlled! — Gidney 2019 §3.4 Fig 6 cmult-swap pattern
+# (Sturm.jl-6oc Phase B step 2)
+#
+# Controlled modular multiplication on a QCoset target:
+#     if ctrl = |1⟩:  target ← (a · target) mod N
+#     if ctrl = |0⟩:  target unchanged
+#
+# Three phases per Fig 6:
+#   1. b += a · x  (windowed, via plus_equal_product_mod!, under when(ctrl))
+#   2. controlled-SWAP(x, b) on all wires (reg AND pad_anc)
+#   3. b -= a⁻¹ · x  ≡  b += (-a⁻¹ mod N) · x  (windowed, under when(ctrl))
+# Then free b — clean |0⟩ coset on both ctrl branches.
+#
+# Tests use tiny N (= 3) with W=2 Cpad=2 to keep the deterministic no-wrap
+# regime while fitting under 18 live qubits. Slow on Orkan (~one minute per
+# case) but correct.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@testset "_shor_mulmod_E_controlled! (N=3 W=2 Cpad=1, ctrl=|1⟩, x=1)" begin
+    _log("ENTER _shor_mulmod_E_controlled!")
+
+    # Analytical no-wrap sanity check for (N=3 W=2 Cpad=1 a=2 x=1 c_mul=1):
+    # step 1 scratches = {2, 0, 0}, b branches max = 5 < 2^Wtot = 8. ✓
+    # step 3 (after swap) scratches = {1, 2, 1}, b branches max = 6 < 8. ✓
+    # ∴ deterministic single-shot assertion is safe at Cpad=1.
+    @testset "ctrl=|1⟩, x=1: target ← (2·1) mod 3 = 2" begin
+        _log("  ENTER ctrl=1 x=1  [peak ≈ 15 qubits, slow]")
+        @context EagerContext() begin
+            target = QCoset{2, 1}(1, 3)
+            ctrl = QBool(1)
+            _shor_mulmod_E_controlled!(target, 2, ctrl; c_mul=1)
+            @test decode!(target) == 2
+            @test Bool(ctrl) == true
+        end
+        _log("  EXIT ctrl=1 x=1")
+    end
+
+    _log("EXIT _shor_mulmod_E_controlled!")
 end
 
 _log("EXIT test_windowed_arithmetic.jl")
