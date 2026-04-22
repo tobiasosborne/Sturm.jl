@@ -76,21 +76,26 @@ end
 
 _log("ENTER probe_shor_E_N15")
 
-# Phase A: does the windowed path even work at (7, 15, t=3) with c_mul=2?
-# Single smoke shot first.
-_log("smoke: 1 shot at cpad=1 c_mul=2 (verify windowed path runs at N=15)")
+# c_mul=2 overflows Orkan's 30-qubit cap at N=15 cpad=1 — the when(ctrl)
+# wrap around plus_equal_product_mod! lifts CNOTs to CCCX via multi_controlled_cx!
+# workspace ancillae. Using c_mul=1 (no windowing) to stay under the cap;
+# proper c_mul=2 needs the `ctrls` kwarg refactor (Phase C2) to avoid the
+# outer when(ctrl) cascading onto internal QROM Toffolis.
+
+# Phase A: smoke shot — verify the end-to-end path runs at N=15 c_mul=1.
+_log("smoke: 1 shot at cpad=1 c_mul=1 (verify path runs at N=15)")
 r0 = @context EagerContext() begin
-    shor_order_E(7, 15, Val(3); cpad=1, c_mul=2, verbose=true)
+    shor_order_E(7, 15, Val(3); cpad=1, c_mul=1, verbose=true)
 end
 _log("smoke result: r=$r0")
 
-# Phase B: 50-shot statistical on order-finding.
-result_order = probe_shor_order_E(; N=15, a=7, t=3, cpad=1, c_mul=2, shots=50)
+# Phase B: 50-shot statistical on order-finding at c_mul=1.
+result_order = probe_shor_order_E(; N=15, a=7, t=3, cpad=1, c_mul=1, shots=50)
 
 # Phase C: 20-shot factoring (only runs if phase A was reasonable).
 if result_order.hit_rate > 5.0
     _log("proceeding to shor_factor_E probe")
-    result_factor = probe_shor_factor_E(; N=15, shots=20, cpad=1, c_mul=2)
+    result_factor = probe_shor_factor_E(; N=15, shots=20, cpad=1, c_mul=1)
 else
     _log("skipping factor probe — order hit rate too low")
 end

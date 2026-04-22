@@ -915,13 +915,18 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
     # Fresh |0⟩ coset for the scratch accumulator b.
     b = QCoset{W, Cpad}(ctx, 0, N)
 
-    # Step 1: b += a · target  (ctrl-controlled)
-    when(ctrl) do
-        plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul)
-    end
+    # Step 1: b += a · target  (controlled via `ctrls=(ctrl,)`).
+    # The `ctrls` kwarg pushes control only onto the add step inside
+    # plus_equal_product_mod! — the QROM/QFT surroundings run unconditionally
+    # and self-cancel on the ctrl=|0⟩ branch. Same correctness as
+    # `when(ctrl) do plus_equal_product_mod!(...) end` but without cascading
+    # the control onto QROM Toffolis (which would force _multi_controlled_cx!
+    # workspace ancillae past Orkan's 30-qubit cap at N=15, c_mul=2).
+    plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul, ctrls=(ctrl,))
 
-    # Step 2: controlled-SWAP(target, b) wire-by-wire on reg + pad_anc.
-    # Under ctrl=|1⟩: state exchange. Under ctrl=|0⟩: no-op.
+    # Step 2: controlled-SWAP(target, b) — still needs full when(ctrl) because
+    # SWAP has no self-inverse structure (it's CNOT³, each of which needs the
+    # control). Depth-1 ctrl on each CNOT → native Toffoli, no cascade.
     when(ctrl) do
         for j in 1:Wtot
             swap!(QBool(target.reg.wires[j], ctx, false),
@@ -933,12 +938,9 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
         end
     end
 
-    # Step 3: b -= a⁻¹ · target  (controlled). Equivalent to adding
-    # (N - a⁻¹) mod N, since subtraction mod N is add-of-negation.
+    # Step 3: b -= a⁻¹ · target  (same ctrls pattern as step 1).
     minus_a_inv = mod(N - a_inv, N)
-    when(ctrl) do
-        plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul)
-    end
+    plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul, ctrls=(ctrl,))
 
     # b is now |0⟩ coset on both ctrl branches — free it.
     ptrace!(b)
