@@ -131,6 +131,7 @@ export shor_order_B, shor_factor_B
 export shor_order_C, shor_factor_C
 export shor_order_D, shor_factor_D
 export shor_order_D_semi, shor_factor_D_semi
+export shor_order_E, shor_factor_E
 export shor_factor_EH
 
 # Channel / tracing

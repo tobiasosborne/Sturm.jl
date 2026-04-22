@@ -1250,6 +1250,172 @@ function shor_factor_D_semi(N::Int; max_attempts::Int=16)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Impl E — Gidney-Ekerå 2021 windowed arithmetic
+#
+# Same outer shape as shor_order_D_semi (Parker-Plenio semi-classical QFT,
+# single recycled counter qubit). The only structural change is the target:
+# a QCoset{W, Cpad} encoding |1⟩ mod N (coset representation, GE21 §2.4).
+# Controlled modular multiplication uses _shor_mulmod_E_controlled! from
+# Phase B step 2 — windowed arithmetic via QROM lookup-adds.
+#
+# Parameters (exposed as kwargs):
+#   cpad  — coset padding qubits. ↑cpad → ↓deviation, ↑qubit count.
+#           Total deviation over t stages bounded by ~(t·Wtot/c_mul)·2^-cpad.
+#   c_mul — multiplication window size. ↑c_mul → ↓multiplication count
+#           (folded into QROM lookups), ↑table size 2^c_mul entries.
+#
+# Acceptance (bead Sturm.jl-6oc):
+#   shor_order_E(7, 15, Val(3)) r=4 hit rate ≥ 30% over 50 shots
+#   shor_factor_E(15) → {3, 5} ≥ 50% over 20 shots
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    shor_order_E(a::Int, N::Int, ::Val{t}; cpad::Int=1, c_mul::Int=2,
+                  verbose::Bool=false) where {t} -> Int
+    shor_order_E(a::Int, N::Int; t::Int=3, kw...) -> Int
+
+Order of `a` mod `N` via Gidney-Ekerå 2021 windowed arithmetic on a coset-
+encoded eigenstate. Same Parker-Plenio semi-classical cascade as
+[`shor_order_D_semi`](@ref), with `mulmod_beauregard!` replaced by
+[`_shor_mulmod_E_controlled!`](@ref) — windowed modular multiplication
+with QROM lookup-adds (Gidney 2019 §3.4 Fig 6).
+
+# Parameters
+  * `t`     — exponent register width (counter recycled across `t` stages).
+  * `cpad`  — coset padding qubits (Gidney 1905.08488 Thm 3.2). Per-op
+              deviation ≤ `2^{-cpad}`; accumulated over `t · Wtot / c_mul`
+              lookup-adds per mulmod × `t` mulmods.
+  * `c_mul` — multiplication window size. 2^c_mul entries per lookup table.
+              Larger c_mul → fewer lookups, bigger tables.
+
+# Live-qubit budget (peak, during a single mulmod stage)
+  `3·W + 5·cpad + 1 + c_mul`  — target (W+2·cpad) + b (W+2·cpad) + ctrl + scratch (W+cpad) + qrom_anc.
+
+# References
+  * Gidney-Ekerå (2021) arXiv:1905.09749 §2.5, Fig 2.
+  * Parker & Plenio (2000) arXiv:quant-ph/0002014 (semi-classical iQFT).
+  * Ground truth PDFs under `docs/physics/`.
+"""
+function shor_order_E(a::Int, N::Int, ::Val{t}; cpad::Int=1, c_mul::Int=2,
+                      verbose::Bool=false) where {t}
+    gcd(a, N) == 1 || error("shor_order_E: a=$a and N=$N must be coprime")
+    1 <= a < N || error("shor_order_E: a=$a must satisfy 1 ≤ a < N=$N")
+    # Choose W such that N < 2^W strictly (QCoset invariant).
+    W = max(2, ceil(Int, log2(N + 1)))
+    N < (1 << W) || error("shor_order_E: internal W=$W does not satisfy N<2^W; N=$N")
+
+    ctx = current_context()
+    t0 = time_ns()
+    lq() = _live_qubits(ctx)
+    ms() = round((time_ns() - t0) / 1e6, digits=1)
+    verbose && _shor_log("[shor_E t=+0.0ms] start a=$a N=$N t=$t W=$W cpad=$cpad c_mul=$c_mul  live=$(lq())")
+
+    # Parker-Plenio 2000: LSB-first measurement; iter i consumes a^{2^(t-i)}.
+    a_js = [powermod(a, 1 << (t - i), N) for i in 1:t]
+    verbose && _shor_log("[shor_E t=+$(ms())ms] classical a_j=$(a_js)")
+
+    # Shared coset-encoded eigenstate |1⟩ mod N across all t stages.
+    # Boxing W at runtime via Val then dispatch — the underlying QCoset
+    # constructor takes type parameters.
+    target_coset = _alloc_shor_E_target(ctx, 1, N, W, cpad)
+    verbose && _shor_log("[shor_E t=+$(ms())ms] target = QCoset{$W,$cpad}(1, $N) eigenstate  live=$(lq())")
+
+    bits = Bool[]
+    sizehint!(bits, t)
+    for i in 1:t
+        a_j = a_js[i]
+
+        # (a) Fresh counter qubit, H → |+⟩.
+        c = QBool(0)
+        H!(c)
+
+        # (b) Classical phase correction from prior-measured bits.
+        corr = 0.0
+        for j in 1:(i - 1)
+            if bits[j]
+                corr -= 2π / (1 << (i - j + 1))
+            end
+        end
+        if corr != 0.0
+            c.φ += corr
+        end
+
+        # (c) Skip the mulmod if a_j == 1 (identity).
+        if a_j != 1
+            verbose && _shor_log("[shor_E t=+$(ms())ms] iter $i: mulby a_$i=$a_j  live=$(lq())")
+            t_stage = time_ns()
+            _shor_mulmod_E_controlled!(target_coset, a_j, c; c_mul=c_mul)
+            stage_ms = round((time_ns() - t_stage) / 1e6, digits=1)
+            verbose && _shor_log("[shor_E t=+$(ms())ms] iter $i: mulmod done in $(stage_ms)ms  live=$(lq())")
+        else
+            verbose && _shor_log("[shor_E t=+$(ms())ms] iter $i: SKIP mulby a_$i=1")
+        end
+
+        # (d) H then measure → bit m_i.
+        H!(c)
+        m_i = Bool(c)
+        push!(bits, m_i)
+        verbose && _shor_log("[shor_E t=+$(ms())ms] iter $i: m_$i = $(m_i)")
+    end
+
+    # Reconstruct ỹ LSB-first and decode period via continued fractions.
+    y_tilde = 0
+    for (idx, b) in enumerate(bits)
+        b && (y_tilde |= (1 << (idx - 1)))
+    end
+    verbose && _shor_log("[shor_E t=+$(ms())ms] ỹ = $(y_tilde) (bits = $(bits))")
+
+    ptrace!(target_coset)
+    r = _shor_period_from_phase(y_tilde, t, N)
+    verbose && _shor_log("[shor_E t=+$(ms())ms] decoded φ=$y_tilde/$(1<<t) r=$r  (total=$(ms())ms)")
+    return r
+end
+
+shor_order_E(a::Int, N::Int; t::Int=3, kw...) = shor_order_E(a, N, Val(t); kw...)
+
+"""
+    _alloc_shor_E_target(ctx, k, N, W, cpad) -> QCoset
+
+Runtime-dispatched QCoset allocator: picks the right type-parameterised
+QCoset based on the values of W and cpad (which come from `shor_order_E`'s
+kwargs, not the caller's dispatch). Uses a @generated-style value-type
+trick via `Val`.
+
+# Why not a single call
+`QCoset{W,cpad}(...)` requires W and cpad to be compile-time constants.
+`shor_order_E` takes them as Integer kwargs, which are runtime values, so
+we need an explicit dispatch point.
+"""
+function _alloc_shor_E_target(ctx::AbstractContext, k::Integer, N::Integer,
+                               W::Int, cpad::Int)
+    return QCoset{W, cpad}(ctx, k, N)
+end
+
+"""
+    shor_factor_E(N::Int; max_attempts::Int=16, cpad::Int=1, c_mul::Int=2) -> Vector{Int}
+
+Factor composite `N` via [`shor_order_E`](@ref). Identical classical
+post-processing (continued fractions + gcd) to [`shor_factor_D_semi`](@ref).
+"""
+function shor_factor_E(N::Int; max_attempts::Int=16, cpad::Int=1, c_mul::Int=2)
+    N >= 2 || error("shor_factor_E: N=$N must be ≥ 2")
+    N % 2 == 0 && return sort!([2, N ÷ 2])
+
+    for _ in 1:max_attempts
+        a = rand(2:(N - 1))
+        g = gcd(a, N)
+        if g > 1
+            return sort!([g, N ÷ g])
+        end
+
+        r = shor_order_E(a, N; cpad=cpad, c_mul=c_mul)
+        fs = _shor_factor_from_order(a, r, N)
+        !isempty(fs) && return fs
+    end
+    return Int[]
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Impl EH — Ekerå-Håstad 2017 short-DLP derivative
 #
 # Ground truth: Ekerå & Håstad, "Quantum algorithms for computing short
