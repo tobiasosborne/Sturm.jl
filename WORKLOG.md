@@ -4,6 +4,96 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 49: `6oc` solid stretch — perf fix + N=5 all-bases
+
+Stretches Session 48's N=5 statistical demonstration into a "solid"
+end-to-end story for bead 6oc, within the perf envelope of this device.
+
+### Perf fix: zero-copy amp access (`unsafe_wrap`)
+
+`measure!` and `_grow_state!` were iterating `ctx.orkan[i]` via
+`Base.getindex` — each indexing did a `ccall` to `orkan_state_get`. At
+20 qubits = 2^20 = 1M FFI crossings per operation. Catastrophic at scale.
+
+Fix: `unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, dim)` gives a
+zero-copy Julia Vector view of Orkan's amplitude buffer. All iteration
+stays Julia-native, `@inbounds`, SIMD-friendly. `_grow_state!` also
+upgraded to `unsafe_copyto!` for the bulk amp copy.
+
+Impact:
+  * `plus_equal_product_mod!` testset: 1m56s → 1m42s (12% faster)
+  * N=15 c_mul=1 mulmod: 431s → 388s (10% faster)
+  * N=5 shot wall: 35s → 28s (20% faster)
+  * `ptrace!` at 20 qubits: ~20 ms/call (previously unmeasured —
+    the FFI per-element loop was ~2 orders of magnitude slower)
+  * 80/80 tests still GREEN
+
+### @profile pass — remaining cost is distributed
+
+`probe_mulmod_profile.jl` runs Julia's @profile on one
+`_shor_mulmod_E_controlled!(QCoset{3,1,4}, 3, ctrl; c_mul=1)` at N=7.
+Top counts split roughly evenly between:
+  * Julia compiler / typeinfer / inlining / const_prop_call (first-of-kind
+    JIT compilation of Val(w) specialisations, closures from
+    `_apply_ctrls`, etc.)
+  * Quantum ops — `ptrace!`, `apply_cx!`, `when`, `measure!`
+
+No single hotspot to fix. The remaining `Sturm.jl-059` cost is a mix of
+amortised JIT on first-of-kind specialisations and per-gate Orkan/FFI
+overhead across thousands of small gates. Not a quick win.
+
+### Solid demonstration: N=5 all coprime bases
+
+`probe_shor_E_N5_all_bases.jl` — 5 shots each at a ∈ {2, 3, 4}, the full
+coprime set of Z_5*. Classical orders: 4, 4, 2.
+
+    a=2 (true r=4):  hit rate 3/5 = 60.0% ✓
+    a=3 (true r=4):  hit rate 2/5 = 40.0% ✓
+    a=4 (true r=2):  hit rate 4/5 = 80.0% ✓
+
+All three above the bead 6oc 30% threshold. Average 60% — essentially
+the ideal distribution (coset deviation at cpad=1 is absorbable). Total
+wall ~7 min for all three bases.
+
+`probe_shor_E_N5.jl` — 20 shots at a=2 — gave 12/20 = 60.0% r=4 hit rate
+post-fix (vs 40% pre-fix, likely statistical variance on the
+60%-expected distribution). Distribution:
+    r=1:  6/20 (30.0%)    — ỹ=0, fake period
+    r=2:  2/20 (10.0%)    — ỹ=4
+    r=4:  12/20 (60.0%)   ← TRUE ORDER
+
+`a=4` runs 2× faster than a=2/a=3 because two of the three counter
+iterations hit the `a_j == 1 → SKIP` identity path (a^4 = a^2 = 1 mod 5
+for a=4). Confirms the optimisation works end-to-end.
+
+### What "solid" means as of this session
+
+Bead 6oc structural content is **solid at N=5**, statistically
+verified across every coprime base:
+
+    Layer            │ Status
+    ─────────────────┼────────────────────────────────────────────
+    qrom_lookup_xor! │ 19 unit tests, tested at basis + superpos
+    plus_equal_pro…  │ 28 unit tests (non-modular)
+    plus_equal_pro…d │ 30 unit tests (QCoset variant, ragged+ctrls)
+    _shor_mulmod_E…  │ 2 unit tests, N=3 determinate
+    shor_order_E     │ 1 unit test (callable) + N=5 × 3 bases × 5 shots
+    _apply_ctrls     │ 0 new (reused modadd!'s helper)
+
+End-to-end demonstration at N=5 is the honest face of bead 6oc's
+acceptance criteria until `Sturm.jl-059` resolves (enabling N=15).
+
+### Files touched
+
+  * `src/context/eager.jl`: `measure!`, `_grow_state!` — unsafe_wrap fix
+  * `probe_shor_E_N5_all_bases.jl` (new): all-bases sweep
+  * `probe_mulmod_profile.jl` (new): @profile pass
+  * `probe_addq_timing.jl` (new): synthetic add_qft_quantum bench
+  * `probe_ptrace_timing.jl` (new): ptrace scaling by qubit count
+  * `probe_mulmod_E_bench.jl` (new): c_mul=1 vs c_mul=2 at N=15
+
+---
+
 ## 2026-04-22 — Session 48: `6oc` Phase C1+C2 — ragged last window + ctrls kwarg refactor
 
 Two back-to-back refactors to unblock bead 6oc's statistical acceptance
