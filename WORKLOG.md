@@ -103,7 +103,8 @@ new beads:
     - `Sturm.jl-b9r` CV-limit formal derivation (Holstein-Primakoff → GKP)
 
   * Implementation spine (P2):
-    - `Sturm.jl-9aa` QDit{d,W} type + prep primitive
+    - `Sturm.jl-9aa` QMod{d} type + prep primitive (renamed from QDit{d,W}
+      post-session per user preference — see 'Naming: QDit → QMod' below)
     - `Sturm.jl-ak2` spin-j Ry/Rz primitives (q.θ, q.φ)
     - `Sturm.jl-os4` squeezing primitive (q.θ₂)
     - `Sturm.jl-mle` cubic-phase magic primitive (q.θ₃)
@@ -144,6 +145,33 @@ Orkan (separate repo, feature request):
   * `ISSUES/qudit-support.md` (GH issue body)
 
 `WORKLOG.md`: this entry.
+
+### Naming: QDit → QMod (late-session correction)
+
+Initial survey + child beads used `QDit{d,W}` following the etymology of
+"qudit" (qu + dit, a d-ary digit). User rejected this mid-session: the Q-
+prefix convention parallels the **classical type name**, as in
+QBool / `Bool` and QInt / `Int` — not the information-theoretic unit.
+
+Rename: **`QDit{d,W}` → `QMod{d}`** for the single d-level wire, with
+classical counterpart `Mod{d}` (from Julia's `Mods.jl`, representing
+$\mathbb{Z}/d\mathbb{Z}$). The modular-arithmetic API matches SUM
+semantics exactly.
+
+The W parameter drops: single-wire primitives don't need a width. Where
+registers of multiple qudits are wanted, the existing `QInt` type
+extends to **`QInt{W,d}`** with d=2 default — d=2 recovers the existing
+qubit `QInt{W}`, d>2 gives a W-digit base-d integer register with
+mod-d ripple-carry arithmetic. **`QInt{W,d}` is deliberately not v0.1
+qudit scope** (the acceptance suite `goi-tests-d35` uses single-qudit
+gates + 2-qudit SUM only); filed as new P2 bead `goi-qint-d`.
+
+`QBool` stays its own type at d=2 (not `QMod{2}`), same reason
+Julia keeps `Bool` and `Mod{2}` separate — the logical API (`!`, `&&`,
+`||`) differs from the arithmetic API (`+ mod 2`).
+
+All survey docs, Orkan PR plan + ISSUE body, WORKLOG, and 6 goi-* beads
+updated. No code changes — nothing had been implemented yet.
 
 ---
 
