@@ -324,4 +324,33 @@ end
     _log("EXIT _shor_mulmod_E_controlled!")
 end
 
+# ═════════════════════════════════════════════════════════════════════════════
+# shor_order_E — end-to-end driver (Sturm.jl-6oc Phase B step 3)
+#
+# Same Parker-Plenio semi-classical cascade as shor_order_D_semi, with the
+# coset-encoded target + windowed mulmod. Single-shot callability test:
+# confirm the function runs and returns a classically-valid period candidate
+# (integer divisor from continued fractions). Full 50-shot statistical
+# acceptance (bead criterion a: ≥30% hit rate on (7,15;t=3)) deferred to a
+# bench run — runtime on this device is ~10-20 min for 50 shots at N=15.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@testset "shor_order_E — callable, returns valid period" begin
+    _log("ENTER shor_order_E")
+
+    @testset "shor_order_E(2, 3; t=3) single shot" begin
+        _log("  ENTER (2, 3; t=3)  [peak ≈ 13 qubits; cpad=1 c_mul=1]")
+        @context EagerContext() begin
+            # Order of 2 mod 3 is 2. Ideal distribution: ỹ ∈ {0, 4} with
+            # prob 1/2 each → r ∈ {1, 2}. Coset deviation perturbs slightly
+            # but still stays in divisors of |Z_N*|.
+            r = shor_order_E(2, 3, Val(3); cpad=1, c_mul=1)
+            @test r in [1, 2]
+        end
+        _log("  EXIT (2, 3; t=3)")
+    end
+
+    _log("EXIT shor_order_E")
+end
+
 _log("EXIT test_windowed_arithmetic.jl")

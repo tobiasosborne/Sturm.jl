@@ -4,6 +4,105 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 47: `6oc` Phase B steps 2+3 — `_shor_mulmod_E_controlled!` + `shor_order_E`
+
+Red-green TDD for both the controlled windowed mulmod and the end-to-end
+order-finding driver. Test count: +3 new tests (total 75 in the file,
+~27s wall with OMP_NUM_THREADS=32). Bead 6oc still open — 50-shot
+statistical acceptance deferred to a bench run.
+
+### Step 2: `_shor_mulmod_E_controlled!` (shor.jl)
+
+Gidney 2019 §3.4 Fig 6 cmult-swap-cmult⁻¹ pattern on a QCoset target:
+  1. `b := |0⟩_coset`                                       fresh scratch
+  2. `when(ctrl) b += a·target`           (plus_equal_product_mod!)
+  3. `when(ctrl) SWAP(target, b)`         wire-by-wire on reg + pad_anc
+  4. `when(ctrl) b -= a⁻¹·target`         → b back to |0⟩
+  5. ptrace b
+
+Test: N=3 W=2 Cpad=1 a=2 x=1, ctrl=|1⟩ → target decodes to (2·1) mod 3 = 2.
+
+**Live-qubit probe with eager-flush**: 5 → 9 → 9 → 9 → 5 across the three
+phases. Wall 1.5s at OMP_NUM_THREADS=32. No multi-controlled-ancilla
+explosion at Cpad=1 because the depth-2 controls stay local (QFT rotations
+inside `when(bj)` inside outer `when(ctrl)`).
+
+**Analytical no-wrap check**: at (N=3, W=2, Cpad=1, a=2, x=1, c_mul=1):
+step 1 scratches = {2, 0, 0}, b-branch max = 5 < 2^Wtot = 8 ✓. After
+swap, step 3 scratches = {1, 2, 1}, b-branch max = 6 < 8 ✓. All branches
+contained — deterministic single-shot assertion safe.
+
+### Step 3: `shor_order_E` + `shor_factor_E` (shor.jl)
+
+Identical outer cascade to `shor_order_D_semi` (Parker-Plenio semi-classical
+iQFT, single recycled counter qubit). Only differences:
+
+  * Eigenstate: `QInt{L}(ctx, 1)` → `QCoset{W, cpad}(ctx, 1, N)` (coset-
+    encoded |1⟩ mod N). Allocation dispatches through `_alloc_shor_E_target`
+    because `W` and `cpad` come from kwargs — not compile-time constants
+    at the call site.
+  * Mulmod: `mulmod_beauregard!(...)` → `_shor_mulmod_E_controlled!(...)`.
+  * Kwargs: `cpad::Int=1`, `c_mul::Int=2` exposed to the caller; defaults
+    match bead 6oc acceptance parameters.
+
+**`shor_factor_E`** mirrors `shor_factor_D_semi` byte-for-byte (random
+coprime draw + continued-fractions + gcd), just calls `shor_order_E`.
+
+Test: `shor_order_E(2, 3, Val(3); cpad=1, c_mul=1)` returns a period
+r ∈ {1, 2} (true order of 2 mod 3 is 2; ideal distribution ỹ ∈ {0, 4}
+gives r ∈ {1, 2}). Wall 1.9s. Single-shot callability — not statistical.
+
+### Gotcha: `c_mul | Wtot` precondition (from plus_equal_product_mod!)
+
+`plus_equal_product_mod!` requires `window | Ly`. In `_shor_mulmod_E_controlled!`,
+Ly = Wtot = W + cpad. So c_mul must divide (W + cpad). For the bead
+acceptance (N=15 → W=4, cpad=1 → Wtot=5), c_mul=2 does NOT divide 5 and
+will error. Two fixes for Phase C:
+  (a) Pad Wtot up to the next multiple of c_mul (add fake cpad bits).
+  (b) Relax `plus_equal_product_mod!` to handle a ragged final window
+      (partial, window_last = Ly - i).
+(b) is cleaner. Not blocking for Phase B — tests use c_mul=1 which always
+divides.
+
+### Performance discipline fixed mid-session
+
+Initial run of the 3-testset file piped through `| tail -15`, which buffers
+all output until julia exits — defeating the eager-flush `_log` calls and
+leaving us blind during the 9-minute run. The per-step `_ems` probe inside
+`_shor_mulmod_E_controlled!` (with `_live_qubits` at each step boundary)
+was the right diagnostic; visibility problem was the tail pipe. Fix:
+`stdbuf -oL … 2>&1` without any downstream tail, route through
+`run_in_background` to the task output file, monitor via `tail -F | grep`.
+Also: running with **OMP_NUM_THREADS=32** per Tobias' explicit preference
+(saved as bd memory `orkan-thread-limit`) — actually slightly faster than
+unbounded on this device.
+
+### Phase B step 4 (what's next)
+
+The bead acceptance needs 50-shot statistical verification. Options:
+  * Run a statistical probe script (not a test) that calls
+    `shor_order_E(7, 15, Val(3); cpad=?, c_mul=1)` 50 times and checks
+    the r=4 hit rate.
+  * Needs cpad large enough that per-shot deviation is tolerable (2^-cpad
+    × 3 stages × Wtot/1 ≈ 15·2^-cpad bound; cpad=4 gives bound ~1 which
+    is loose, cpad=3 gives bound ~2 … the bounds are pessimistic).
+  * Each shot on N=15: ~3 mulmods × maybe 10-30s each at W=4. ≥ 15 min
+    for 50 shots. Run as a probe overnight or bench file.
+
+Also: relax `plus_equal_product_mod!` to handle ragged last window, so
+that c_mul=2 works at W=4 cpad=1 (Wtot=5). This unlocks the bead's
+Toffoli-count acceptance criterion (d).
+
+### Files touched
+
+  * `src/library/shor.jl` (+97): `_shor_mulmod_E_controlled!` (step 2)
+  * `src/library/shor.jl` (+105): `shor_order_E`, `shor_factor_E`,
+    `_alloc_shor_E_target` (step 3)
+  * `src/Sturm.jl` (+1): export `shor_order_E`, `shor_factor_E`
+  * `test/test_windowed_arithmetic.jl` (+60): 3 new tests
+
+---
+
 ## 2026-04-22 — Session 46: `6oc` Phase B step 1 — `plus_equal_product_mod!`
 
 Red-green for the modular variant. Lands `plus_equal_product_mod!(target::QCoset,
