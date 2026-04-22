@@ -146,7 +146,12 @@ _pack_bits(bits::NTuple{7, Bool}) = UInt8(reduce(
         @test ch.dag[2] isa Sturm.RyNode
         @test ch.dag[2].angle ≈ π
 
-        ch_enc = encode(ch, Steane())
+        # correct=false: bare transversal, no syndrome ancillas. The structure
+        # asserted here is the transversalized-encoder-decoder shape. With
+        # correct=true (the default, bead 870 P3), syndrome_correct! is
+        # interleaved and the DAG is much bigger; that path is asserted in
+        # test_steane_channel_correct.jl.
+        ch_enc = encode(ch, Steane(); correct=false)
 
         # Original: 1 RzNode + 1 RyNode. Encoded: encoder + 7 transversal X! + decoder.
         # Steane encoder: 2 CNOTs + 3 H! (each 1 Rz + 1 Ry) + 9 CNOTs = 17 nodes.
@@ -174,7 +179,8 @@ _pack_bits(bits::NTuple{7, Bool}) = UInt8(reduce(
         @test ch.dag[1] isa Sturm.RzNode
         @test ch.dag[1].angle ≈ π
 
-        ch_enc = encode(ch, Steane())
+        # Bare transversal (see comment above in the X testset).
+        ch_enc = encode(ch, Steane(); correct=false)
 
         # Transversal Z: 7 RzNodes with angle π (in addition to the 6 Rz's
         # from encoder's H's and 6 from decoder's H's). Count all RzNodes
@@ -196,7 +202,7 @@ _pack_bits(bits::NTuple{7, Bool}) = UInt8(reduce(
         cx_nodes_orig = count(n -> n isa Sturm.CXNode, ch.dag)
         @test cx_nodes_orig == 1
 
-        ch_enc = encode(ch, Steane())
+        ch_enc = encode(ch, Steane(); correct=false)
         @test ch_enc isa Sturm.Channel{2, 2}
 
         # Encoder: 2 * 11 CXNodes = 22. Transversal CNOT: 7 pairwise CXNodes.

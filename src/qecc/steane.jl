@@ -271,3 +271,122 @@ function decode_with_correction!(code::Steane, physical::NTuple{7, QBool})
     correct!(physical, sx, sz)
     return decode!(code, physical)
 end
+
+# ── Coherent (measurement-free) syndrome correction — bead 870 P3 ────────────
+#
+# `syndrome_extract! + correct!` measure the 6 ancillas via `Bool(anc)` and
+# apply a classical-conditioned X/Z. That pipeline errors loudly inside
+# TracingContext (session 38: `Bool(q)` inside trace errors by design),
+# so `encode(ch, Steane())` — which wraps its body in a `trace()` — needs
+# a measurement-free variant.
+#
+# `syndrome_correct!` uses the same CNOT-based syndrome extraction but
+# replaces "measure + classical branch" with **coherent `when()`-based
+# multi-controls**: for each candidate error location j ∈ 1..7, apply the
+# appropriate Pauli controlled on the 3 ancillas encoding binary(j). For
+# zero-bits in binary(j), negative polarity via the X!-sandwich idiom.
+# Ancillas are then `ptrace!`'d.
+#
+# Correctness (weight-≤1 error input):
+#   - After the stabiliser CNOTs, the ancilla register holds |binary(k)⟩
+#     deterministically (k = error location, 0 = no error).
+#   - The 7 multi-controlled Paulis fire iff the ancilla value matches j.
+#     Exactly one fires (or none for k=0), correcting the error.
+#   - Data and ancillas end up in a product state (data = codeword,
+#     ancillas = |binary(k)⟩), so the ptrace! acts on a classical bitstring
+#     register and yields the corrected data without residual entanglement.
+#
+# Runs in any context that supports `when()` + `ptrace!` — i.e. every
+# concrete context (Eager/Density/Hardware) and TracingContext.
+
+"""
+Internal: apply `action()` coherently, controlled on the 3 ancillas `ancs`
+jointly encoding the binary value `j` (bit 0 ↔ ancs[1], bit 1 ↔ ancs[2],
+bit 2 ↔ ancs[3]). Uses the standard X!-sandwich idiom to flip polarity
+on zero-bits. `j` must satisfy 1 ≤ j ≤ 7.
+"""
+function _when_ancs_equal!(ancs::NTuple{3, QBool}, j::Int, action::Function)
+    @assert 1 <= j <= 7 "_when_ancs_equal!: j must be in 1..7 (got $j)"
+    b1 = (j & 1) != 0
+    b2 = (j & 2) != 0
+    b3 = (j & 4) != 0
+    # Invert polarity on bits that are 0 in binary(j).
+    b1 || X!(ancs[1])
+    b2 || X!(ancs[2])
+    b3 || X!(ancs[3])
+    when(ancs[1]) do
+        when(ancs[2]) do
+            when(ancs[3]) do
+                action()
+            end
+        end
+    end
+    # Restore polarity — X! is self-inverse (its channel is X, X·X = I).
+    b1 || X!(ancs[1])
+    b2 || X!(ancs[2])
+    b3 || X!(ancs[3])
+    return nothing
+end
+
+"""
+    syndrome_correct!(physical::NTuple{7, QBool})
+
+Coherent (measurement-free) syndrome extraction + correction for the Steane
+[[7,1,3]] code. Equivalent to `syndrome_extract! + correct!` as a channel
+on the data register, but uses `when()`-based multi-controls instead of
+`Bool(anc)` + classical branching, so it runs in TracingContext (needed
+by `encode(ch, Steane())`).
+
+Protocol per basis (Steane 1996 §3.3–3.5, Theorem 6; p. 21 ancilla-CNOT):
+
+  1. Allocate 3 fresh ancillas in |0⟩ (for Z-basis: also H to |+⟩).
+  2. For each of the 3 stabilisers k ∈ {1,2,3}, CNOT from each data qubit
+     in the support to ancilla k (for Z-basis: from ancilla to data, with
+     H-sandwich on the ancilla).
+  3. For each candidate error location j ∈ 1..7, apply the corresponding
+     Pauli (X or Z) to `physical[j]` controlled on the 3 ancillas
+     encoding binary(j). Only one fires for weight-1 errors.
+  4. `ptrace!` the 3 ancillas — they hold classical syndrome bits,
+     product-state with the corrected data, so tracing is clean.
+
+Then repeat for the other basis (X-type stabilisers detect Z errors).
+
+`physical` wires are not consumed.
+"""
+function syndrome_correct!(physical::NTuple{7, QBool})
+    # ── Basis 1: Z-type stabilisers detect X errors (corrected with X!) ─────
+    # NTuple immutability: `sx_ancs[k] ⊻= physical[i]` desugars to a
+    # setindex! on the tuple and errors. The raw `a ⊻ b` primitive is
+    # in-place on `a` — same idiom used on the NTuple data side of
+    # syndrome_extract! for the X-type stabilisers.
+    sx_ancs = ntuple(_ -> QBool(0.0), 3)
+    for (k, support) in enumerate(_STEANE_STAB_SUPPORTS)
+        for i in support
+            sx_ancs[k] ⊻ physical[i]
+        end
+    end
+    for j in 1:7
+        _when_ancs_equal!(sx_ancs, j, () -> X!(physical[j]))
+    end
+    for anc in sx_ancs; ptrace!(anc); end
+
+    # ── Basis 2: X-type stabilisers detect Z errors (corrected with Z!) ─────
+    # H-sandwich: CX ancilla→data under H conjugation = CZ. Equivalent to
+    # measuring the X-basis parity of the data support.
+    sz_ancs = ntuple(_ -> QBool(0.0), 3)
+    for anc in sz_ancs; H!(anc); end
+    for (k, support) in enumerate(_STEANE_STAB_SUPPORTS)
+        for i in support
+            # NTuple immutability: `a ⊻= b` desugars to a setindex!. The raw
+            # `a ⊻ b` primitive is already in-place (see syndrome_extract!).
+            physical[i] ⊻ sz_ancs[k]
+        end
+    end
+    for anc in sz_ancs; H!(anc); end
+    for j in 1:7
+        _when_ancs_equal!(sz_ancs, j, () -> Z!(physical[j]))
+    end
+    for anc in sz_ancs; ptrace!(anc); end
+
+    return nothing
+end
