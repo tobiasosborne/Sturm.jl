@@ -4,6 +4,134 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-22 — Session 45: `6oc` Phase A — `qrom_lookup_xor!` + `plus_equal_product!` atoms
+
+Red-green TDD for the Sturm.jl-6oc windowed-arithmetic bead (P1). Phase A
+lands the two lowest-level building blocks and their tests. Bead stays
+in_progress for Phase B (plus_equal_product_mod! → shor_order_E driver).
+
+### Ground truth (read first, before any code)
+
+  * Gidney 2019 "Windowed quantum arithmetic", arXiv:1905.07682 §3.1 Fig 2.
+    `docs/physics/gidney_2019_windowed_arithmetic.pdf`. Pseudocode:
+    `for i in range(0, len(y), w): target[i:] += table[y[i:i+w]]` with
+    `table = LookupTable([j*k for j in range(2**w)])`.
+  * Gidney-Ekerå 2021 §2.5 ("Windowed arithmetic") + §2.7 (interactions with
+    oblivious carry runways, Fig 3). `docs/physics/gidney_ekera_2021_rsa2048.pdf`.
+  * Babbush 2018 §III.C Fig 10 (QROM unary iteration, 4L−4 Toffoli) and
+    Appendix C (measurement-based uncomputation, O(√L)).
+    `docs/physics/babbush_2018_qrom_linear_T.pdf`. (Referenced; not directly
+    invoked — Bennett.jl's `emit_qrom!` already implements this QROM.)
+
+### Atoms shipped
+
+  * **`qrom_lookup_xor!(target::QInt{W}, addr::QInt{Ccmul}, table::QROMTable)`**
+    — `|a⟩|t⟩ → |a⟩|t ⊕ T[a]⟩`. XOR-into-existing-target variant of
+    `oracle_table`. Needed because `oracle_table` allocates fresh output
+    and can't uncompute cleanly into an existing register. Implementation is
+    ~20 lines wrapping Bennett's `emit_qrom!` + `apply_reversible!`.
+    `src/bennett/bridge.jl` (bottom); cached on (hash(data), Ccmul, W) so
+    compute+uncompute in one iteration is one compilation + one cache hit.
+
+  * **`plus_equal_product!(target::QInt{Lt}, k, y::QInt{Ly}; window::Int)`**
+    — `target += k·y` mod 2^Lt, windowed. Each iteration: extract y window →
+    precompute `T[j] = (j·k) mod 2^(Lt−i)` → `scratch = T[y_win]` via
+    `qrom_lookup_xor!` → `target_tail += scratch` via QFT-sandwich +
+    `add_qft_quantum!` → uncompute `scratch` via `qrom_lookup_xor!` again →
+    `ptrace!`. `src/library/arithmetic.jl` (after `mulmod_beauregard!`).
+
+    Preconditions (all fail-loud per Rule 1):
+      - `window | Ly` (Ly / window integer — no ragged tail in Phase A)
+      - `1 ≤ window ≤ Ly`
+      - `Lt ≤ 62` (UInt64 margin for `j·k` table entries)
+      - `target.ctx === y.ctx`
+
+    Early return on `k == 0` (identity — no lookups, no QFT, no scratch).
+
+### Test scope
+
+`test/test_windowed_arithmetic.jl` — 47 tests in two testsets, ~12s wall
+clock. Not added to runtests.jl (matches `test_qrunway_mid.jl` /
+`test_b3l_runway.jl` precedent). Cases deliberately bounded to
+`peak_live = 2·Lt + Ly + window ≤ 14` qubits for session-level runtime.
+
+### Gotchas
+
+1. **`oracle_table` allocates; uncomputation needs XOR-into-existing.**
+   Tried first to build `plus_equal_product!` directly on `oracle_table`.
+   The allocate-fresh shape forces `scratch = T[addr]` as a NEW register;
+   there is no XOR-into-existing path, so uncomputing `scratch` to `|0⟩`
+   needs calling the underlying QROM circuit twice on the same wires —
+   which is exactly `qrom_lookup_xor!`. Factored it out as the reusable
+   atom; both `plus_equal_product!` and (future) `plus_equal_product_mod!`
+   use it.
+
+2. **Per-iteration `QROMTable{window, W_tail}` rebuild is unavoidable.**
+   W_tail = Lt − i changes every iteration, so the type-parameter of
+   `QROMTable` varies across the loop. The underlying Bennett compilation
+   caches by `(hash(data), Ccmul, W)`, so cache hits are per W_tail ×
+   table-content. For the Shor pipeline (c_mul=2), W_tail sweeps L distinct
+   values per mulmod call and classical `k` varies per iteration of the
+   outer windowed exponentiation — so cache hit rate is low. Acceptable
+   for Phase A; worth revisiting if the mulmod_E bench is slow.
+
+3. **Orkan per-gate cost grows sharply with live-qubit count.**
+   Instrumented timing on `Lt=6, Ly=4, window=1` (4 iterations, peak 16
+   live qubits) showed total ~125s wall clock with most time in
+   `superpose!` / `interfere!` (QFT rotations) and the QROM
+   forward/reverse. Per-gate rate is roughly consistent with single-thread
+   statevector work (~ms per gate at 2^16 amps), which dominates when
+   we insert a W_tail-qubit scratch register. This is NOT a correctness
+   bug — the Lt=6 case produced the correct result 15 = 3·5 — but it
+   forces test budgets low. Follow-on: investigate Orkan's OpenMP
+   threading (may need OMP_NUM_THREADS explicit), or profile `apply_ry!`
+   / `apply_cx!` call overhead across the FFI boundary.
+
+4. **Test data must respect `QInt{W}` value range.**
+   First test pass caught a self-inflicted bug: `QInt{2}(7)` errors with
+   "value 7 out of range [0, 3]". Fix: any test with quantum input
+   register of width `Ly` must pick `y0 ∈ [0, 2^Ly)`.
+
+5. **Window-sized view of a QInt is a `QInt{window}` with
+   `wires=ntuple(j -> reg.wires[i + j], Val(window))` and
+   `consumed=false`.** Matches the non-owning-view pattern from
+   `_qbool_views` and from the `_W_tail` dispatch in the QInt module.
+
+### Phase B pickup points for the next agent
+
+1. **`plus_equal_product_mod!`** — Gidney 2019 §3.3. Differences vs §3.1:
+   (a) modular addition (modadd!) in the inner add, (b) fold the position
+   factor `2^i` into the lookup table so each window uses a different
+   table, (c) entries pre-reduced mod N via `QROMTable(..., modulus=N)`.
+
+2. **`_shor_mulmod_E_controlled!`** — controlled modular mulmod on a
+   coset-representation target, via two `plus_equal_product_mod!` calls
+   (cmult pattern). Layer on top of `mulmod_beauregard!`'s structure but
+   swap the modadd loop for a windowed one.
+
+3. **`shor_order_E` + `shor_factor_E`** — copy `shor_order_D_semi` /
+   `shor_factor_D_semi` (`src/library/shor.jl:1052` / `:1137`) and swap
+   `mulmod_beauregard!` → `_shor_mulmod_E_controlled!`. Acceptance bead
+   criteria: shor_order_E(7,15;t=3) r=4 ≥ 30% over 50 shots; shor_factor_E(15)
+   → {3,5} ≥ 50% over 20 shots.
+
+4. **Toffoli-count bench vs impl D** — acceptance criterion (d) requires
+   ≤ 0.5× impl D Toffoli at L=8. Likely needs measurement-based
+   uncomputation (Gidney 2019 Fig 3) on qrom_lookup_xor! reverse — O(√L)
+   instead of O(L). New primitive: `qrom_lookup_xor_reverse!` (or similar)
+   that measures the scratch in X basis + applies a correction table.
+
+### Files touched this session
+
+  * `src/bennett/bridge.jl` (+74): `qrom_lookup_xor!` + `_QROM_LOOKUP_XOR_CACHE`
+  * `src/library/arithmetic.jl` (+90): `plus_equal_product!`
+  * `src/Sturm.jl` (+3): export `plus_equal_product!`, `qrom_lookup_xor!`
+  * `test/test_windowed_arithmetic.jl` (new, 172 LOC): 47 tests, 12s wall
+  * `probe_pep_timing.jl` (new): minimal single-case probe for instrumenting
+    per-iteration cost. Kept for future performance work.
+
+---
+
 ## 2026-04-22 — Session 44: QRunwayMid runway-in-middle (close `jrl`) — unblocks 6oc P1
 
 Land bead `jrl` — the runway-in-middle layout that `b3l`'s runway-at-end

@@ -119,8 +119,11 @@ export find, amplify, phase_flip!
 export add_qft!, sub_qft!, add_qft_quantum!, sub_qft_quantum!,
        modadd!, mulmod_beauregard!
 
+# Windowed arithmetic (Gidney 2019 arXiv:1905.07682, GE21 arXiv:1905.09749 §2.5)
+export plus_equal_product!
+
 # Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
-export oracle_table
+export oracle_table, qrom_lookup_xor!
 
 # Shor's algorithm (docs/physics/nielsen_chuang_5.3.md)
 export shor_order_A, shor_factor_A
