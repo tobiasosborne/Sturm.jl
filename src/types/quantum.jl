@@ -2,7 +2,7 @@
     Quantum
 
 Abstract supertype of every Sturm-owned quantum register type (QBool, QInt{W},
-future QDit{D}, QField{…}, anyonic registers). Used to:
+QMod{d, K}, future QField{…}, anyonic registers). Used to:
 
   * scope the P9 auto-dispatch catch-all (`(f::Function)(q::Quantum)`) so it
     only fires on Sturm-owned types — avoids method piracy on `Base.Function`;

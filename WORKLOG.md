@@ -4,6 +4,138 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-23 — Session 53: `goi-type` (Sturm.jl-9aa) — implementer phase, GREEN
+
+Picked up where Session 52 left off. Two proposer designs already at
+`docs/design/qmod_design_proposer_{a,b}.md`; my role this session is
+implementer + orchestrator-as-reviewer per Rule 2 (3+1 protocol).
+
+### Synthesis (orchestrator's pick across the two proposers)
+
+Convergence was strong; the only real decisions were
+
+  * **`QMod{d, K}` (K hidden)** — both proposers picked NTuple-of-WireID
+    + a hidden second type parameter. Bikeshed: K vs W. Picked **K** per
+    Session 52 WORKLOG (W is reserved for the future `QInt{W,d}` width,
+    bead `goi-qint-d` / `dj3`).
+  * **No mixed-d xor stub.** Proposer A wanted `Base.xor(::QMod{d1},
+    ::QMod{d2}) where {d1,d2}` to error here; B deferred to bead `p38`
+    (SUM). Picked B's path: a missing method gives a `MethodError` —
+    loud-fail Rule 1 by Julia's dispatch machinery, with no risk of
+    accidentally pre-shadowing `p38`'s eventual `where {d}` SUM method.
+  * **`classical_type(::Type{<:QMod})` intentionally not defined.**
+    Bennett.jl currently lowers with mod-2^W arithmetic only; calling
+    `oracle(f, q::QMod{d})` would silently produce mod-2^K results
+    rather than mod-d. Leaving the trait undefined makes the failure a
+    `MethodError` instead of a wrong answer. Filed follow-on bead
+    `Sturm.jl-jba` ("QMod{d} Bennett interop — modular arithmetic in
+    reversible IR"). Tested explicitly: `@test_throws MethodError
+    Sturm.classical_type(QMod{3, 2})`.
+  * **No leakage TLS sweep this bead.** Layer 3 (unconditional O(1)
+    post-measurement check in `Base.Int`) ships; layer 2 (per-primitive
+    proof obligation) is later beads' responsibility; the dynamic
+    amplitude-buffer sweep (`with_qmod_leakage_checks`) is filed later
+    if real leakage bugs surface in `os4`/`mle`.
+  * **No `Bool(::QMod{2})` interop.** Survey §8.5 — `QMod` is the
+    arithmetic API on Z/dZ, `QBool` is the logical API. Tested:
+    `@test_throws MethodError Bool(QMod{2}())`.
+
+### Files
+
+  * `src/types/qmod.jl` (new, 167 lines) — type, ctor, `Base.Int`,
+    `Base.convert(::Type{Int}, ...)` with P2 warning, `ptrace!`,
+    `Base.length`, `_qmod_nbits` helper.
+  * `src/types/quantum.jl` — docstring lists `QMod{d, K}` instead of
+    "future QDit{D}".
+  * `src/Sturm.jl` — `include("types/qmod.jl")` after qint, export
+    `QMod`.
+  * `test/test_qmod.jl` (new, 244 lines) — 21 testsets, 56 assertions.
+  * `test/runtests.jl` — register `test_qmod.jl` after `test_qint.jl`.
+
+### TDD cycle
+
+Tests written first, then implementation (Rule 10). First green run was
+50/56 due to two unexported helpers used in the leakage-injection tests
+(`apply_ry!`, `live_wires`); fixed by qualifying as `Sturm.apply_ry!`
+and `Sturm.live_wires` per the existing private-symbol convention.
+Final: **56/56 GREEN**, 4.1 s wall.
+
+### Adjacent-test sanity (Rule 9 skepticism)
+
+Risk that the new ptrace!/Int/convert methods could shadow QInt or
+QBool dispatch. Verified by running:
+
+  * `test_qint.jl` — 562/562 ✓
+  * `test_ptrace.jl` — 9/9 ✓ (the `methods(ptrace!)` test uses
+    `any(...)`, doesn't pin a count, so a 5th method is fine)
+  * `test_implicit_cast.jl` — 14/14 ✓
+  * `test_autocleanup.jl` — 14/14 ✓
+
+No regressions. `Pkg.test()` not run (per device-perf memory: full
+suite is multi-minute).
+
+### Helper choice: `_qmod_nbits` via `leading_zeros`
+
+Proposer A used `ceil(Int, log2(d))`; Proposer B used `64 -
+leading_zeros(d - 1)`. Picked B's: pure integer arithmetic, no
+floating-point round-off worry, faster. Behaviour: d=2→1, d∈{3,4}→2,
+d∈{5..8}→3, d∈{9..16}→4. Matches `_qmod_nbits` semantics in both
+designs.
+
+### Subtle: `_warn_implicit_cast(QMod{d}, Int)` prints "QMod{3} → Int"
+
+Confirmed by test
+`@test_logs (:warn, r"Implicit quantum→classical cast QMod\{3\} → Int")`.
+Inside `Base.convert(::Type{Int}, q::QMod{d, K}) where {d, K}`,
+`QMod{d}` substitutes to `QMod{3}` which is the UnionAll `QMod{3} where
+K`; Julia stringifies that as `QMod{3}`, not `QMod{3, 2}`. Same trick
+QInt uses for its `QInt{W} → Int` warning text — minor surprise that
+the K parameter doesn't leak into the message.
+
+### `bd dolt push` STILL BLOCKED
+
+Same GH secret-scanning unblock URL as Sessions 51/52, now pointing at
+commit `37c10ae...` path `5kij7tbnvrv2aassnqpjmpbvbk45maci.darc:7715`.
+Local-only beads this session: bead `Sturm.jl-9aa` will be closed,
+`Sturm.jl-jba` (Bennett interop follow-on) was created. Re-attempt
+`bd dolt push` next session in case user clears the block. Local dolt
+ref `dq7a2s6a...` was already in sync at session start (clean
+fast-forward from origin).
+
+### What's unlocked / what's next
+
+`QMod{d}` is now a real type. The remaining qudit primitive beads can
+proceed in any order:
+
+  * `Sturm.jl-ak2` — spin-`j` Ry/Rz primitives (`q.θ`, `q.φ`)
+  * `Sturm.jl-os4` — squeezing primitive (`q.θ₂`)
+  * `Sturm.jl-mle` — cubic-phase magic primitive (`q.θ₃`)
+  * `Sturm.jl-p38` — SUM entangler (`a ⊻= b` at d>2)
+  * `Sturm.jl-nrs` — qubit-encoded fallback simulator integration
+
+P5 invariant (no qubits in user-facing code) requires that none of
+those primitives expose `q.wires` to user code — they should dispatch
+on `QMod{d, K}` and operate on the underlying NTuple internally, same
+as `QInt{W}`'s `+`/`-` do today.
+
+### `bd update Sturm.jl-9aa --close`
+
+Closing post-merge. Acceptance criteria from the bead description met:
+
+  * `QMod{3}(ctx)` constructs at d=3 (3-dim H via 2 qubit wires) ✓
+  * `Int(QMod{3}(ctx)) == 0` for the |0⟩ prep ✓
+  * Power-of-2 d packs perfectly, non-power-of-2 d has leakage guard ✓
+  * Existing qubit path preserved (562 QInt tests, 9 ptrace tests,
+    14 implicit-cast tests, 14 autocleanup tests all GREEN) ✓
+  * P2 warning fires on `x::Int = q` ✓
+
+The bead originally said "QMod{d,Ctx}<:Quantum parametric on dimension
+d and context Ctx" — that's wrong (context is a runtime field, not a
+type parameter, in Sturm's existing types). Fixed implicitly by
+following the proposer designs and Session 52 WORKLOG.
+
+---
+
 ## 2026-04-22 — Session 52: `goi-type` (Sturm.jl-9aa) — 3+1 proposer round, implementer deferred
 
 Claimed `Sturm.jl-9aa` (QMod{d} type + EagerContext prep primitive — the
