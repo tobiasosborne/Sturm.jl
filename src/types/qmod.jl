@@ -284,16 +284,124 @@ end
 @inline Base.:-(proxy::QModBlochProxy, δ::Real) = proxy + (-δ)
 
 """
+    _apply_spin_j_ry_d3!(ctx, wires::NTuple{2, WireID}, δ::Real)
+
+Apply `exp(-i δ Ĵ_y)` on the spin-`j = 1` irrep stored in two qubit wires
+(Bartlett-deGuise-Sanders convention `|s⟩ = |1, 1-s⟩_z`, s ∈ {0,1,2}; the
+`|11⟩_qubit` pattern is the forbidden leakage state).
+
+## Closed-form decomposition (orchestrator-verified, Session 56)
+
+    d¹(δ) = G_{01}(2γ) · G_{12}(2β) · G_{01}(2γ)
+
+where `G_{i,j}(θ)` is the 3×3 Ry(θ) embedded on levels `i ↔ j`:
+
+    γ = atan2(sin(δ/2),                 √2 · cos(δ/2))
+    β = atan2(sin(δ/2) · √(2−sin²(δ/2)), cos²(δ/2))
+
+The algebraic identity was verified by direct matrix multiplication
+(`docs/design/k8u_design_A.md` §1.1) and numerically to 1.1e-16 across
+δ ∈ {π/3, π/4, ±π, ±π/2, 2.718, 2π−10⁻¹⁰}. Plain `atan` / `acos` fail
+for δ < 0; `atan2` (`Julia atan(y,x)`) is mandatory.
+
+## Qubit-level circuit
+
+Encoding (`wires[1]`=LSB=`w_l`, `wires[2]`=MSB=`w_m`, little-endian):
+
+    label 0 ↔ |00⟩ (w_l=0, w_m=0)
+    label 1 ↔ |01⟩ (w_l=1, w_m=0)     [binary 01 with LSB on left = bit 0 = 1]
+    label 2 ↔ |10⟩ (w_l=0, w_m=1)
+    forbidden ↔ |11⟩ (w_l=1, w_m=1)
+
+**G_{01}(2γ)** rotates (|00⟩ ↔ |01⟩), identity on (|10⟩, |11⟩). Realised by
+an Ry(π) bracket on `w_m` (flipping the control frame) + controlled-Ry
+on `w_l` with `w_m` as control:
+
+    apply_ry!(w_m, π); push_control!(w_m); apply_ry!(w_l, 2γ); pop_control!; apply_ry!(w_m, -π)
+
+The `Ry(±π)` pair cancels exactly (`Ry(π)·Ry(-π) = I`), producing no
+global-phase drift under `when()` lifts.
+
+**G_{12}(2β)** rotates (|01⟩ ↔ |10⟩), identity on (|00⟩, |11⟩). Realised
+by a CX-scratch that routes `|01⟩` transiently through `|11⟩` (reversible
+scratch — forbidden state is used but restored at block exit):
+
+    apply_cx!(w_l, w_m); push_control!(w_m); apply_ry!(w_l, -2β); pop_control!; apply_cx!(w_l, w_m)
+
+**CRITICAL: the angle is `-2β`, not `+2β`.** The CX-scratch + CRy
+composition realises `G_{12}(-2β)`, not `G_{12}(+2β)`. Both k8u
+proposer designs missed this; it was caught at synthesis by numerically
+comparing the 4×4 qubit-circuit unitary against the target
+`I ⊕ G_{12}(2β)`. Swapping the sign fixes it exactly.
+
+## Gate count
+
+Per call: **10 Ry + 8 CX** (2 × G_{01} = 8 Ry + 4 CX; 1 × G_{12} =
+2 Ry + 4 CX).
+
+## `when()` composition
+
+`exp(-i δ Ĵ_y)` has determinant 1 on the spin-j irrep (Ĵ_y traceless),
+so — unlike the `:φ` Rz path — there is NO SU(d) vs U(d) global-phase
+cost to pay under control. The `Ry(±π)` brackets cancel identically in
+both the uncontrolled and the `when()`-controlled case.
+
+## References
+
+  * `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf` Eq. 5.
+  * `docs/design/k8u_design_{A,B}.md` (3+1 design round).
+  * `docs/physics/qudit_magic_gate_survey.md` §8.4 (global-phase policy).
+  * WORKLOG Session 56 (2026-04-23) — orchestrator synthesis + sign fix.
+
+See bead `Sturm.jl-k8u`.
+"""
+@inline function _apply_spin_j_ry_d3!(
+    ctx::AbstractContext,
+    wires::NTuple{2, WireID},
+    δ::Real,
+)
+    w_l, w_m = wires[1], wires[2]
+    sh = sin(δ/2)
+    ch = cos(δ/2)
+    γ = atan(sh, sqrt(2) * ch)
+    β = atan(sh * sqrt(2 - sh^2), ch^2)
+
+    # G_{01}(2γ): rotate (|00⟩ ↔ |01⟩), identity on (|1x⟩).
+    apply_ry!(ctx, w_m, π)
+    push_control!(ctx, w_m)
+    apply_ry!(ctx, w_l, 2γ)
+    pop_control!(ctx)
+    apply_ry!(ctx, w_m, -π)
+
+    # G_{12}(2β): rotate (|01⟩ ↔ |10⟩), identity on (|00⟩, |11⟩).
+    # SIGN FIX: CX·CRy·CX realises G_{12}(-2β), so negate the angle.
+    apply_cx!(ctx, w_l, w_m)
+    push_control!(ctx, w_m)
+    apply_ry!(ctx, w_l, -2β)
+    pop_control!(ctx)
+    apply_cx!(ctx, w_l, w_m)
+
+    # G_{01}(2γ) again (same as first block).
+    apply_ry!(ctx, w_m, π)
+    push_control!(ctx, w_m)
+    apply_ry!(ctx, w_l, 2γ)
+    pop_control!(ctx)
+    apply_ry!(ctx, w_m, -π)
+    return nothing
+end
+
+"""
     _apply_spin_j_rotation!(ctx, wires::NTuple{K, WireID}, axis::Symbol, δ::Real, ::Val{d})
 
 Apply the spin-`j = (d-1)/2` rotation `exp(-i δ Ĵ_{axis})` to the d-level
 register stored in `wires`. At d=2 this never runs (the d=2 getproperty
 routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2:
 
-  * **axis `:φ` (Rz)** — IMPLEMENTED via per-wire binary factorisation.
-    In Bartlett's labelling `|s⟩ = |j, j-s⟩_z` (Bartlett Eq. 5), Ĵ_z is
-    diagonal: `Ĵ_z |s⟩ = (j - s) |s⟩`. With `s = Σ_{i=0}^{K-1} b_i 2^i`
-    in the LE binary encoding, `exp(-i δ (j - s))` factors as
+  * **axis `:φ` (Rz)** — IMPLEMENTED at all d ≥ 3 (bead `Sturm.jl-nrs`)
+    via per-wire binary factorisation. In Bartlett's labelling
+    `|s⟩ = |j, j-s⟩_z` (Bartlett Eq. 5), Ĵ_z is diagonal:
+    `Ĵ_z |s⟩ = (j - s) |s⟩`. With `s = Σ_{i=0}^{K-1} b_i 2^i` in the LE
+    binary encoding, `exp(-i δ (j - s))` factors as
     `exp(-i δ j) · Π_i exp(+i δ b_i 2^i)`. The `exp(-i δ j)` prefactor is
     a global phase (SU(d) convention, CLAUDE.md "Global Phase and
     Universality" — becomes a controlled relative phase under `when()`,
@@ -301,15 +409,16 @@ routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2:
     `apply_rz!(ctx, wires[i+1], δ * 2^i)` (up to a per-wire global phase
     that sums to another overall global phase). Gate count: K single-
     qubit Rz's per call. Zero amplitude movement → no leakage at any d.
-  * **axis `:θ` (Ry)** — NOT YET IMPLEMENTED. Filed as bead `Sturm.jl-k8u`
-    (QMod{d} Ry rotation). Errors loudly with a pointer. The multi-qubit
-    decomposition of `exp(-i δ Ĵ_y)` on the (2j+1)-dim spin-j irrep was
-    left unresolved by both `nrs` proposer designs; k8u owns the
-    derivation + amplitude-level tests against the Wigner d-matrix.
+  * **axis `:θ` (Ry), d = 3** — IMPLEMENTED (bead `Sturm.jl-k8u`) via the
+    closed-form 3-Givens decomposition. See [`_apply_spin_j_ry_d3!`](@ref).
+  * **axis `:θ` (Ry), d ≥ 4** — NOT YET IMPLEMENTED. Filed as bead
+    `Sturm.jl-ixd` (QMod{d} Ry at d ≥ 4 via the sandwich
+    `V(π/2) · Rz · V(-π/2)` with δ-independent `V`). Errors loudly with
+    a pointer.
 
-See `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf` and
-`docs/design/nrs_design_proposer_{a,b}.md` for the decomposition sketch
-and the open Ry question.
+See `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf`,
+`docs/design/nrs_design_proposer_{a,b}.md`, and
+`docs/design/k8u_design_{A,B}.md`.
 """
 function _apply_spin_j_rotation!(
     ctx::AbstractContext,
@@ -327,13 +436,20 @@ function _apply_spin_j_rotation!(
         end
         return nothing
     elseif axis === :θ
-        error(
-            "spin-j θ (Ry) rotation on QMod{$d} (K=$K) is not yet implemented. " *
-            "The decomposition of exp(-i δ Ĵ_y) on the (2j+1)-dim spin-j irrep " *
-            "into multi-qubit gates is filed as bead `Sturm.jl-k8u` (QMod{d} " *
-            "Ry rotation). The φ (Rz) primitive on this register DOES work — " *
-            "use `q.φ += δ`. Use d=2 for full Ry support."
-        )
+        if d == 3
+            _apply_spin_j_ry_d3!(ctx, wires, δ)
+            return nothing
+        else
+            error(
+                "spin-j θ (Ry) rotation on QMod{$d} (K=$K) is not yet " *
+                "implemented for d ≥ 4. d = 3 is shipped via bead " *
+                "`Sturm.jl-k8u` (closed-form 3-Givens). For d ≥ 4, " *
+                "filed as bead `Sturm.jl-ixd` (QMod{d} Ry at d ≥ 4 via " *
+                "the sandwich V(π/2)·Rz·V(-π/2) with δ-independent V). " *
+                "The φ (Rz) primitive on this register DOES work — use " *
+                "`q.φ += δ`. Use d ∈ {2, 3} for full Ry support."
+            )
+        end
     else
         error("internal: _apply_spin_j_rotation! axis must be :θ or :φ, got $axis")
     end
