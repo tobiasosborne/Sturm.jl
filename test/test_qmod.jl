@@ -248,4 +248,190 @@ using Sturm
         @test_throws MethodError Sturm.classical_type(QMod{3, 2})
     end
 
+    # ── ak2: spin-j Ry/Rz primitives (q.θ, q.φ) ─────────────────────────────
+    #
+    # Bead `Sturm.jl-ak2`. v0.1 ships d=2 fully (bit-identical to qubit
+    # Ry/Rz on the underlying wire — Rule 11 preserved); d>2 errors loudly
+    # with a pointer to bead `Sturm.jl-nrs` (qubit-encoded fallback
+    # simulator) which carries the spin-j Givens decomposition.
+    # Refs: docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf
+    # Eqs. 5-7, 13; docs/physics/qudit_magic_gate_survey.md §8.1, §8.2.
+
+    """
+        _amps_snapshot(ctx) -> Vector{ComplexF64}
+
+    Test helper: zero-copy snapshot of the EagerContext's amplitude buffer.
+    Aliases Orkan's internal pointer; valid until the next gate or growth.
+    """
+    function _amps_snapshot(ctx)
+        dim = 1 << ctx.n_qubits
+        amps = unsafe_wrap(Array{ComplexF64, 1}, ctx.orkan.raw.data, dim)
+        return copy(amps)
+    end
+
+    @testset "ak2 d=2: q.θ += δ matches QBool .θ += δ on underlying wire" begin
+        # Rule 11 contract: at d=2, primitive 2 is bit-identical to qubit Ry.
+        for δ in (0.0, π/7, π/3, π, -π/4, 1.7)
+            amps_qbool = @context EagerContext() begin
+                q = QBool(0.0)
+                q.θ += δ
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}()
+                q.θ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+        end
+    end
+
+    @testset "ak2 d=2: q.φ += δ matches QBool .φ += δ on underlying wire" begin
+        # Symmetric: primitive 3 = qubit Rz on the single underlying wire.
+        # Test on a non-trivial start state so the phase is observable.
+        for δ in (π/3, π, -π/2, 0.41)
+            amps_qbool = @context EagerContext() begin
+                q = QBool(0.0); q.θ += π/3
+                q.φ += δ
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += π/3
+                q.φ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+        end
+    end
+
+    @testset "ak2 d=2: multi-rotation chain matches QBool chain" begin
+        # End-to-end: a sequence of θ and φ rotations on QMod{2} produces
+        # the same statevector as the same sequence on QBool.
+        seq = [(:θ, 0.4), (:φ, 1.1), (:θ, -0.3), (:φ, π/2)]
+        amps_qbool = @context EagerContext() begin
+            q = QBool(0.0)
+            for (ax, δ) in seq
+                ax === :θ ? (q.θ += δ) : (q.φ += δ)
+            end
+            _amps_snapshot(current_context())
+        end
+        amps_qmod = @context EagerContext() begin
+            q = QMod{2}()
+            for (ax, δ) in seq
+                ax === :θ ? (q.θ += δ) : (q.φ += δ)
+            end
+            _amps_snapshot(current_context())
+        end
+        @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+    end
+
+    @testset "ak2 d=2: q.θ -= δ delegates to q.θ += -δ" begin
+        for δ in (0.31, π/5, -π/3)
+            amps_plus = @context EagerContext() begin
+                q = QMod{2}()
+                q.θ += -δ
+                _amps_snapshot(current_context())
+            end
+            amps_minus = @context EagerContext() begin
+                q = QMod{2}()
+                q.θ -= δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_plus, amps_minus; atol=1e-12))
+        end
+    end
+
+    @testset "ak2 d=2: q.θ += δ inside when(::QBool) routes through control stack" begin
+        # Coherent control test: Bell-shaped state via H-on-ctrl + controlled
+        # Ry(π) (= Y up to global phase) on QMod{2} target. Statistics:
+        #   ctrl=0 → target |0⟩ (target untouched)
+        #   ctrl=1 → target |1⟩ (Ry(π) flips)
+        # P(ctrl=0, t=0) ≈ 0.5; P(ctrl=1, t=1) ≈ 0.5; off-diagonals ≈ 0.
+        N = 2000
+        counts = Dict((0,0)=>0, (0,1)=>0, (1,0)=>0, (1,1)=>0)
+        for _ in 1:N
+            @context EagerContext() begin
+                ctrl = QBool(0.5)
+                qm = QMod{2}()
+                when(ctrl) do
+                    qm.θ += π
+                end
+                c = Bool(ctrl) ? 1 : 0
+                t = Int(qm)
+                counts[(c, t)] += 1
+            end
+        end
+        @test counts[(0, 0)] > 0.40 * N
+        @test counts[(1, 1)] > 0.40 * N
+        @test counts[(0, 1)] < 0.05 * N
+        @test counts[(1, 0)] < 0.05 * N
+    end
+
+    @testset "ak2 d>2: q.θ += δ errors with deferral message" begin
+        # d>2 path defers to bead Sturm.jl-nrs. Includes pow2 d=4, non-pow2
+        # d ∈ {3, 5}. Error message must point at the follow-on bead.
+        for d in (3, 4, 5, 8)
+            @context EagerContext() begin
+                ctor = (() -> QMod{d}())
+                q = ctor()
+                err = try
+                    q.θ += π/3
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ErrorException
+                @test occursin("Sturm.jl-nrs", err.msg)
+                @test occursin("not yet implemented", err.msg)
+            end
+        end
+    end
+
+    @testset "ak2 d>2: q.φ += δ errors with deferral message" begin
+        for d in (3, 4, 5)
+            @context EagerContext() begin
+                ctor = (() -> QMod{d}())
+                q = ctor()
+                err = try
+                    q.φ += π/4
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ErrorException
+                @test occursin("Sturm.jl-nrs", err.msg)
+            end
+        end
+    end
+
+    @testset "ak2: proxy types — d=2 returns BlochProxy, d>2 returns QModBlochProxy" begin
+        @context EagerContext() begin
+            q2 = QMod{2}()
+            @test getproperty(q2, :θ) isa Sturm.BlochProxy
+            @test getproperty(q2, :φ) isa Sturm.BlochProxy
+        end
+        @context EagerContext() begin
+            q3 = QMod{3}()
+            @test getproperty(q3, :θ) isa Sturm.QModBlochProxy{3, 2}
+            @test getproperty(q3, :φ) isa Sturm.QModBlochProxy{3, 2}
+        end
+        @context EagerContext() begin
+            q4 = QMod{4}()
+            @test getproperty(q4, :θ) isa Sturm.QModBlochProxy{4, 2}
+        end
+    end
+
+    @testset "ak2: proxy access on consumed QMod errors" begin
+        @context EagerContext() begin
+            q = QMod{2}()
+            ptrace!(q)
+            @test_throws ErrorException q.θ
+        end
+        @context EagerContext() begin
+            q = QMod{3}()
+            ptrace!(q)
+            @test_throws ErrorException q.θ
+        end
+    end
+
 end
