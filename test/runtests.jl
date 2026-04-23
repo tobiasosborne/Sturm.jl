@@ -11,6 +11,7 @@ using Sturm
     include("test_gates.jl")
     include("test_rus.jl")
     include("test_qint.jl")
+    include("test_qmod.jl")
     include("test_patterns.jl")
     include("test_arithmetic.jl")
     include("test_channel.jl")

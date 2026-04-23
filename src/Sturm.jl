@@ -13,6 +13,7 @@ include("context/multi_control.jl")  # shared cascade, needs both context types
 include("types/quantum.jl")
 include("types/qbool.jl")
 include("types/qint.jl")
+include("types/qmod.jl")
 include("types/qcoset.jl")
 include("types/qrunway.jl")
 include("types/qrom_table.jl")
@@ -99,7 +100,7 @@ end
 export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @context, current_context
 
 # Types
-export QBool, QInt, WireID, ptrace!, discard!, Quantum
+export QBool, QInt, QMod, WireID, ptrace!, discard!, Quantum
 export with_silent_casts
 export QCoset, QRunway, QRunwayMid, QROMTable, QROMTableLarge
 export coset_add!, runway_add!, runway_decode!, runway_mid_add!, runway_mid_decode!
