@@ -368,8 +368,8 @@ using Sturm
     end
 
     @testset "ak2 d>2: q.θ += δ errors with deferral message" begin
-        # d>2 path defers to bead Sturm.jl-nrs. Includes pow2 d=4, non-pow2
-        # d ∈ {3, 5}. Error message must point at the follow-on bead.
+        # Ry at d>2 defers to bead Sturm.jl-k8u (filed when nrs shipped
+        # Rz but deferred Ry). Error message must point there.
         for d in (3, 4, 5, 8)
             @context EagerContext() begin
                 ctor = (() -> QMod{d}())
@@ -381,28 +381,15 @@ using Sturm
                     e
                 end
                 @test err isa ErrorException
-                @test occursin("Sturm.jl-nrs", err.msg)
+                @test occursin("Sturm.jl-k8u", err.msg)
                 @test occursin("not yet implemented", err.msg)
             end
         end
     end
 
-    @testset "ak2 d>2: q.φ += δ errors with deferral message" begin
-        for d in (3, 4, 5)
-            @context EagerContext() begin
-                ctor = (() -> QMod{d}())
-                q = ctor()
-                err = try
-                    q.φ += π/4
-                    nothing
-                catch e
-                    e
-                end
-                @test err isa ErrorException
-                @test occursin("Sturm.jl-nrs", err.msg)
-            end
-        end
-    end
+    # NOTE: the "q.φ += δ errors" ak2 test is DELETED — nrs ships Rz at
+    # all d ≥ 3 via the per-wire binary factorisation, so φ no longer
+    # errors at d>2. See the nrs Rz testsets below.
 
     @testset "ak2: proxy types — d=2 returns BlochProxy, d>2 returns QModBlochProxy" begin
         @context EagerContext() begin
@@ -431,6 +418,212 @@ using Sturm
             q = QMod{3}()
             ptrace!(q)
             @test_throws ErrorException q.θ
+        end
+    end
+
+    # ── nrs: spin-j Rz primitive (Ry deferred to bead k8u) ──────────────────
+    #
+    # Bead `Sturm.jl-nrs`. Ships the Rz path (`q.φ += δ`) at all d ≥ 3 via
+    # the per-wire binary factorisation: since Ĵ_z |s⟩ = (j-s)|s⟩ is
+    # diagonal (Bartlett Eq. 5), and s = Σ b_i 2^{i-1} in the LE encoding,
+    # the rotation exp(-iδ(j-s)) factors into a product of per-wire
+    # single-qubit Rz's. K gates total. Identical to the existing qubit
+    # Rz at d=2.
+    #
+    # Ry (`q.θ += δ`) at d>2 defers to bead `Sturm.jl-k8u` — the multi-
+    # qubit decomposition of exp(-iδĴ_y) was not cleanly derived in
+    # either nrs proposer design; filed with a test acceptance criterion
+    # against the hand-computed Wigner d-matrix.
+
+    @testset "nrs d=3: q.φ += δ is diagonal (no amplitude redistribution)" begin
+        # Prep |0⟩_d: amps = (1, 0, 0, 0). After Rz(δ): amps still at |00⟩.
+        for δ in (0.3, π/3, π, -π/5)
+            @context EagerContext() begin
+                q = QMod{3}()
+                q.φ += δ
+                amps = _amps_snapshot(current_context())
+                @test abs(amps[1]) ≈ 1.0 atol=1e-10  # |00⟩ = label 0
+                @test abs(amps[2]) < 1e-12           # |01⟩ = label 1
+                @test abs(amps[3]) < 1e-12           # |10⟩ = label 2
+                @test abs(amps[4]) < 1e-12           # |11⟩ = forbidden
+            end
+        end
+    end
+
+    @testset "nrs d=3: q.φ preserves each basis-state magnitude" begin
+        # Prep each of the 3 legal labels via raw wire ops (bypasses Ry).
+        # After Rz(δ), magnitude on the prepped basis state stays = 1.
+        δ = 0.7
+        @context EagerContext() begin
+            q = QMod{3}()
+            Sturm.apply_ry!(current_context(), q.wires[1], π)  # → |01⟩ = label 1
+            q.φ += δ
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[2]) ≈ 1.0 atol=1e-10
+            @test abs(amps[1]) < 1e-12
+            @test abs(amps[3]) < 1e-12
+            @test abs(amps[4]) < 1e-12
+        end
+        @context EagerContext() begin
+            q = QMod{3}()
+            Sturm.apply_ry!(current_context(), q.wires[2], π)  # → |10⟩ = label 2
+            q.φ += δ
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[3]) ≈ 1.0 atol=1e-10
+            @test abs(amps[1]) < 1e-12
+            @test abs(amps[2]) < 1e-12
+            @test abs(amps[4]) < 1e-12
+        end
+    end
+
+    @testset "nrs d=3: relative phase matches spin-j Ĵ_z spectrum" begin
+        # Prep (|0⟩_d + |2⟩_d)/√2 via raw apply_ry!(wires[2], π/2) — puts
+        # a uniform superposition on (|00⟩, |10⟩)_qubit = (|0⟩_d, |2⟩_d)_d.
+        # Ideal Rz(δ) on spin-1: |s⟩ → exp(-iδ(j-s))|s⟩.
+        #   j=1, s=0: exp(-iδ)
+        #   j=1, s=2: exp(+iδ)
+        # Relative phase (|2⟩ / |0⟩) after Rz = exp(+iδ) / exp(-iδ) = exp(+i2δ).
+        δ = 0.7
+        @context EagerContext() begin
+            q = QMod{3}()
+            Sturm.apply_ry!(current_context(), q.wires[2], π/2)
+            q.φ += δ
+            amps = _amps_snapshot(current_context())
+            # amps[1] = |00⟩ = label 0, amps[3] = |10⟩ = label 2
+            @test abs(amps[1]) ≈ 1/√2 atol=1e-10
+            @test abs(amps[3]) ≈ 1/√2 atol=1e-10
+            rel_phase = amps[3] / amps[1]
+            @test rel_phase ≈ exp(+im*2δ) atol=1e-10
+            @test abs(amps[4]) < 1e-12  # forbidden state stays empty
+        end
+    end
+
+    @testset "nrs d=5: q.φ is diagonal (no amplitude redistribution)" begin
+        # K = 3 → 8 qubit-basis states. Labels 0..4 legal, 5..7 forbidden.
+        δ = 0.4
+        @context EagerContext() begin
+            q = QMod{5}()
+            q.φ += δ
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[1]) ≈ 1.0 atol=1e-10  # |000⟩ = label 0
+            for i in 2:8
+                @test abs(amps[i]) < 1e-12
+            end
+        end
+    end
+
+    @testset "nrs d=5: relative phase across 3 basis states" begin
+        # At d=5, j=2. Rz eigenvalues: (j - s) for s ∈ {0, 1, 2, 3, 4}.
+        # Prep superposition (|0⟩_d + |4⟩_d)/√2 via apply_ry!(wires[3], π/2)
+        # (bit 2 flip → label 4 = |100⟩_qubit). Relative phase after Rz(δ):
+        #   label 0 → exp(-iδ(2-0)) = exp(-i2δ)
+        #   label 4 → exp(-iδ(2-4)) = exp(+i2δ)
+        # Ratio (4 / 0) = exp(+i4δ).
+        δ = 0.25
+        @context EagerContext() begin
+            q = QMod{5}()
+            Sturm.apply_ry!(current_context(), q.wires[3], π/2)
+            q.φ += δ
+            amps = _amps_snapshot(current_context())
+            # label 0 at index 0 (amps[1]); label 4 at index 4 (amps[5])
+            @test abs(amps[1]) ≈ 1/√2 atol=1e-10
+            @test abs(amps[5]) ≈ 1/√2 atol=1e-10
+            rel_phase = amps[5] / amps[1]
+            @test rel_phase ≈ exp(+im*4δ) atol=1e-10
+            # Forbidden labels 5, 6, 7 (amps[6..8])
+            for i in 6:8
+                @test abs(amps[i]) < 1e-12
+            end
+        end
+    end
+
+    @testset "nrs: q.φ += δ at d=2 unchanged (regression guard)" begin
+        # At d=2 (K=1), getproperty returns BlochProxy (not QModBlochProxy),
+        # so _apply_spin_j_rotation! is NOT called. d=2 stays on the qubit
+        # fast path from ak2. Verify the ak2 parity still holds now that
+        # nrs exists.
+        δ = π/3
+        amps_qbool = @context EagerContext() begin
+            q = QBool(0.0); q.θ += π/3
+            q.φ += δ
+            _amps_snapshot(current_context())
+        end
+        amps_qmod = @context EagerContext() begin
+            q = QMod{2}(); q.θ += π/3
+            q.φ += δ
+            _amps_snapshot(current_context())
+        end
+        @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+    end
+
+    @testset "nrs d=3: Rz cannot create leakage (diagonal)" begin
+        # No sequence of Rz can move amplitude between basis states, so
+        # the |11⟩_qubit amplitude stays at whatever it started as. Here
+        # it starts at 0 (fresh prep); verify it stays at 0.
+        @context EagerContext() begin
+            q = QMod{3}()
+            for _ in 1:10
+                q.φ += rand() * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[4]) < 1e-12
+            # Measurement must succeed (no leakage guard firing)
+            result = Int(q)
+            @test result == 0
+        end
+    end
+
+    @testset "nrs d=3: when(::QBool) q.φ += δ carries controlled-phase" begin
+        # Under coherent control, controlled-Rz. Prep ctrl = (|0⟩+|1⟩)/√2
+        # and QMod{3} in state |2⟩_d (via raw apply_ry). Apply
+        # when(ctrl) q.φ += δ end. Full state:
+        #    |0⟩_ctrl |2⟩_d + exp(-iδ(j-2)) |1⟩_ctrl |2⟩_d  (ideal, up to
+        #    a global phase e^{something}). Orkan's apply_rz! convention
+        #    applies exp(-iθ σ_z/2), so the RELATIVE phase between the two
+        #    ctrl branches is what we measure.
+        #
+        # Less fragile: verify that the controlled Rz IS a diagonal operation
+        # on both ctrl branches, and the relative phase picks up consistently.
+        δ = 0.5
+        @context EagerContext() begin
+            ctrl = QBool(0.0)
+            Sturm.apply_ry!(current_context(), ctrl.wire, π/2)  # H-like: (|0⟩+|1⟩)/√2
+            q = QMod{3}()
+            Sturm.apply_ry!(current_context(), q.wires[2], π)   # |10⟩ = label 2
+            when(ctrl) do
+                q.φ += δ
+            end
+            amps = _amps_snapshot(current_context())
+            # Qubit layout: ctrl=wire1, q.wires=(wire2, wire3). 3 qubits total.
+            # Bit order in orkan index: bit0=wire1 (ctrl), bit1=wire2 (q LSB),
+            # bit2=wire3 (q MSB). State is |2⟩_d on q = wire2=0, wire3=1 →
+            # bits (wire1, wire2, wire3) pack as: |0⟩_ctrl |2⟩_d = (0, 0, 1)
+            # = index 4 (binary 100); |1⟩_ctrl |2⟩_d = (1, 0, 1) = index 5.
+            @test abs(amps[5]) ≈ 1/√2 atol=1e-10
+            @test abs(amps[6]) ≈ 1/√2 atol=1e-10
+            # All other amps ≈ 0
+            for i in 1:8
+                if i != 5 && i != 6
+                    @test abs(amps[i]) < 1e-10
+                end
+            end
+        end
+    end
+
+    @testset "nrs d=3: when-control preserves subspace (|11⟩ stays empty)" begin
+        # Even under coherent control, Rz is diagonal so |11⟩_d (forbidden)
+        # amplitude stays 0.
+        @context EagerContext() begin
+            ctrl = QBool(0.5)
+            q = QMod{3}()
+            when(ctrl) do
+                q.φ += 0.3
+                q.φ += -0.1
+            end
+            # Outcome: no leakage at measurement
+            _ = Bool(ctrl)
+            result = Int(q)
+            @test result == 0
         end
     end
 

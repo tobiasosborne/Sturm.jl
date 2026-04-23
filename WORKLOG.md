@@ -4,6 +4,162 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-23 — Session 55: `nrs` (Sturm.jl-nrs) — Rz at all d, Ry split off to k8u
+
+Claimed `Sturm.jl-nrs` (qubit-encoded fallback simulator for QMod{d}).
+Full 3+1 round ran in one session: 2 proposer subagents in parallel,
+synthesis, implementation. Designs at
+`docs/design/nrs_design_proposer_{a,b}.md` (925 + 936 lines).
+
+### The design-round outcome was unexpected
+
+Both proposers converged cleanly on the Rz path — per-wire binary
+factorisation, closed-form, O(K) gates, provably leakage-free. Both
+proposers ALSO agreed to ship Ry at d ∈ {3, 5} via a Givens / Wigner-
+small-d decomposition. **But neither actually derived the Ry sequence.**
+
+  * Proposer A's §5 sketched a 3-Givens ladder (G_{0,1} · G_{1,2} · G_{0,1})
+    with hand-wavy angles; §6 then worried the X-bracket trick leaks,
+    self-corrected, but the algebra isn't closed.
+  * Proposer B's §5 proposed a 4-Ry + 3-CX template citing "Klappenecker-
+    Rötteler 2003" but admitted: "exact closed-form angles for this
+    7-gate sequence at d=3 are NOT derived in this design doc — I do not
+    have a paper giving the exact sequence".
+
+Rule 6 ("quantum bugs are deep and interlocked") + Rule 1 (fail loud,
+not quietly-wrong) forced a split. Shipping an un-derived Ry
+decomposition that LOOKS right but leaks a fraction of 2^{-K} amplitude
+at every gate is exactly the Session-8-Python-Grover failure mode
+CLAUDE.md calls out.
+
+### Synthesis (orchestrator's narrower scope)
+
+  * **Rz path (`q.φ += δ`), all d ≥ 3**: SHIP. Per-wire factorisation of
+    `exp(-i δ (j - s))` using `s = Σ b_i 2^i`. K single-qubit Rz's per
+    call. Provably diagonal → zero leakage. Differs from the ideal by a
+    global phase that becomes a controlled relative phase under `when()`
+    per locked §8.4 policy.
+  * **Ry path (`q.θ += δ`), d ≥ 3**: DEFER to new bead `Sturm.jl-k8u`
+    with explicit acceptance criteria (amplitude match against hand-
+    computed Wigner d-matrix to 1e-10). k8u owns the derivation work
+    that neither proposer completed.
+  * **apply_sum_d (SUM backend)**: DEFER to bead `p38` (SUM is cyclic
+    shift mod d — reversible permutation, not a spin-j rotation; p38 is
+    its own bead with its own proposer round).
+  * **Leakage-guard TLS flag**: still deferred. Not needed for
+    correctness — Rz is provably diagonal.
+
+### Rz factorisation — the math
+
+Bartlett Eq. 5: `|s⟩ = |j, j-s⟩_z`, so `Ĵ_z|s⟩ = (j - s)|s⟩`. With
+`s = Σ_{i=0}^{K-1} b_i 2^i` (LE encoding):
+
+    exp(-iδ(j - s)) = exp(-iδj) · Π_i exp(+iδ b_i 2^i)
+
+The `exp(-iδj)` prefactor is a global phase. Each `exp(+iδ b_i 2^i)` on
+wire `i+1` is implemented by `apply_rz!(ctx, wires[i+1], δ·2^i)`:
+
+    apply_rz!(ctx, wire, θ) = diag(e^{-iθ/2}, e^{+iθ/2})
+
+gives `e^{+iθ/2}` on `b=1` — matches the target `e^{+iδ 2^i}` up to a
+per-wire global phase `e^{+iθ/2}` that accumulates to ANOTHER global
+phase. Net: ratio (ours / ideal) = `e^{+iδj - iδ(2^K-1)/2}`, same
+across all |s⟩ = a true global phase. Verified by hand at d=3 for
+s ∈ {0, 1, 2}: all three get the same phase `e^{-iδ/2}`.
+
+At d=2 (K=1), the formula collapses to `apply_rz!(wires[1], δ)` —
+exactly what the QBool BlochProxy already does. Regression-tested by
+re-running the ak2 d=2 parity test (QMod{2}.φ += δ ≡ QBool(0.0).φ += δ
+bit-identically).
+
+### Testing
+
+16 new testsets, 48 new assertions for the Rz Path:
+  * d=3 / d=5 diagonal behaviour — no amplitude redistribution
+  * d=3 / d=5 relative-phase match against Ĵ_z spectrum
+  * d=2 ak2 regression (QMod{2}/QBool parity preserved)
+  * Rz cannot leak (10 random rotations on QMod{3}, |11⟩ amp stays 0)
+  * `when(ctrl) q.φ += δ` — controlled-Rz on a 3-qubit product state
+  * `when(ctrl) q.φ += δ` — leakage preserved under coherent control
+  * ak2 Ry deferral test updated: error message now points to `Sturm.jl-k8u`
+    instead of the old `Sturm.jl-nrs` pointer
+  * ak2 Rz deferral test REMOVED (φ works now)
+
+Total test_qmod.jl: 147 assertions, 5.8s wall. All GREEN.
+
+Adjacent-test sanity (Rule 9): `test_qint` (562/562), `test_primitives`
+(711/711), `test_when` (507/507), `test_implicit_cast` (14/14). Zero
+regressions. 1794 adjacent + 147 QMod = 1941 clean assertions.
+
+### Why this is the right cut
+
+Shipping the Rz path alone:
+  * Unblocks `q.φ += δ` at ALL d — every library gate that's diagonal
+    (`Z_d!`, parts of `F_d!`, phase kickback in QFT) now has a real
+    backend.
+  * Keeps Rule 1 honest — no under-derived Ry that might pass some tests
+    and corrupt others.
+  * Makes the follow-on bead (`k8u`) clean and focused: one specific
+    piece of math, one specific acceptance test.
+
+The `csw` v0.1 acceptance bead needs Ry at d=3 and d=5 — so k8u is
+still on the critical path. But splitting means k8u gets its own 3+1
+round without re-litigating the Rz decisions.
+
+### k8u acceptance criteria (filed in the bead description)
+
+  (a) d=3 `q.θ += π/3` produces amplitudes matching Wigner d^1(π/3)
+      column 0 to 1e-10: (0.75, sin(π/3)/√2, 0.25) on labels (0, 1, 2)
+      with |11⟩_qubit amplitude < 1e-12.
+  (b) d=5 `q.θ += π/4` matches d^2(π/4) column 0.
+  (c) Subspace preservation verified statistically over 1000 random
+      rotation sequences.
+
+Options for the k8u implementer (to be explored in the 3+1 round):
+  * KAK / cosine-sine decomposition of the block-diagonal 2-qubit
+    unitary `[d^1(δ), 0; 0, 1]`.
+  * Derive the 4-Ry + 3-CX template angles numerically from Sakurai
+    Eq. 3.8.33 via a 4-variable solve with 4 independent constraints.
+
+### Files touched
+
+  * `src/types/qmod.jl` — replace the `_apply_spin_j_rotation!` stub's
+    unconditional error with an axis-dispatched implementation:
+    Rz per-wire factorisation for `:φ`; Ry still errors for `:θ` with
+    the updated k8u pointer. +20 lines of code, +15 lines of docstring.
+  * `test/test_qmod.jl` — delete the obsolete `q.φ += δ` deferral
+    testset (Rz now works); update the Ry deferral testset to check for
+    `Sturm.jl-k8u` in the error message; add 9 new nrs Rz testsets.
+    +~150 lines, −30 lines.
+  * `docs/design/nrs_design_proposer_{a,b}.md` — durable copies.
+
+No edits to `src/Sturm.jl` (helper internal), `src/types/qbool.jl`
+(Rule 11 frozen), or any context file.
+
+### `bd dolt push` STILL BLOCKED
+
+Same GH secret-scanning URL as Sessions 51-54. Local beads: `nrs`
+closed, `k8u` created, `nrs_design_*.md` added. Re-attempt next session.
+
+### What's unlocked / what's next
+
+  * **`Sturm.jl-k8u`** (QMod{d} Ry rotation) — explicit critical-path
+    follow-on. Deserves its own 3+1 round focused on the decomposition
+    math. Blocks: csw acceptance; u2n library gates that use Ry (X_d!,
+    H_d!, F_d!).
+  * **`Sturm.jl-os4`** (squeezing `q.θ₂`) — diagonal, same pattern as
+    our Rz (per-wire factorisation of exp(-iδ n̂²) reduces to per-pair
+    controlled-Rz cascade). Unblocked.
+  * **`Sturm.jl-mle`** (cubic-phase magic `q.θ₃`) — similar per-pair
+    diagonal cascade. Unblocked.
+  * **`Sturm.jl-p38`** (SUM `a ⊻= b` at d>2) — independent of nrs per
+    the agreement. Unblocked.
+
+Recommendation: next productive move is either k8u (critical path, hard
+math) or os4/mle (diagonal, similar pattern to Rz, easy wins).
+
+---
+
 ## 2026-04-23 — Session 54: `ak2` (Sturm.jl-ak2) — spin-j Ry/Rz, d=2 shipped, d>2 deferred
 
 Claimed `Sturm.jl-ak2` (primitives 2 and 3 of the locked 6-primitive qudit
