@@ -390,6 +390,11 @@ See bead `Sturm.jl-k8u`.
     return nothing
 end
 
+# d=5 Ry primitive (bead Sturm.jl-ixd). Depends on apply_ry!/apply_cx!/
+# apply_rz!/push_control!/pop_control! and thus must come AFTER the type
+# definitions above.
+include("qmod_ry_d5.jl")
+
 """
     _apply_spin_j_rotation!(ctx, wires::NTuple{K, WireID}, axis::Symbol, δ::Real, ::Val{d})
 
@@ -411,14 +416,18 @@ routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2:
     qubit Rz's per call. Zero amplitude movement → no leakage at any d.
   * **axis `:θ` (Ry), d = 3** — IMPLEMENTED (bead `Sturm.jl-k8u`) via the
     closed-form 3-Givens decomposition. See [`_apply_spin_j_ry_d3!`](@ref).
-  * **axis `:θ` (Ry), d ≥ 4** — NOT YET IMPLEMENTED. Filed as bead
-    `Sturm.jl-ixd` (QMod{d} Ry at d ≥ 4 via the sandwich
-    `V(π/2) · Rz · V(-π/2)` with δ-independent `V`). Errors loudly with
-    a pointer.
+  * **axis `:θ` (Ry), d = 5** — IMPLEMENTED (bead `Sturm.jl-ixd`) via the
+    Euler sandwich `Rz(π/2)·Ry(π/2)·Rz(δ)·Ry(-π/2)·Rz(-π/2)` where
+    `Ry(±π/2)` are δ-independent fixed qubit circuits (10-Givens
+    factorisation of `d²(π/2)`). See [`_apply_spin_j_ry_d5!`](@ref).
+  * **axis `:θ` (Ry), d = 4 or d ≥ 6** — NOT YET IMPLEMENTED. csw
+    critical-path only needs d ∈ {3, 5}; d = 4 (power-of-2, no leakage,
+    6-Givens V₄ decomposition — may beat sandwich) and d ≥ 6 are filed
+    as follow-on beads. Errors loudly with a pointer.
 
 See `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf`,
-`docs/design/nrs_design_proposer_{a,b}.md`, and
-`docs/design/k8u_design_{A,B}.md`.
+`docs/design/nrs_design_proposer_{a,b}.md`,
+`docs/design/k8u_design_{A,B}.md`, and `docs/design/ixd_design_{A,B}.md`.
 """
 function _apply_spin_j_rotation!(
     ctx::AbstractContext,
@@ -439,15 +448,19 @@ function _apply_spin_j_rotation!(
         if d == 3
             _apply_spin_j_ry_d3!(ctx, wires, δ)
             return nothing
+        elseif d == 5
+            _apply_spin_j_ry_d5!(ctx, wires, δ)
+            return nothing
         else
             error(
                 "spin-j θ (Ry) rotation on QMod{$d} (K=$K) is not yet " *
-                "implemented for d ≥ 4. d = 3 is shipped via bead " *
-                "`Sturm.jl-k8u` (closed-form 3-Givens). For d ≥ 4, " *
-                "filed as bead `Sturm.jl-ixd` (QMod{d} Ry at d ≥ 4 via " *
-                "the sandwich V(π/2)·Rz·V(-π/2) with δ-independent V). " *
+                "implemented. Shipped: d = 3 (bead `Sturm.jl-k8u`, closed-" *
+                "form 3-Givens) and d = 5 (bead `Sturm.jl-ixd`, Euler " *
+                "sandwich with fixed V(π/2) dressing). d = 4 is filed as " *
+                "bead `Sturm.jl-2bf` (power-of-2, no leakage, 6-Givens " *
+                "V_{3/2}(δ) — may beat sandwich). d ≥ 6 not yet scoped. " *
                 "The φ (Rz) primitive on this register DOES work — use " *
-                "`q.φ += δ`. Use d ∈ {2, 3} for full Ry support."
+                "`q.φ += δ`."
             )
         end
     else

@@ -368,11 +368,12 @@ using Sturm
         @test counts[(1, 0)] < 0.05 * N
     end
 
-    @testset "k8u/ixd d≥4: q.θ += δ errors with deferral message" begin
-        # After k8u (Session 56): d=3 q.θ += δ WORKS via the closed-form
-        # 3-Givens decomposition. d ≥ 4 still errors; filed as
-        # Sturm.jl-ixd (sandwich decomposition with δ-independent V(π/2)).
-        for d in (4, 5, 8)
+    @testset "ixd d≥6 and d=4: q.θ += δ errors with deferral message" begin
+        # After k8u: d=3 WORKS. After ixd (Session 57): d=5 WORKS.
+        # d=4 (power-of-2, no leakage, simpler 6-Givens V4 decomposition)
+        # is filed as a separate follow-on bead since csw critical path
+        # doesn't need it. d ≥ 6 not yet scoped.
+        for d in (4, 6, 7, 8)
             @context EagerContext() begin
                 ctor = (() -> QMod{d}())
                 q = ctor()
@@ -383,7 +384,8 @@ using Sturm
                     e
                 end
                 @test err isa ErrorException
-                @test occursin("Sturm.jl-ixd", err.msg)
+                # Error message must point at a real bead for the missing d.
+                @test occursin(r"Sturm\.jl-", err.msg)
                 @test occursin("not yet implemented", err.msg)
             end
         end
@@ -851,6 +853,329 @@ using Sturm
                 _amps_snapshot(current_context())
             end
             @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+        end
+    end
+
+    # ── ixd: spin-j Ry primitive at d=5 (Euler sandwich) ──────────────────
+    #
+    # Bead `Sturm.jl-ixd`. Ships `q.θ += δ` at d=5 via the Euler sandwich
+    #
+    #     exp(-i δ Ĵ_y)_{spin-j} = Rz_j(π/2)·Ry_j(π/2)·Rz_j(δ)·Ry_j(-π/2)·Rz_j(-π/2)
+    #
+    # where Ry_j(±π/2) are δ-INDEPENDENT fixed unitaries precomputed once
+    # (via Givens decomposition of d²(π/2)), and the middle Rz_j(δ) is the
+    # nrs per-wire Rz factorisation verbatim.
+    #
+    # Orchestrator verified: full 8×8 qubit circuit for V5 ⊕ I_3 equals
+    # target to 3e-16; sandwich subspace action matches exp(-iδĴ_y) to
+    # machine epsilon modulo a global phase ξ(δ) = exp(i·δ·[j − (2^K−1)/2])
+    # = exp(-1.5iδ) at d=5 (becomes a controlled relative phase under
+    # when(), same as nrs Rz policy).
+    #
+    # IMPORTANT: the bead description's "expected formula"
+    #     [c⁴, -2c³s, √6 c²s², -2cs³, s⁴]
+    # for d²(π/4) col 0 has WRONG signs on odd-m rows. Tests must use the
+    # numerical `exp(-iδĴ_y) |0⟩` reference (all-positive at δ=π/4).
+    #
+    # Refs: docs/design/ixd_design_{A,B}.md; docs/physics/bartlett…2002 Eq. 5;
+    # WORKLOG Session 57 (2026-04-23). d=4 split to a follow-on bead since
+    # csw critical path only needs d ∈ {3, 5}.
+
+    """
+    Numerically compute Wigner d^j(β) column 0 in Bartlett label basis.
+    Label s ∈ {0, …, d−1} ↔ m = j−s; column 0 means input m' = +j (top of
+    spin ladder). At m'=+j the k-sum collapses to k=0:
+        d^j_{m, j}(β) = √(C(2j, j−m)) · cos(β/2)^{j+m} · sin(β/2)^{j-m}
+    All entries are non-negative for β ∈ (0, π). This is the TRUE ground
+    truth — the bead's "expected formula" [c⁴, -2c³s, √6 c²s², -2cs³, s⁴]
+    with alternating signs is WRONG.
+    """
+    function _wigner_dj_col0(d::Int, β::Real)
+        j = (d - 1) // 2                # half-integer-safe rational
+        col = zeros(Float64, d)
+        c, s = cos(β/2), sin(β/2)
+        two_j = Int(2 * j)              # = d - 1, always an Int
+        for s_idx in 0:(d-1)
+            jm = two_j - s_idx          # j + m = 2j - s
+            jm_neg = s_idx              # j - m = s
+            coeff = sqrt(float(binomial(two_j, jm_neg)))
+            col[s_idx + 1] = coeff * c^jm * s^jm_neg
+        end
+        return col
+    end
+
+    """
+    Full numerical Wigner d^j(β) matrix in Bartlett label basis (s = 0..d−1,
+    m = j−s). Computed via matrix exponential exp(-iβ Ĵ_y) where Ĵ_y is the
+    standard spin-j matrix in the |j, m⟩_z basis with m in DECREASING order
+    (so that Ĵ_y is tridiagonal and (row s, col s') entry corresponds to
+    ⟨j, j−s|Ĵ_y|j, j−s'⟩). Real orthogonal for real β.
+    """
+    function _wigner_dj_full(d::Int, β::Real)
+        j = (d - 1) / 2
+        Jy = zeros(ComplexF64, d, d)
+        for s1 in 0:(d-1), s2 in 0:(d-1)
+            m1, m2 = j - s1, j - s2
+            if m1 ≈ m2 + 1
+                Jy[s1+1, s2+1] = sqrt(j*(j+1) - m2*(m2+1)) / (2im)
+            elseif m1 ≈ m2 - 1
+                Jy[s1+1, s2+1] = -sqrt(j*(j+1) - m2*(m2-1)) / (2im)
+            end
+        end
+        return real.(exp(-im * β * Jy))  # real orthogonal
+    end
+
+    """Map QMod{5} label s ∈ {0..7} (incl. leakage 5,6,7) to amps idx (1..8)."""
+    _qmod5_amp_idx(s) = s + 1
+
+    @testset "ixd d=5: q.θ += π/4 matches d²(π/4) column 0 (criterion a)" begin
+        # Expected (all positive, NOT the bead's broken signs):
+        #   (cos(π/8)⁴, 2 cos³(π/8) sin(π/8), √6 cos²(π/8) sin²(π/8),
+        #    2 cos(π/8) sin³(π/8), sin(π/8)⁴)
+        #  ≈ (0.72855339, 0.60355339, 0.30618622, 0.10355339, 0.02144661)
+        expected = _wigner_dj_col0(5, π/4)
+        @context EagerContext() begin
+            q = QMod{5}()
+            q.θ += π/4
+            amps = _amps_snapshot(current_context())
+            for s in 0:4
+                @test abs(amps[_qmod5_amp_idx(s)]) ≈ expected[s + 1] atol=1e-10
+            end
+            for s in 5:7
+                @test abs(amps[_qmod5_amp_idx(s)]) < 1e-10
+            end
+            # Probability sum check
+            @test sum(abs2(amps[i]) for i in 1:8) ≈ 1.0 atol=1e-10
+        end
+    end
+
+    @testset "ixd d=5: column 0 for multiple δ (amplitudes all-positive per Wigner)" begin
+        for δ in (π/3, π/4, 1.2, -0.5, 0.0, -π/3)
+            expected = _wigner_dj_col0(5, δ)
+            @context EagerContext() begin
+                q = QMod{5}()
+                q.θ += δ
+                amps = _amps_snapshot(current_context())
+                for s in 0:4
+                    @test abs(amps[_qmod5_amp_idx(s)]) ≈ abs(expected[s + 1]) atol=1e-10
+                end
+                for s in 5:7
+                    @test abs(amps[_qmod5_amp_idx(s)]) < 1e-10
+                end
+            end
+        end
+    end
+
+    @testset "ixd d=5: leakage-free across 50 random Ry rotations" begin
+        # Apply 50 random q.θ on a single register at d=5. Leakage amps
+        # (labels 5, 6, 7) must stay near 0.
+        @context EagerContext() begin
+            q = QMod{5}()
+            for _ in 1:50
+                q.θ += (rand() - 0.5) * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            for s in 5:7
+                @test abs(amps[_qmod5_amp_idx(s)]) < 1e-9
+            end
+            result = Int(q)
+            @test 0 ≤ result ≤ 4
+        end
+    end
+
+    @testset "ixd d=5: periodicity — q.θ += δ ≡ q.θ += δ + 2π" begin
+        # d²(δ + 2π) = d²(δ) for integer spin j=2 (2π-periodic).
+        δ = 0.9
+        amps_a = @context EagerContext() begin
+            q = QMod{5}()
+            q.θ += δ
+            _amps_snapshot(current_context())
+        end
+        amps_b = @context EagerContext() begin
+            q = QMod{5}()
+            q.θ += δ + 2π
+            _amps_snapshot(current_context())
+        end
+        # Compare up to a global phase (the nrs Rz factorisation adds a
+        # δ-dependent global phase ξ(δ) that differs between δ and δ+2π).
+        # Check amplitude magnitudes match.
+        for i in 1:8
+            @test abs(amps_a[i]) ≈ abs(amps_b[i]) atol=1e-10
+        end
+    end
+
+    @testset "ixd d=5: when(::QBool) q.θ += π/3 on superposition control" begin
+        # Prep ctrl = (|0⟩+|1⟩)/√2, q = |0⟩_d. After when(ctrl) q.θ += π/3:
+        #   ctrl=0 branch: q untouched, stays |0⟩_d.
+        #   ctrl=1 branch: q gets rotated by Sturm_Ry(π/3).
+        # Sturm_Ry = ξ(δ) · exp(-iδĴ_y) where ξ(δ) = exp(-1.5iδ).
+        # At δ=π/3, ξ = exp(-iπ/2) = -i.
+        #
+        # Wire layout: 4 qubits — ctrl (bit 0), q.wires[1] (bit 1, q_LSB),
+        # q.wires[2] (bit 2), q.wires[3] (bit 3, q_MSB). 16 basis states.
+        # State idx i: bit0 = ctrl, bit1 = q_LSB, ..., bit3 = q_MSB.
+        #
+        # Check magnitudes (phase-robust) for the non-zero amps:
+        #   idx 1  (ctrl=0, q=0 label): |amp| = 1/√2
+        #   idx 2  (ctrl=1, q=0): |amp| = d²_{0,0}(π/3)/√2
+        #   idx 4  (ctrl=1, q=1): |amp| = d²_{1,0}(π/3)/√2
+        #   idx 6  (ctrl=1, q=2): |amp| = d²_{2,0}(π/3)/√2
+        #   idx 8  (ctrl=1, q=3): |amp| = d²_{3,0}(π/3)/√2
+        #   idx 10 (ctrl=1, q=4): |amp| = d²_{4,0}(π/3)/√2
+        #   all other amps < 1e-10 (leakage, ctrl=0 × non-zero q, etc.)
+        δ = π/3
+        expected = _wigner_dj_col0(5, δ)
+        @context EagerContext() begin
+            ctrl = QBool(0.5)
+            q = QMod{5}()
+            when(ctrl) do
+                q.θ += δ
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[1])  ≈ 1/sqrt(2)              atol=1e-10
+            @test abs(amps[2])  ≈ expected[1] / sqrt(2)  atol=1e-10
+            @test abs(amps[4])  ≈ expected[2] / sqrt(2)  atol=1e-10
+            @test abs(amps[6])  ≈ expected[3] / sqrt(2)  atol=1e-10
+            @test abs(amps[8])  ≈ expected[4] / sqrt(2)  atol=1e-10
+            @test abs(amps[10]) ≈ expected[5] / sqrt(2)  atol=1e-10
+            # Forbidden / zero positions
+            for i in (3, 5, 7, 9, 11, 12, 13, 14, 15, 16)
+                @test abs(amps[i]) < 1e-10
+            end
+        end
+    end
+
+    @testset "ixd d=5: 1000 random Ry/Rz sequences preserve subspace (criterion c)" begin
+        # 1000 trials, each applies 3..13 random q.θ / q.φ ops with
+        # uniform angles; leakage amps (labels 5,6,7) must stay near 0.
+        n_ok = 0
+        for _ in 1:1000
+            @context EagerContext() begin
+                q = QMod{5}()
+                n_ops = 3 + rand(0:10)
+                for _ in 1:n_ops
+                    δ = (rand() - 0.5) * 4π
+                    if rand() < 0.5
+                        q.θ += δ
+                    else
+                        q.φ += δ
+                    end
+                end
+                amps = _amps_snapshot(current_context())
+                leak_norm = maximum(abs(amps[_qmod5_amp_idx(s)]) for s in 5:7)
+                if leak_norm < 1e-8
+                    n_ok += 1
+                end
+            end
+        end
+        @test n_ok == 1000
+    end
+
+    @testset "ixd d=5: Int(q) after Ry samples match |d²|² distribution" begin
+        # d²(π/4) col 0 amplitudes (all positive, Wigner closed form):
+        expected_amps = _wigner_dj_col0(5, π/4)
+        # Squared = probability of measuring label s:
+        probs = expected_amps .^ 2   # ≈ (0.531, 0.364, 0.0938, 0.0107, 0.00046)
+        N = 4000
+        counts = zeros(Int, 5)
+        for _ in 1:N
+            @context EagerContext() begin
+                q = QMod{5}()
+                q.θ += π/4
+                r = Int(q)
+                counts[r + 1] += 1
+            end
+        end
+        # Check each count within ~5σ of expected
+        for s in 0:4
+            μ = probs[s + 1] * N
+            σ = sqrt(N * probs[s + 1] * (1 - probs[s + 1]))
+            # 5σ tolerance is generous; prob[4]~4e-4 means μ~1.8, σ~1.4 → allow 0..10 or so.
+            lo = max(0, Int(floor(μ - 6σ - 3)))
+            hi = Int(ceil(μ + 6σ + 3))
+            @test lo ≤ counts[s + 1] ≤ hi
+        end
+    end
+
+    @testset "ixd d=5: hardcoded Givens angles match fresh QR to machine epsilon" begin
+        # Session 57 learning: transcribing 16-digit decimals by hand
+        # introduced a 1e-8 error in the statevector output (const differed
+        # from QR-produced angles by up to 1.5e-8 at index 5). The fix was
+        # to write Float64 literals via `repr(θ)`. This regression test
+        # recomputes the 10 angles from scratch and asserts bit-identical
+        # agreement with `Sturm._RY_J_HALFPI_D5_OPS` — do NOT let a future
+        # edit revert to truncated-decimal literals without this catching.
+        #
+        # Procedure: build V₅ = d²(π/2) via matrix exponential of Ĵ_y
+        # (Bartlett label basis, m = j−s), then QR-zero below-diagonal
+        # collecting 2·atan2(b, a) angles.
+        function _spinj_jy_d5()
+            j = 2.0
+            M = zeros(ComplexF64, 5, 5)
+            for s1 in 0:4, s2 in 0:4
+                m1, m2 = j - s1, j - s2
+                if isapprox(m1, m2 + 1; atol=1e-12)
+                    M[s1+1, s2+1] = sqrt(j*(j+1) - m2*(m2+1)) / (2im)
+                elseif isapprox(m1, m2 - 1; atol=1e-12)
+                    M[s1+1, s2+1] = -sqrt(j*(j+1) - m2*(m2-1)) / (2im)
+                end
+            end
+            return M
+        end
+        V5 = real.(exp(-im * (π/2) * Matrix(_spinj_jy_d5())))
+        # QR-zero below-diagonal, collect (level_i, 2·atan2(b, a))
+        M = copy(V5); d = 5
+        fresh_ops = Tuple{Int, Float64}[]
+        for col in 1:d-1, i in d:-1:col+1
+            a, b = M[i-1, col], M[i, col]
+            r = sqrt(a^2 + b^2)
+            r < 1e-15 && continue
+            c, s = a/r, b/r
+            row_im1 = M[i-1, :] * c + M[i, :] * s
+            row_i   = M[i-1, :] * (-s) + M[i, :] * c
+            M[i-1, :] = row_im1
+            M[i, :] = row_i
+            push!(fresh_ops, (i-1, 2 * atan(b, a)))
+        end
+        # Reverse to match the forward-product convention stored in the const.
+        fresh_forward = [(i-1, θ) for (i, θ) in reverse(fresh_ops)]
+        const_ops = Sturm._RY_J_HALFPI_D5_OPS
+        @test length(fresh_forward) == length(const_ops) == 10
+        for ((pf, θf), (pc, θc)) in zip(fresh_forward, const_ops)
+            @test pf == pc
+            @test θf == θc  # bit-exact equality (tests catch transcription truncation)
+        end
+    end
+
+    @testset "ixd d=5: full d²(δ) matrix match on all 5 columns" begin
+        # Proposers flagged H=2 pair (1,2) and H=3 pair (3,4) as highest-
+        # risk for polarity bugs. Preparing each label |s_in⟩_d (s_in ∈
+        # 0..4) via raw apply_ry! bit-flips, applying q.θ += δ, and
+        # comparing the full output against d²(δ)[:, s_in] exercises every
+        # Givens-block structure end-to-end.
+        for δ in (0.5, -0.3, π/7, 1.2)
+            target = _wigner_dj_full(5, δ)
+            for s_in in 0:4
+                @context EagerContext() begin
+                    q = QMod{5}()
+                    ctx = current_context()
+                    # Prep |s_in⟩_d via raw bit-flips on the 3 LE wires.
+                    for bit in 0:2
+                        if (s_in >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    q.θ += δ
+                    amps = _amps_snapshot(ctx)
+                    for s_out in 0:4
+                        @test abs(amps[_qmod5_amp_idx(s_out)]) ≈
+                              abs(target[s_out + 1, s_in + 1]) atol=1e-10
+                    end
+                    for s_out in 5:7
+                        @test abs(amps[_qmod5_amp_idx(s_out)]) < 1e-10
+                    end
+                end
+            end
         end
     end
 
