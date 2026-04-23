@@ -185,3 +185,133 @@ function Base.convert(::Type{Int}, q::QMod{d, K}) where {d, K}
     _warn_implicit_cast(QMod{d}, Int)
     return Int(q)
 end
+
+# ── ak2: spin-j Ry/Rz primitives (q.θ += δ, q.φ += δ) ────────────────────────
+#
+# Primitives #2 and #3 of the locked 6-primitive qudit set
+# (docs/physics/qudit_magic_gate_survey.md §8.1):
+#
+#   q.θ += δ ↦ exp(-i δ Ĵ_y)  on the spin-j = (d-1)/2 irrep of SU(2)
+#   q.φ += δ ↦ exp(-i δ Ĵ_z)  on the same irrep
+#
+# At d=2 (K=1), both rotations are the existing qubit Ry/Rz on the single
+# underlying wire (Rule 11 preserved bit-identically). The dispatch path is:
+#
+#   q.θ += δ
+#   → getproperty(q::QMod{2, 1}, :θ)   → returns `BlochProxy`
+#     (reuses the QBool proxy from src/types/qbool.jl:67-111, aliased to
+#     wires[1]; zero new code path at d=2 — same apply_ry!/apply_rz! the
+#     qubit primitives use, control stack respected identically)
+#   → Base.:+(::BlochProxy, ::Real) at src/types/qbool.jl:94-102
+#     → apply_ry!(ctx, wires[1], δ)
+#
+# At d>2, getproperty returns a new `QModBlochProxy{d, K}` carrying the full
+# wire group. The spin-j decomposition into multi-qubit gates (Bartlett Eqs.
+# 5-7, Givens-style) is filed as bead `Sturm.jl-nrs` (qubit-encoded fallback
+# simulator). Until nrs lands, d>2 calls error loudly with a pointer.
+
+"""
+    QModBlochProxy{d, K}
+
+Bloch-axis proxy for `QMod{d, K}` at d>2. Parallel to `BlochProxy`
+(src/types/qbool.jl:67-72) but carries the full `NTuple{K, WireID}` wire
+group and the dimension witness `d` needed for the spin-j decomposition.
+
+Only `+=` and `-=` on a numeric axis (`q.θ`, `q.φ`) are meaningful; reading
+the angle would require measurement. `parent::QMod{d, K}` is held for the
+`check_live!` invariant before each rotation.
+
+At d=2 (K=1) the proxy is not used — `getproperty(::QMod{2, 1}, ::Symbol)`
+returns the existing `BlochProxy` directly.
+"""
+struct QModBlochProxy{d, K}
+    wires::NTuple{K, WireID}
+    axis::Symbol            # :θ or :φ
+    ctx::AbstractContext
+    parent::QMod{d, K}
+end
+
+# d=2 specialization: route q.θ / q.φ through the existing qubit BlochProxy
+# on the single underlying wire. Julia picks this more-specific method over
+# the generic `where {d, K}` method below for QMod{2, 1} instances.
+@inline function Base.getproperty(q::QMod{2, 1}, s::Symbol)
+    if s === :θ || s === :φ
+        check_live!(q)
+        wire = getfield(q, :wires)[1]
+        ctx  = getfield(q, :ctx)
+        # Build a non-owning QBool view (consumed=false) so BlochProxy's
+        # `parent::QBool` liveness check has a concrete target. Same aliasing
+        # idiom as `_qbool_views` in src/types/qint.jl:45-48. The view's
+        # consumed flag is independent of the owning QMod; liveness was just
+        # checked above via `check_live!(q)`.
+        return BlochProxy(wire, s, ctx, QBool(wire, ctx, false))
+    else
+        return getfield(q, s)
+    end
+end
+
+# Generic d>2 case: return a QModBlochProxy carrying the full wire group.
+@inline function Base.getproperty(q::QMod{d, K}, s::Symbol) where {d, K}
+    if s === :θ || s === :φ
+        check_live!(q)
+        return QModBlochProxy{d, K}(
+            getfield(q, :wires), s, getfield(q, :ctx), q,
+        )
+    else
+        return getfield(q, s)
+    end
+end
+
+# `q.θ += δ` desugars to `q.θ = q.θ + δ`. The `+` applies the rotation and
+# returns the `_RotationApplied` sentinel (shared with QBool via qbool.jl).
+# The setproperty! below is the final no-op step that makes the assignment
+# syntax legal. Mirrors `Base.setproperty!(::QBool, ...)` at
+# src/types/qbool.jl:108-111.
+function Base.setproperty!(q::QMod{d, K}, s::Symbol, val::_RotationApplied) where {d, K}
+    return val
+end
+
+# `+` on a QModBlochProxy either applies the spin-j rotation (d>2 path,
+# delegated to the `_apply_spin_j_rotation!` stub until nrs lands) or, in
+# the d=2 case, is unreachable because the d=2 getproperty returned a
+# `BlochProxy` instead. The d=2 branch is kept as a defensive Rule-1 guard.
+@inline function Base.:+(proxy::QModBlochProxy{d, K}, δ::Real) where {d, K}
+    check_live!(proxy.parent)
+    _apply_spin_j_rotation!(proxy.ctx, proxy.wires, proxy.axis, δ, Val(d))
+    return ROTATION_APPLIED
+end
+
+@inline Base.:-(proxy::QModBlochProxy, δ::Real) = proxy + (-δ)
+
+"""
+    _apply_spin_j_rotation!(ctx, wires::NTuple{K, WireID}, axis::Symbol, δ::Real, ::Val{d})
+
+Apply the spin-`j = (d-1)/2` rotation `exp(-i δ Ĵ_{axis})` to the d-level
+register stored in `wires`. At d=2 this never runs (the d=2 getproperty
+routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2 it
+currently errors, pending the decomposition work in bead `Sturm.jl-nrs`.
+
+The d>2 implementation will use a Givens / Wigner-small-d decomposition
+(Bartlett-deGuise-Sanders 2002 Eqs. 5–7; Sakurai §3.10 for the explicit
+small-d matrix) into controlled multi-qubit rotations whose control
+patterns never fire on encoded basis states ≥ d (so leakage into unused
+qubit-basis states stays at zero by construction — see QMod docstring,
+Leakage layer 2).
+
+See `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf` and
+`docs/design/ak2_design_proposer_{a,b}.md` for the decomposition sketch.
+"""
+function _apply_spin_j_rotation!(
+    ctx::AbstractContext,
+    wires::NTuple{K, WireID},
+    axis::Symbol,
+    δ::Real,
+    ::Val{d},
+) where {K, d}
+    error(
+        "spin-j $(axis) rotation on QMod{$d} (K=$K) is not yet implemented. " *
+        "The Givens / Wigner-small-d decomposition into multi-qubit gates is " *
+        "filed as bead `Sturm.jl-nrs` (qubit-encoded fallback simulator " *
+        "integration). Use d=2 for v0.1, or wait for nrs to land."
+    )
+end

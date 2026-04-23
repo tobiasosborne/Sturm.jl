@@ -4,6 +4,134 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-23 — Session 54: `ak2` (Sturm.jl-ak2) — spin-j Ry/Rz, d=2 shipped, d>2 deferred
+
+Claimed `Sturm.jl-ak2` (primitives 2 and 3 of the locked 6-primitive qudit
+set — `q.θ += δ` = `exp(-iδĴ_y)` and `q.φ += δ` = `exp(-iδĴ_z)` on the
+spin-j=(d-1)/2 irrep). Full 3+1 round in one session this time: dispatched
+2 proposer subagents in parallel, both converged, I implemented.
+
+Designs at `docs/design/ak2_design_proposer_{a,b}.md` (628 + 556 lines).
+
+### Strong convergence across the two proposers
+
+Both picked:
+  * **Hybrid proxy**: reuse existing `BlochProxy` at d=2 (single-wire fast
+    path, bit-identical to qubit Ry/Rz); new `QModBlochProxy{d, K}` at d>2
+    carrying the full wire group + `d`.
+  * **Defer d>2 to bead `Sturm.jl-nrs`** (qubit-encoded fallback simulator
+    integration). Ship d=2 only this bead; d>2 errors loudly with a pointer.
+  * **Subspace preservation by construction** (option a). No per-gate
+    projection, no debug amp-sweep in this bead. The unconditional
+    post-measurement check in `Base.Int` from bead 9aa is the safety net.
+  * **Extend `src/types/qmod.jl`** rather than splitting into a new
+    rotations file. Matches the `qbool.jl`/`qint.jl` precedent of keeping
+    the type definition and its primitives colocated.
+
+### Orchestrator picks where they differed
+
+  * **Method-level dispatch over runtime branch for the d=2 case.**
+    Proposer A used a single `getproperty(::QMod{d, K})` with `if d == 2`
+    inside; Proposer B used two methods — `getproperty(::QMod{2, 1})` and
+    the generic `where {d, K}` — and let Julia's multiple dispatch pick by
+    specificity. Picked B's: type-stable, constant-folded, idiomatic.
+  * **Extend existing `test/test_qmod.jl`** (B) rather than a new
+    `test_qmod_rotations.jl` (A). Keeps all QMod tests in one file,
+    matches `test_qint.jl`'s pattern.
+  * **Kept Proposer A's `when()` test** (Testset 5 in A). Verifies that
+    `when(ctrl) do qm.θ += δ end` at d=2 composes with the control stack
+    exactly as the qubit primitive does. Worth having.
+  * **Skipped both proposers' `@test_skip` scaffolds for nrs-deferred
+    tests.** Clutters the report with permanent skips; nrs's implementer
+    writes their own tests. The deferral-error tests cover the boundary.
+
+### The d=2 trick — why Rule 11 holds bit-identically
+
+`Base.getproperty(q::QMod{2, 1}, :θ)` returns a `BlochProxy`
+(`src/types/qbool.jl:67-72`) aliased to `q.wires[1]`. Then
+`BlochProxy + δ` calls `apply_ry!(ctx, wires[1], δ)` — the same qubit
+primitive. Zero new code path at d=2. Verified by statevector-parity
+tests: `QMod{2}().θ += δ` produces an amplitude vector equal to
+`QBool(0.0).θ += δ` to 1e-12 across 6 angles (including π and 0). Same
+for `φ`. Same for 4-gate chains.
+
+The `BlochProxy.parent::QBool` field gets a fresh non-owning view
+`QBool(wires[1], ctx, false)` — same aliasing idiom `_qbool_views` uses
+on QInt. Edge case acknowledged by both proposers: if someone stashes
+`let p = q.θ` and later consumes the QMod, `p + δ` won't detect it
+(the view's `consumed` flag is independent). Matches existing QInt
+precedent; documented inline.
+
+### d>2: deferral stub with Val(d) for future dispatch
+
+`_apply_spin_j_rotation!(ctx, wires, axis, δ, ::Val{d})` takes a Val-d
+so the future `nrs` implementer can add specialised methods per
+dimension without changing call sites. Stub body is `error(...)` with a
+pointer to bead `nrs`; tested at d ∈ {3, 4, 5, 8} (both power-of-2 and
+non-power-of-2 cases defer — the pow2 case is NOT a shortcut because
+the spin-j decomposition still requires multi-qubit gates, distinct
+from straight `apply_ry!`).
+
+### Ĵ_z convention note for `nrs` follow-on
+
+Bartlett Eq. 5 puts `|s⟩ ≡ |j, j-s⟩_z`, so `Ĵ_z|s⟩ = (j - s)|s⟩`. At
+d=2 this is exactly what orkan's `apply_rz!` does — phase `e^{-iδ/2}`
+on `|0⟩`, `e^{+iδ/2}` on `|1⟩`. At d>2 `nrs` must honour the `j - s`
+shift when deriving the diagonal Rz phases. Flagged in both proposer
+designs, noted in the stub's docstring.
+
+### TDD cycle
+
+Tests extended test_qmod.jl from 21 testsets (56 assertions) to 29
+testsets (99 assertions). First GREEN on first run — no retries.
+
+Adjacent-test sanity (Rule 9): `test_primitives` (711/711), `test_when`
+(507/507), `test_qint` (562/562), `test_ptrace` (9/9),
+`test_implicit_cast` (14/14). No regressions. 1803 adjacent assertions +
+99 QMod = 1902 clean.
+
+### Files touched
+
+  * `src/types/qmod.jl` — `QModBlochProxy{d, K}` struct, two-method
+    `getproperty` (d=2 specialised, d>2 generic), `setproperty!`
+    sentinel no-op, `Base.:+` / `Base.:-` on QModBlochProxy,
+    `_apply_spin_j_rotation!` stub. +~115 lines.
+  * `test/test_qmod.jl` — 8 new testsets for ak2 (parity × 3, `when()`,
+    deferral errors × 2, proxy types, liveness). +~185 lines.
+  * `docs/design/ak2_design_proposer_{a,b}.md` — durable copies of the
+    proposer outputs (/tmp doesn't survive).
+
+No edits to `src/Sturm.jl` (QModBlochProxy is internal — no export),
+`src/types/qbool.jl` (Rule 11 — qubit primitives frozen), or any
+context file (no new apply_* methods; d=2 rides existing paths).
+
+### `bd dolt push` STILL BLOCKED
+
+Same GH secret-scanning unblock URL as Sessions 51-53. Local beads
+this session: `ak2` closed, `ak2_design_*.md` added. Re-attempt next
+session.
+
+### What's unlocked / what's next
+
+The qudit syntax `q.θ += δ` / `q.φ += δ` now works at d=2. The remaining
+qudit primitive beads are independent of each other — any order works:
+
+  * **`Sturm.jl-nrs`** — the big one. Qubit-encoded fallback simulator
+    integration: implements `_apply_spin_j_rotation!` for d>2 via the
+    Givens / Wigner-small-d decomposition. Unblocks ak2 at d>2, plus
+    os4, mle, p38 at d>2, plus all library gates `X_d!`, `Z_d!`, `F_d!`,
+    `T_d!`, `QuditToffoli!`. Logically the critical path.
+  * **`Sturm.jl-os4`** (squeezing `q.θ₂`) — diagonal primitive, could
+    ship d=2 trivially (collapses to global phase per §8.1) and d>2 via
+    nrs.
+  * **`Sturm.jl-mle`** (cubic-phase magic `q.θ₃`) — same pattern as os4.
+  * **`Sturm.jl-p38`** (SUM `a ⊻= b` at d>2) — cyclic shift mod d. At
+    d=2 reduces to CNOT. At d>2 needs nrs's multi-qubit decomposition.
+
+Recommendation: `nrs` next. Every remaining primitive bead builds on it.
+
+---
+
 ## 2026-04-23 — Session 53: `goi-type` (Sturm.jl-9aa) — implementer phase, GREEN
 
 Picked up where Session 52 left off. Two proposer designs already at
