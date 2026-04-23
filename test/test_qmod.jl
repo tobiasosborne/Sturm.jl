@@ -1,5 +1,6 @@
 using Test
 using Logging
+using LinearAlgebra   # Diagonal, for the k8u mixed Ry+Rz analytic comparison
 using Sturm
 
 # Sturm.jl-9aa — QMod{d} type + EagerContext prep primitive.
@@ -367,10 +368,11 @@ using Sturm
         @test counts[(1, 0)] < 0.05 * N
     end
 
-    @testset "ak2 d>2: q.θ += δ errors with deferral message" begin
-        # Ry at d>2 defers to bead Sturm.jl-k8u (filed when nrs shipped
-        # Rz but deferred Ry). Error message must point there.
-        for d in (3, 4, 5, 8)
+    @testset "k8u/ixd d≥4: q.θ += δ errors with deferral message" begin
+        # After k8u (Session 56): d=3 q.θ += δ WORKS via the closed-form
+        # 3-Givens decomposition. d ≥ 4 still errors; filed as
+        # Sturm.jl-ixd (sandwich decomposition with δ-independent V(π/2)).
+        for d in (4, 5, 8)
             @context EagerContext() begin
                 ctor = (() -> QMod{d}())
                 q = ctor()
@@ -381,7 +383,7 @@ using Sturm
                     e
                 end
                 @test err isa ErrorException
-                @test occursin("Sturm.jl-k8u", err.msg)
+                @test occursin("Sturm.jl-ixd", err.msg)
                 @test occursin("not yet implemented", err.msg)
             end
         end
@@ -624,6 +626,231 @@ using Sturm
             _ = Bool(ctrl)
             result = Int(q)
             @test result == 0
+        end
+    end
+
+    # ── k8u: spin-j Ry primitive at d=3 (closed-form 3-Givens) ──────────────
+    #
+    # Bead `Sturm.jl-k8u`. Ships `q.θ += δ` at d=3 via the closed-form
+    #
+    #     d¹(δ) = G_{01}(2γ) · G_{12}(2β) · G_{01}(2γ)
+    #
+    #     γ = atan(sin(δ/2),             √2 · cos(δ/2))
+    #     β = atan(sin(δ/2)·√(2−sin²(δ/2)),  cos²(δ/2))
+    #
+    # (Orchestrator-verified to machine epsilon across δ ∈ (−π, 2π).) A sign
+    # bug in the CX-scratch G_{12} lowering — missed by both proposer
+    # designs — was caught pre-ship by numerical verification of the
+    # qubit-circuit 4×4 unitary: the circuit actually realises G_{12}(−2β),
+    # so the angle must be negated in the `_controlled_ry!` call. d ≥ 4
+    # is filed as follow-on bead Sturm.jl-ixd (sandwich V(π/2)·Rz·V(−π/2)).
+    #
+    # Refs: docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf
+    #       Eq. 5; docs/design/k8u_design_{A,B}.md; WORKLOG Session 56.
+
+    """Closed-form Wigner d¹(δ) in Bartlett label basis (s=0,1,2 ↔ m=+1,0,−1)."""
+    function _wigner_d1_label_basis(δ)
+        c, s = cos(δ/2), sin(δ/2)
+        return [ c^2            -sqrt(2)*c*s     s^2           ;
+                 sqrt(2)*c*s     c^2 - s^2      -sqrt(2)*c*s   ;
+                 s^2             sqrt(2)*c*s     c^2           ]
+    end
+
+    # QMod{3} label s ∈ {0,1,2} → 1-indexed amps slot in the 4-dim 2-qubit
+    # statevector. Little-endian: |00⟩=idx 1 (label 0), |01⟩=idx 2 (label 1),
+    # |10⟩=idx 3 (label 2), |11⟩=idx 4 (forbidden).
+    _qmod3_amp_idx(s) = s + 1
+
+    @testset "k8u d=3: q.θ += π/3 matches d¹(π/3) column 0 (criterion a)" begin
+        # Bead acceptance (a): expected amps (0.75, sin(π/3)/√2, 0.25) on
+        # labels (0, 1, 2); forbidden amp < 1e-12.
+        @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += π/3
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[1]) ≈ 0.75 atol=1e-10
+            @test abs(amps[2]) ≈ sin(π/3)/sqrt(2) atol=1e-10
+            @test abs(amps[3]) ≈ 0.25 atol=1e-10
+            @test abs(amps[4]) < 1e-12
+        end
+    end
+
+    @testset "k8u d=3: full d¹(δ) match on all 3 columns for multiple δ" begin
+        # For each column s₀ ∈ {0, 1, 2}, prep |s₀⟩_d via raw apply_ry! on
+        # the bit-wires, apply q.θ += δ, compare amps vs d¹(δ)[:, s₀].
+        for δ in (π/3, π/4, -0.5, 2.718, 0.0, -π/2)
+            target = _wigner_d1_label_basis(δ)
+            for s0 in 0:2
+                @context EagerContext() begin
+                    q = QMod{3}()
+                    ctx = current_context()
+                    if (s0 & 1) == 1; Sturm.apply_ry!(ctx, q.wires[1], π); end
+                    if (s0 & 2) == 2; Sturm.apply_ry!(ctx, q.wires[2], π); end
+                    q.θ += δ
+                    amps = _amps_snapshot(ctx)
+                    for s_out in 0:2
+                        @test abs(amps[_qmod3_amp_idx(s_out)]) ≈
+                              abs(target[s_out + 1, s0 + 1]) atol=1e-10
+                    end
+                    @test abs(amps[4]) < 1e-10
+                end
+            end
+        end
+    end
+
+    @testset "k8u d=3: leakage-free across 50 random Ry rotations" begin
+        # Apply 50 random q.θ on a single register; |11⟩ amplitude must stay
+        # at ≈ 0 and measurement must succeed (layer-3 guard never trips).
+        @context EagerContext() begin
+            q = QMod{3}()
+            for _ in 1:50
+                q.θ += (rand() - 0.5) * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[4]) < 1e-10
+            result = Int(q)
+            @test 0 ≤ result ≤ 2
+        end
+    end
+
+    @testset "k8u d=3: periodicity — q.θ += δ ≡ q.θ += δ+2π" begin
+        # d¹(δ+2π) = d¹(δ) for integer spin j=1. The closed-form angles γ, β
+        # wrap naturally via atan2 (and sin/cos are 2π-periodic at arg δ/2
+        # shifted by π — the overall 3-Givens product recovers exactly).
+        δ = 0.7
+        amps_a = @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += δ
+            _amps_snapshot(current_context())
+        end
+        amps_b = @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += δ + 2π
+            _amps_snapshot(current_context())
+        end
+        @test all(isapprox.(amps_a, amps_b; atol=1e-10))
+    end
+
+    @testset "k8u d=3: mixed Ry + Rz sequence matches analytic product" begin
+        # q.θ += a; q.φ += b; q.θ += c produces d¹(c)·D(b)·d¹(a)|0⟩_d where
+        # D(b) = diag(exp(−i·b·(j−s))) for s∈{0,1,2}, j=1. Rz carries the
+        # per-wire global phase exp(−iδj); since we're starting in a real
+        # positive state and comparing to exp(−i·b·(j−s)), we check by
+        # modelling Rz as exactly that diagonal (which nrs implements up to
+        # a true global phase that vanishes in |amp|²).
+        a, b, c = 0.3, 0.5, -0.2
+        @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += a
+            q.φ += b
+            q.θ += c
+            amps = _amps_snapshot(current_context())
+            D = Diagonal([exp(-im*b*(1-s)) for s in 0:2])
+            expected = _wigner_d1_label_basis(c) * D *
+                       _wigner_d1_label_basis(a)[:, 1]
+            # nrs's per-wire Rz factorisation differs from the analytic D by
+            # a global phase (exp(−iδj) + per-wire Rz framing). Compare
+            # amplitudes up to a common complex scalar.
+            # Specifically: find the phase α such that amps[1:3] ≈ e^{iα}·expected,
+            # then verify the ratio is consistent (= constant global phase).
+            scale = amps[1] / expected[1]
+            @test abs(abs(scale) - 1) < 1e-10
+            for s_out in 0:2
+                @test amps[_qmod3_amp_idx(s_out)] ≈ scale * expected[s_out+1] atol=1e-10
+            end
+            @test abs(amps[4]) < 1e-10
+        end
+    end
+
+    @testset "k8u d=3: when(::QBool) q.θ += π/3 on superposition control" begin
+        # Prep ctrl = (|0⟩+|1⟩)/√2, q = |0⟩_d. Apply when(ctrl) q.θ += π/3.
+        # Wire alloc order: ctrl (bit 0), q.wires[1] = q_lsb (bit 1),
+        # q.wires[2] = q_msb (bit 2). 8 basis states.
+        #
+        # Expected amps (1-indexed):
+        #   idx 1 (ctrl=0, q=0): 1/√2
+        #   idx 2 (ctrl=1, q=0): 0.75/√2
+        #   idx 4 (ctrl=1, q=1): (1/√2)·sin(π/3)/√2 = sin(π/3)/2
+        #   idx 6 (ctrl=1, q=2): 0.25/√2
+        #   all others ≈ 0 (including idx 8 = ctrl=1, q=forbidden)
+        @context EagerContext() begin
+            ctrl = QBool(0.5)
+            q = QMod{3}()
+            when(ctrl) do
+                q.θ += π/3
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[1]) ≈ 1/sqrt(2) atol=1e-10
+            @test abs(amps[2]) ≈ 0.75/sqrt(2) atol=1e-10
+            @test abs(amps[4]) ≈ sin(π/3)/2 atol=1e-10
+            @test abs(amps[6]) ≈ 0.25/sqrt(2) atol=1e-10
+            for i in (3, 5, 7, 8)
+                @test abs(amps[i]) < 1e-10
+            end
+        end
+    end
+
+    @testset "k8u d=3: subspace preservation over 1000 random Ry/Rz sequences (criterion c)" begin
+        # Bead acceptance (c) adapted to d=3: N=1000 random sequences of θ/φ
+        # rotations; forbidden-state amplitude < 1e-10 every single trial.
+        n_ok = 0
+        for _ in 1:1000
+            @context EagerContext() begin
+                q = QMod{3}()
+                n_ops = 3 + rand(0:10)
+                for _ in 1:n_ops
+                    δ = (rand() - 0.5) * 4π
+                    if rand() < 0.5
+                        q.θ += δ
+                    else
+                        q.φ += δ
+                    end
+                end
+                amps = _amps_snapshot(current_context())
+                if abs(amps[4]) < 1e-10
+                    n_ok += 1
+                end
+            end
+        end
+        @test n_ok == 1000
+    end
+
+    @testset "k8u d=3: Int(q) after Ry samples match |d¹|² distribution" begin
+        # d¹(2π/3) column 0 amplitudes: c² = cos²(π/3) = 1/4; √2 cs = √6/4;
+        # s² = sin²(π/3) = 3/4. Squared: (1/16, 3/8, 9/16). Measure N shots.
+        N = 4000
+        counts = [0, 0, 0]
+        for _ in 1:N
+            @context EagerContext() begin
+                q = QMod{3}()
+                q.θ += 2π/3
+                r = Int(q)
+                counts[r+1] += 1
+            end
+        end
+        # 3σ bounds (N=4000):
+        #   p=1/16=0.0625:  μ=250,  σ≈15,   3σ=[205, 295]
+        #   p=3/8=0.375:    μ=1500, σ≈31,   3σ=[1407, 1593]
+        #   p=9/16=0.5625:  μ=2250, σ≈31,   3σ=[2157, 2343]
+        # Use 4σ-ish windows to stay robust:
+        @test 195 ≤ counts[1] ≤ 305
+        @test 1380 ≤ counts[2] ≤ 1620
+        @test 2130 ≤ counts[3] ≤ 2370
+    end
+
+    @testset "k8u d=2 regression: QMod{2}.θ parity with QBool still holds" begin
+        # d=2 routes through BlochProxy (not the new _apply_spin_j_ry_d3!).
+        # Guard against accidental dispatch regression.
+        for δ in (π/7, π/3, -π/4, 1.7)
+            amps_qbool = @context EagerContext() begin
+                q = QBool(0.0); q.θ += δ
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
         end
     end
 

@@ -4,6 +4,210 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-23 — Session 56: `k8u` (Sturm.jl-k8u) — QMod{3} Ry shipped, orchestrator catches a sign bug both proposers missed
+
+Claimed `Sturm.jl-k8u` (QMod{d} Ry rotation — the θ-axis follow-on from
+nrs, which shipped Rz at all d but deferred Ry because neither nrs
+proposer closed the decomposition math). Full 3+1 round in one session.
+
+### Orchestrator does the hard physics BEFORE dispatching proposers
+
+Rather than dispatch proposers blind and hope one would close the
+decomposition, I **derived and numerically verified the d=3 closed form
+myself** first, then gave it to both proposers as ground truth:
+
+    d¹(δ) = G_{01}(2γ) · G_{12}(2β) · G_{01}(2γ)
+    γ = atan2(sin(δ/2),                √2 · cos(δ/2))
+    β = atan2(sin(δ/2)·√(2−sin²(δ/2)),  cos²(δ/2))
+
+Matches Wigner d¹(δ) to 1.1e-16 across δ ∈ {π/3, π/4, ±π/2, ±π, 2.718,
+0, 2π−10⁻¹⁰}. First attempt used `acos(c²)` for β — failed at δ < 0
+because `acos` returns [0, π] regardless of sign. Fix: signed `atan2`
+with denominator `cos²(δ/2)` and numerator `sin(δ/2)·√(2−sin²(δ/2))`.
+Plain `atan`/`acos` DO NOT work; `atan2` is mandatory. (Rule 3/4 —
+physics claim has an algebraic derivation + numerical ground truth.)
+
+Proposers got the closed form in the brief, were told to **independently
+verify** (show one matrix-element algebra step). Both did — A verified
+`M[1,1] = cos δ` via `(2c⁴−s²)/(1+c²) = 2c²−1`; B verified two entries
+(`M[1,1]` and `M[0,0]`) plus the m↔−m Z₂ symmetry argument for why the
+outer Givens angles must be equal. Both confirmed atan2 necessity.
+
+### Strong convergence across the two proposers
+
+Both designs land at `/tmp/k8u_design_{A,B}.md` (394 + 409 lines);
+copied to `docs/design/k8u_design_{A,B}.md` for durability.
+
+  * **d=3**: both adopt the orchestrator's closed form directly. Both
+    adopt the same qubit-circuit decomposition (G_{01}: Ry(π) bracket +
+    controlled-Ry; G_{12}: CX-scratch + controlled-Ry + CX-scratch).
+    10 Ry + 8 CX per `q.θ += δ` at d=3.
+  * **d=5**: both picked **Option S (Euler sandwich)** —
+    `exp(−iδĴ_y) = W · exp(−iδĴ_z) · W†` with `W = exp(−iπ/2 Ĵ_x)` a
+    δ-INDEPENDENT spin-j unitary. Outer dressing precomputed once at
+    module init via Brennen-Bullock-O'Leary QR of d^j(π/2) into adjacent
+    Givens; middle is the existing nrs Rz path (K gates). Rejected
+    Option D (direct Givens with δ-dependent angles at d=5) as
+    per-call-expensive and brittle.
+  * **d=3 G_{12} CX direction**: A explicitly flagged this as a latent
+    bug in prior proposer designs — must be `CX(w_l → w_m)` not the
+    reverse. B derived the same direction after a mid-doc correction.
+
+### THE BUG BOTH PROPOSERS MISSED (Rule 6 in action)
+
+Both proposers wrote the G_{12} qubit circuit as:
+
+    apply_cx!(ctx, w_l, w_m)
+    _controlled_ry!(ctx, w_m, w_l, 2β)    # ← WRONG ANGLE SIGN
+    apply_cx!(ctx, w_l, w_m)
+
+and claimed it realises G_{12}(2β). It does not. I wrote a Julia
+verification script building the 4×4 qubit unitary of that circuit and
+comparing against the target `I ⊕ G_{12}(2β)` (identity on |00⟩, |11⟩;
+2D rotation on {|01⟩, |10⟩}):
+
+    β=0.3     ||circuit − G_{12}(+2β)||_∞ = 0.591
+              ||circuit − G_{12}(−2β)||_∞ = 0.0  ←
+
+The circuit realises **G_{12}(−2β)**, not G_{12}(+2β). Fix: pass `−2β`
+to `_controlled_ry!`. Then the FULL d=3 decomposition passes:
+
+    δ=π/3   ||U[subspace] − d¹(δ)||_∞ = 1.11e-16     |11⟩ fixed to 1.0
+    δ=π/4   = 1.11e-16                               |11⟩ fixed
+    δ=−π/2  = 1.11e-16                               |11⟩ fixed
+    …       all machine-epsilon
+
+This is exactly the hazard CLAUDE.md Rule 6 warns about: quantum bugs
+are deep and interlocked. A sign error in a 2-level rotation inside a
+CX-scratch would have passed "|11⟩ stays empty" unit tests (still does —
+the fix preserves subspace), but CORRUPTED every downstream amplitude
+by up to 0.6 in ℓ∞. Without numerical verification of the qubit-circuit
+4×4 unitary against its target, we would have shipped a broken primitive
+that looked correct in leakage-style tests.
+
+**Lesson for ixd implementer** (d ≥ 4 follow-on): when lowering any
+Givens block to a qubit circuit, VERIFY the 2^K × 2^K matrix
+numerically against the target before integration. The BBO Thm. 3
+ancilla-based constructions for d=5 have more room for sign errors.
+Baked into the ixd bead description as an explicit orchestrator check.
+
+### Why ship d=3 only, defer d=5 to `ixd`
+
+The bead originally asked for both d=3 and d=5. I split and filed
+`Sturm.jl-ixd` (d ≥ 4 Ry via the sandwich) because:
+
+  1. Rule 1 (fail loud, not quietly-wrong). d=3 decomposition now has
+     orchestrator-level numerical verification. d=5 requires a new
+     Givens QR on d^2(π/2) + multiple Hamming-≥2 CX-scratch routes that
+     NEITHER proposer fully spelled out — shipping both at once risks
+     repeating the sign bug at bigger scale.
+  2. The d=3 sign bug is exactly the evidence this risk is real. If I
+     missed a sign in the 3 Givens at d=3 (where I verified every step
+     on paper), the 10+ Givens at d=5 would have more.
+  3. Matches the Session 55 (`nrs`) precedent — ship one d-class cleanly,
+     defer the other with a clear follow-on bead. The consumers (csw
+     acceptance, library gates X_d/H_d/F_d) can proceed against d=3 now.
+
+### Implementation
+
+`src/types/qmod.jl` +~100 lines:
+  * New `_apply_spin_j_ry_d3!(ctx, wires::NTuple{2, WireID}, δ)` helper
+    (+docstring with the algebraic identity, the atan2 convention, the
+    sign-fix note, and the gate-count breakdown).
+  * Dispatch added to `_apply_spin_j_rotation!`: `:θ` now branches on d
+    (d=3 → helper; d ≥ 4 → error with pointer to `Sturm.jl-ixd`).
+
+Critical dispatch detail: **use `push_control!`/public `apply_ry!`/
+`pop_control!` — NOT `_controlled_ry!` directly**. The latter wraps in
+`with_empty_controls`, which would DROP any outer `when(ctrl)` control
+from the stack. Using the public `apply_ry!` at non-empty stack lets
+the context dispatcher (`src/context/eager.jl:141–151`) lift through
+all outer controls via `_multi_controlled_gate!`. This gave the correct
+semantics for `when(outer_ctrl) q.θ += δ` — verified by the test that
+checks Bell-shaped control on a QMod{3} target (full 8-amp statevector
+match).
+
+`test/test_qmod.jl` +~175 lines:
+  * 9 new k8u testsets (criterion-(a) d¹(π/3) column 0; full-matrix
+    check across 3 columns × 6 δ values; 50-random-Ry leakage; 2π-
+    periodicity; mixed Ry+Rz analytic comparison; when(ctrl)-on-Bell;
+    1000-random subspace preservation; Monte-Carlo distribution of
+    Int(q) over N=4000; d=2 BlochProxy regression).
+  * Updated the ak2 deferral test from "d ∈ {3, 4, 5, 8}" to
+    "d ∈ {4, 5, 8}", pointing at `Sturm.jl-ixd` instead of `k8u`.
+  * Added `using LinearAlgebra` at file top (needed for `Diagonal` in
+    the mixed-rotation analytic test).
+
+### TDD cycle
+
+Tests written FIRST (Rule 10): 145 pass / 3 fail / 8 error on the first
+run (RED) — errors from `:θ` still stubbed; the 3 failures from the
+updated ak2 test expecting "Sturm.jl-ixd" in an error that still said
+"Sturm.jl-k8u". After implementing the helper + dispatch: **244/244
+GREEN** on first try. The sign fix was applied BEFORE testing (caught
+at orchestrator synthesis via the 4×4 numerical check), so no
+red-green-red cycle was needed for the subtle physics bug.
+
+Adjacent-test sanity (Rule 9): `test_primitives` (711/711),
+`test_when` (507/507), `test_qint` (562/562), `test_implicit_cast`
+(14/14), `test_ptrace` (9/9), `test_autocleanup` (14/14). **1817
+adjacent + 244 qmod = 2061 clean assertions, zero regressions.**
+
+### `when()` composition cleanliness
+
+Per proposer convergence + orchestrator verification: `exp(−iδĴ_y)` has
+det = 1 on the spin-j irrep (Ĵ_y is traceless), so unlike the Rz path
+there is NO SU(d) vs U(d) global-phase cost to pay under control. The
+`Ry(±π)` brackets inside G_{01} cancel identically (`Ry(π) · Ry(−π) = I`
+exactly in SU(2), not just up to phase), and this cancellation survives
+control-stack lifts because `C-U · C-U⁻¹ = C-I = I`. Verified by the
+"when(::QBool) q.θ += π/3 on superposition control" test — all 8
+amplitudes match the ideal Bell-split product state to 1e-10.
+
+### Files touched
+
+  * `src/types/qmod.jl` — +~100 lines (new helper + dispatch).
+  * `test/test_qmod.jl` — +~175 lines (9 new testsets + ak2 update +
+    `using LinearAlgebra`).
+  * `docs/design/k8u_design_A.md` (new, 394 lines, durable copy of
+    proposer A).
+  * `docs/design/k8u_design_B.md` (new, 409 lines, durable copy of
+    proposer B).
+  * `WORKLOG.md` — this entry.
+  * Beads: `k8u` closed; `ixd` (d ≥ 4 Ry) created.
+
+No edits to `src/Sturm.jl` (helper is internal — no new export),
+`src/types/qbool.jl` (Rule 11 frozen), `src/context/*.jl` (no new
+primitives needed), `src/primitives/`, or any other user-facing file.
+
+### What's unlocked / what's next
+
+  * **csw acceptance** — can now proceed against d=3 Ry. The d=5
+    requirement blocks on `ixd`.
+  * **u2n library gates at d=3** — `X_d!`, `H_d!`, `F_d!`, `T_d!`,
+    `QuditToffoli!` at d=3 now have both their Ry and Rz primitives.
+  * **`Sturm.jl-ixd`** (d ≥ 4 Ry) — sandwich approach, proposer-
+    convergent design already in the bead description. Critical-path
+    follow-on. Bead description includes the "MUST numerically verify
+    every Givens block's qubit-lowering before integration" mandate
+    that caught the d=3 sign bug.
+  * **`Sturm.jl-os4`** (squeezing `q.θ₂`) — diagonal primitive; reduces
+    to per-wire factorisation like the nrs Rz path. Unblocked.
+  * **`Sturm.jl-mle`** (cubic-phase magic `q.θ₃`) — same pattern as os4.
+  * **`Sturm.jl-p38`** (SUM `a ⊻= b` at d > 2) — independent of both
+    nrs and k8u. Unblocked.
+
+Recommendation: `ixd` is critical-path for csw; os4/mle/p38 are
+independent easy wins. Either order works; I'd start `ixd` next to
+unblock csw fastest.
+
+### `bd dolt push` STATUS
+
+Will attempt this session after local commit. GH secret-scanning on
+the historical OAuth blob has been the blocker for Sessions 51-55.
+
+---
+
 ## 2026-04-23 — Session 55: `nrs` (Sturm.jl-nrs) — Rz at all d, Ry split off to k8u
 
 Claimed `Sturm.jl-nrs` (qubit-encoded fallback simulator for QMod{d}).
