@@ -288,18 +288,28 @@ end
 
 Apply the spin-`j = (d-1)/2` rotation `exp(-i δ Ĵ_{axis})` to the d-level
 register stored in `wires`. At d=2 this never runs (the d=2 getproperty
-routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2 it
-currently errors, pending the decomposition work in bead `Sturm.jl-nrs`.
+routes through `BlochProxy` to `apply_ry!`/`apply_rz!` directly); at d>2:
 
-The d>2 implementation will use a Givens / Wigner-small-d decomposition
-(Bartlett-deGuise-Sanders 2002 Eqs. 5–7; Sakurai §3.10 for the explicit
-small-d matrix) into controlled multi-qubit rotations whose control
-patterns never fire on encoded basis states ≥ d (so leakage into unused
-qubit-basis states stays at zero by construction — see QMod docstring,
-Leakage layer 2).
+  * **axis `:φ` (Rz)** — IMPLEMENTED via per-wire binary factorisation.
+    In Bartlett's labelling `|s⟩ = |j, j-s⟩_z` (Bartlett Eq. 5), Ĵ_z is
+    diagonal: `Ĵ_z |s⟩ = (j - s) |s⟩`. With `s = Σ_{i=0}^{K-1} b_i 2^i`
+    in the LE binary encoding, `exp(-i δ (j - s))` factors as
+    `exp(-i δ j) · Π_i exp(+i δ b_i 2^i)`. The `exp(-i δ j)` prefactor is
+    a global phase (SU(d) convention, CLAUDE.md "Global Phase and
+    Universality" — becomes a controlled relative phase under `when()`,
+    per locked policy §8.4). Each `exp(+i δ b_i 2^i)` on wire `i+1` is
+    `apply_rz!(ctx, wires[i+1], δ * 2^i)` (up to a per-wire global phase
+    that sums to another overall global phase). Gate count: K single-
+    qubit Rz's per call. Zero amplitude movement → no leakage at any d.
+  * **axis `:θ` (Ry)** — NOT YET IMPLEMENTED. Filed as bead `Sturm.jl-k8u`
+    (QMod{d} Ry rotation). Errors loudly with a pointer. The multi-qubit
+    decomposition of `exp(-i δ Ĵ_y)` on the (2j+1)-dim spin-j irrep was
+    left unresolved by both `nrs` proposer designs; k8u owns the
+    derivation + amplitude-level tests against the Wigner d-matrix.
 
 See `docs/physics/bartlett_deGuise_sanders_2002_qudit_simulation.pdf` and
-`docs/design/ak2_design_proposer_{a,b}.md` for the decomposition sketch.
+`docs/design/nrs_design_proposer_{a,b}.md` for the decomposition sketch
+and the open Ry question.
 """
 function _apply_spin_j_rotation!(
     ctx::AbstractContext,
@@ -308,10 +318,23 @@ function _apply_spin_j_rotation!(
     δ::Real,
     ::Val{d},
 ) where {K, d}
-    error(
-        "spin-j $(axis) rotation on QMod{$d} (K=$K) is not yet implemented. " *
-        "The Givens / Wigner-small-d decomposition into multi-qubit gates is " *
-        "filed as bead `Sturm.jl-nrs` (qubit-encoded fallback simulator " *
-        "integration). Use d=2 for v0.1, or wait for nrs to land."
-    )
+    if axis === :φ
+        # Per-wire binary factorisation of exp(-i δ Ĵ_z) = exp(-i δ (j - s)).
+        # wires[i] carries bit b_{i-1} at weight 2^{i-1}; apply_rz! at angle
+        # δ·2^{i-1} contributes exp(±i δ 2^{i-1}/2) on each branch.
+        @inbounds for i in 1:K
+            apply_rz!(ctx, wires[i], δ * (1 << (i - 1)))
+        end
+        return nothing
+    elseif axis === :θ
+        error(
+            "spin-j θ (Ry) rotation on QMod{$d} (K=$K) is not yet implemented. " *
+            "The decomposition of exp(-i δ Ĵ_y) on the (2j+1)-dim spin-j irrep " *
+            "into multi-qubit gates is filed as bead `Sturm.jl-k8u` (QMod{d} " *
+            "Ry rotation). The φ (Rz) primitive on this register DOES work — " *
+            "use `q.φ += δ`. Use d=2 for full Ry support."
+        )
+    else
+        error("internal: _apply_spin_j_rotation! axis must be :θ or :φ, got $axis")
+    end
 end
