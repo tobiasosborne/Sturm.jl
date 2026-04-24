@@ -822,23 +822,44 @@ function qrom_lookup_uncompute_meas!(scratch::QInt{Wtot},
     ctx = scratch.ctx
 
     # ── Step 1: X-basis measure scratch, collecting m ∈ {0,1}^Wtot ──────────
+    #
+    # TracingContext dispatch: `Bool(q)` errors inside tracing (the outcome is
+    # a placeholder, branching on it would mis-trace). For Toffoli-count
+    # benchmarks we emit the same H on each scratch wire (same 0 Toffoli as
+    # the real path), ptrace! scratch, and unconditionally execute the
+    # fixup circuit with a canonical all-ones phase_bits pattern. The circuit
+    # structure — hence the Toffoli count — is identical to any shot of the
+    # real MBU path (Berry Thm 3 cost depends only on Win, not on the phase
+    # pattern). `m_word = 0` is a sentinel that triggers the trace branch.
+    is_tracing = ctx isa TracingContext
     m_word = UInt64(0)
-    for j in 1:Wtot
-        m_qb = QBool(scratch.wires[j], ctx, false)
-        H!(m_qb)                         # X-basis rotation: H · Z · H = X
-        bit = Bool(m_qb)                 # computational-basis measure, consumes wire
-        bit && (m_word |= UInt64(1) << (j - 1))
+    if is_tracing
+        for j in 1:Wtot
+            H!(QBool(scratch.wires[j], ctx, false))
+        end
+        ptrace!(scratch)
+    else
+        for j in 1:Wtot
+            m_qb = QBool(scratch.wires[j], ctx, false)
+            H!(m_qb)                         # X-basis rotation: H · Z · H = X
+            bit = Bool(m_qb)                 # computational-basis measure, consumes wire
+            bit && (m_word |= UInt64(1) << (j - 1))
+        end
+        scratch.consumed = true              # all wires gone — mark scratch dead
     end
-    scratch.consumed = true              # all wires gone — mark scratch dead
 
     # ── Step 2: classical phase_bits[x] = parity(m · T[x]) ─────────────────
     n_entries = 1 << Win
-    any_flip = false
+    any_flip = is_tracing  # force fixup emission in trace mode
     phase_bits = Vector{Bool}(undef, n_entries)
-    @inbounds for x in 0:(n_entries - 1)
-        pb = isodd(count_ones(m_word & tbl.data[x + 1]))
-        phase_bits[x + 1] = pb
-        any_flip |= pb
+    if is_tracing
+        fill!(phase_bits, true)              # canonical all-ones for trace
+    else
+        @inbounds for x in 0:(n_entries - 1)
+            pb = isodd(count_ones(m_word & tbl.data[x + 1]))
+            phase_bits[x + 1] = pb
+            any_flip |= pb
+        end
     end
 
     # No-op fast path: measurement outcome happens to yield identity fixup.

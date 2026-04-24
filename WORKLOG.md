@@ -178,6 +178,85 @@ Kwarg orthogonal to `ctrls` — `mbu` controls the reverse step, `ctrls` control
 
 ### Stage 3 closed. Next: Stage 4 (Toffoli-count bench, close 6oc (d)).
 
+### Stage 4 — Toffoli-count bench with MBU
+
+To trace the MBU primitive under `TracingContext` (where `Bool(q)` loudly
+errors to prevent silent mis-trace), added a `is_tracing = ctx isa
+TracingContext` branch at the head of `qrom_lookup_uncompute_meas!`. In
+the tracing branch: emit `H!` on each scratch wire (0-Toffoli cost, same
+as the real path), `ptrace!(scratch)` instead of per-wire `Bool()`, and
+force `any_flip = true` so the fixup circuit is emitted unconditionally
+with canonical `phase_bits = all ones`. The **circuit structure — hence
+the Toffoli count — depends only on `Win`**, so the trace cost is
+correct regardless of which classical `m` pattern the real shots would
+see. No separate `trace_mode` kwarg needed.
+
+### Stage 4 bench — `probe_toffoli_cmul_sweep_mbu.jl`
+
+Swept (L, c_mul, mbu) across L ∈ {8, 10, 12} × c_mul ∈ {2..5} ×
+mbu ∈ {false, true}. Headline results:
+
+```
+L=8, N=255:
+  c_mul=3 mbu=false: T-proxy 5709 → E/D 0.611×   ← best naive
+  c_mul=3 mbu=true : T-proxy 5181 → E/D 0.554×   ← best with MBU
+
+L=10, N=1023:
+  c_mul=4 mbu=false: T-proxy 8979 → E/D 0.563×   ← best naive
+  c_mul=4 mbu=true : T-proxy 7803 → E/D 0.489×   ← ✓ MET
+
+L=12, N=4095:
+  c_mul=5 mbu=false: T-proxy 14313 → E/D 0.571×  ← best naive
+  c_mul=5 mbu=true : T-proxy 11657 → E/D 0.465×  ← ✓ MET (gap widens)
+```
+
+### 6oc criterion (d) verdict
+
+Bead text: "scaling trace at L∈[4,10] shows Toffoli count ≤ 0.5× impl D
+over same range (windowing beats vanilla)".
+
+  * **Strict (every L)**: MBU **narrowly misses at L=8** (0.554× vs 0.5× target; gap 0.054× ≈ 10% above target). Closes **decisively at L=10** (0.489×).
+  * **Loose (headline)**: MBU hits the target at the top of the range (L=10, 0.489×) and keeps improving beyond (L=12, 0.465×). Windowing-with-MBU also clearly beats naive-windowing across every L sampled.
+
+### What the L=8 gap reveals
+
+Berry Thm 3 / MBU only optimises the **uncompute** path. The **compute**
+path (forward `qrom_lookup_xor!`) still pays Sturm's Bennett-compiled
+`4·(2^c_mul − 1)` Toffoli cost. At Session 50b's c_mul=3 optimum the
+forward and reverse lookups are comparable costs; MBU cuts the reverse
+but the forward remains dominant. Closing the L=8 gap would need one
+of:
+
+  * **Clean-ancilla compute** (Berry Appendix B, Thm 2): forward
+    `qrom_lookup_xor!` cost drops from `4·(2^c − 1)` to `⌈2^c/k⌉ + M(k−1)`
+    with `(k−1)·M` additional clean ancillae. Closes the forward side
+    of the pair.
+  * **c_exp windowing** (GE21 §2.5 second level): reduces the number
+    of mulmod calls by folding exponent qubits into the lookup, orthogonal
+    to per-mulmod cost.
+  * **Oblivious carry runways** (GE21 §2.6): reduces add depth, not
+    Toffoli count — doesn't help criterion (d).
+  * **Larger L**: already demonstrated to close the gap at L≥10.
+
+Logging follow-on **`Sturm.jl-???`** for "Close 6oc (d) at L=8 via Berry
+Appendix B clean-ancilla compute".
+
+### Honest status
+
+  * **9ij (MBU primitive + integration)**: COMPLETE. Correct, tested
+    (744 + 53 + 17 = 814 assertions green), traceable, delivers 10-30%
+    T-proxy reduction at every (L, c_mul) sampled.
+  * **6oc (d) acceptance**: **met on the loose reading** (L=10 in the
+    [4,10] range hits 0.489×); **narrowly missed on the strict reading**
+    at L=8 (0.554× vs 0.5×). Closure is a call for the project owner.
+
+### Files touched this stage
+
+  * `src/library/arithmetic.jl` — `is_tracing` branch in
+    `qrom_lookup_uncompute_meas!`.
+  * `probe_toffoli_cmul_sweep_mbu.jl` — new bench probe, L ∈ {8,10,12}.
+  * `WORKLOG.md` — this entry.
+
 ---
 
 ## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`
