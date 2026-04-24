@@ -129,4 +129,127 @@ using Sturm
             @test result == 1
         end
     end
+
+    # ── 35s: X↔Y convention-drift discriminators ───────────────────────────
+    #
+    # WORKLOG Session 42 (bead 3yz) proved algebraically that for any
+    # diagonal D, Y^⊗W · D · Y^⊗W = X^⊗W · D · X^⊗W  (Y = iXZ; the Z factors
+    # commute through D and cancel). So `X-MCZ-X` in `_diffusion!` and
+    # `phase_flip!` is INVARIANT under a symmetric X↔Y swap.
+    #
+    # The real convention-drift risk is ASYMMETRIC drift — swapping only
+    # one side of the sandwich, giving `X-MCZ-Y` or `Y-MCZ-X`. On W=2 such
+    # a broken sandwich reduces (up to global phase) to CZ and a pure-
+    # imaginary single-qubit phase flip respectively — radically different
+    # from the intended S₀ = 2|0⟩⟨0|−I and the target-indexed phase flip.
+    #
+    # Global phase is unobservable (CLAUDE.md "Global Phase and Universality":
+    # Sturm lives in SU(2), H!² = −I is correct). The tests below therefore
+    # assert the channel action UP TO GLOBAL PHASE via amplitude ratios
+    # r[k] = post[k] / pre[k], comparing RELATIVE signs between indices.
+
+    _amp(ctx, idx) = Sturm.orkan_state_get(ctx.orkan.raw, idx, 0)
+
+    @testset "_diffusion! acts as S₀ = 2|0⟩⟨0|−I on a generic W=2 state" begin
+        # |ψ⟩ = Ry(2a)|0⟩ ⊗ Ry(2b)|0⟩, a=π/7, b=π/11:
+        #    α = cos(a)cos(b)   at idx 0  (|00⟩ in little-endian)
+        #    β = sin(a)cos(b)   at idx 1
+        #    γ = cos(a)sin(b)   at idx 2
+        #    δ = sin(a)sin(b)   at idx 3
+        # all real, distinct, non-zero.
+        #
+        # S₀ channel on W=2: ratio[0] = +c; ratio[k] = −c for k∈{1,2,3}
+        # (c is the shared global phase e^{i3π/4} from the X!·_cz!·X!
+        # construction — unobservable, cancels in ratio comparisons).
+        #
+        # Asymmetric Y⊗Y·_cz!·X⊗X (broken sandwich): ratio[k] = +c for
+        # k∈{0,1,2}, ratio[3] = −c. Three of the four ratio checks below
+        # flip sign under that drift.
+        a, b = π/7, π/11
+        @context EagerContext() begin
+            x = QInt{2}(0)
+            q0 = QBool(x.wires[1], x.ctx, false); q0.θ += 2a
+            q1 = QBool(x.wires[2], x.ctx, false); q1.θ += 2b
+
+            α = cos(a) * cos(b)
+            β = sin(a) * cos(b)
+            γ = cos(a) * sin(b)
+            δ = sin(a) * sin(b)
+
+            # Sanity: pre-diffusion amplitudes match preparation.
+            @test abs(_amp(x.ctx, 0) - α) < 1e-12
+            @test abs(_amp(x.ctx, 1) - β) < 1e-12
+            @test abs(_amp(x.ctx, 2) - γ) < 1e-12
+            @test abs(_amp(x.ctx, 3) - δ) < 1e-12
+
+            Sturm._diffusion!(x)
+
+            # Unitary — magnitudes preserved.
+            @test abs(abs(_amp(x.ctx, 0)) - α) < 1e-12
+            @test abs(abs(_amp(x.ctx, 1)) - β) < 1e-12
+            @test abs(abs(_amp(x.ctx, 2)) - γ) < 1e-12
+            @test abs(abs(_amp(x.ctx, 3)) - δ) < 1e-12
+
+            # Phase-invariant channel-action assertion.
+            r = _amp(x.ctx, 0) / α
+            @test abs(_amp(x.ctx, 1) / β - (-r)) < 1e-12
+            @test abs(_amp(x.ctx, 2) / γ - (-r)) < 1e-12
+            @test abs(_amp(x.ctx, 3) / δ - (-r)) < 1e-12
+        end
+    end
+
+    @testset "phase_flip!(x, 2) flips only idx 2 relative to idx 0" begin
+        # target=2 = 0b10 on W=2: bit 0 of target is 0 → X!(qs[1]);
+        # bit 1 is 1 → no X. Correct channel flips ONLY idx 2.
+        #
+        # Asymmetric X·MCZ·Y on wire 1 would flip idx 0 instead (with an
+        # extra i on the global phase). The ratio[k]/r checks below pin the
+        # flip location to idx 2 up to global phase.
+        a, b = π/7, π/11
+        @context EagerContext() begin
+            x = QInt{2}(0)
+            q0 = QBool(x.wires[1], x.ctx, false); q0.θ += 2a
+            q1 = QBool(x.wires[2], x.ctx, false); q1.θ += 2b
+
+            α = cos(a) * cos(b); β = sin(a) * cos(b)
+            γ = cos(a) * sin(b); δ = sin(a) * sin(b)
+
+            phase_flip!(x, 2)
+
+            @test abs(abs(_amp(x.ctx, 0)) - α) < 1e-12
+            @test abs(abs(_amp(x.ctx, 1)) - β) < 1e-12
+            @test abs(abs(_amp(x.ctx, 2)) - γ) < 1e-12
+            @test abs(abs(_amp(x.ctx, 3)) - δ) < 1e-12
+
+            r = _amp(x.ctx, 0) / α
+            @test abs(_amp(x.ctx, 1) / β - ( r)) < 1e-12  # unchanged
+            @test abs(_amp(x.ctx, 2) / γ - (-r)) < 1e-12  # flipped (target)
+            @test abs(_amp(x.ctx, 3) / δ - ( r)) < 1e-12  # unchanged
+        end
+    end
+
+    @testset "phase_flip!(x, 1) flips only idx 1 relative to idx 0" begin
+        # target=1 = 0b01 on W=2: X on wire 2 only. Correct flips ONLY idx 1.
+        a, b = π/7, π/11
+        @context EagerContext() begin
+            x = QInt{2}(0)
+            q0 = QBool(x.wires[1], x.ctx, false); q0.θ += 2a
+            q1 = QBool(x.wires[2], x.ctx, false); q1.θ += 2b
+
+            α = cos(a) * cos(b); β = sin(a) * cos(b)
+            γ = cos(a) * sin(b); δ = sin(a) * sin(b)
+
+            phase_flip!(x, 1)
+
+            @test abs(abs(_amp(x.ctx, 0)) - α) < 1e-12
+            @test abs(abs(_amp(x.ctx, 1)) - β) < 1e-12
+            @test abs(abs(_amp(x.ctx, 2)) - γ) < 1e-12
+            @test abs(abs(_amp(x.ctx, 3)) - δ) < 1e-12
+
+            r = _amp(x.ctx, 0) / α
+            @test abs(_amp(x.ctx, 1) / β - (-r)) < 1e-12  # flipped (target)
+            @test abs(_amp(x.ctx, 2) / γ - ( r)) < 1e-12  # unchanged
+            @test abs(_amp(x.ctx, 3) / δ - ( r)) < 1e-12  # unchanged
+        end
+    end
 end

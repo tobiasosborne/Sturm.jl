@@ -4,6 +4,120 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-24 — Session 59: `35s` (Sturm.jl-35s) — X↔Y convention-drift discriminators for _diffusion! / phase_flip!
+
+Session 42 shipped the X!/Y! swap fix (bead `3yz`). The five call-sites
+of `X!` in `src/` all went green without code change because of two
+algebraic invariances:
+  * `Y|0⟩⟨0|Y = X|0⟩⟨0|X` (control polarity flip is X↔Y invariant)
+  * `Y^⊗W · D · Y^⊗W = X^⊗W · D · X^⊗W` for any diagonal D (sandwich
+    around MCZ is X↔Y invariant; Y=iXZ, the Z factors commute through
+    the diagonal and cancel)
+
+`_diffusion!` (`src/library/patterns.jl:318`) and `phase_flip!`
+(`src/library/patterns.jl:339`) both rely on the second invariance.
+Bead 35s: lock the invariance into CI so a future refactor that breaks
+the X-MCZ-X symmetry (`X-MCZ-Y` or `Y-MCZ-X`) trips a red test.
+
+### Test design — discriminators up to global phase
+
+CLAUDE.md "Global Phase and Universality": Sturm lives in SU(2),
+`H!² = −I` is correct, every derived gate is up to a global phase.
+Tests MUST be phase-invariant.
+
+Approach: ratio `r[k] = post[k] / pre[k]` cancels the global phase on
+real-valued inputs. The channel's *relative* sign pattern between
+indices is what the test pins.
+
+W=2 channel actions on input `(α,β,γ,δ)` with all real non-zero:
+
+| Channel                         | ratio pattern (up to global phase) |
+|---------------------------------|------------------------------------|
+| S₀ = 2|0⟩⟨0|−I (correct)        | (+, −, −, −)                       |
+| Y⊗Y·CZ·X⊗X (asymmetric)         | (+, +, +, −)                       |
+
+2-of-4 ratios flip — catchable. Preparation uses a=π/7, b=π/11 so every
+amplitude is distinct and non-zero (any sign permutation detectable).
+
+For `phase_flip!(x, target)`:
+  * Correct: flip only `idx == target` relative to the others.
+  * Asymmetric X·MCZ·Y on the X-ed wires flips a DIFFERENT index (on
+    W=2 target=2 the asymmetric variant flips idx 0 instead of idx 2,
+    also injecting an extra factor of i in the global phase).
+
+### Gotcha — `_cz!` carries a global phase of e^{−iπ/4}
+
+First version of the diffusion test asserted signed-real amplitudes
+directly. Failed 8/8 — I had overlooked the decomposition in
+`_cz!(a, b)` (`src/library/patterns.jl:258`):
+
+    b.φ += π/2;  b ⊻= a;  b.φ -= π/2;  b ⊻= a;  a.φ += π/2
+
+This is Nielsen-Chuang CP(π) up to a global phase `e^{−iπ/4}` — tracing
+the four Rz·CX·Rz·CX·Rz on the four basis states gives
+`diag(e^{−iπ/4}, e^{−iπ/4}, e^{−iπ/4}, e^{i3π/4}) = e^{−iπ/4} · CZ`.
+Combined with `X! = Rz(π)Ry(π) = iX` and `(iX)^⊗2 = −X⊗X`, the
+full `_diffusion!` on W=2 is `(−1) · e^{−iπ/4} · S₀ = e^{i3π/4} · S₀`.
+
+Rebuild the test around ratios — phase-invariant. 117/117 green.
+
+### Mutation testing (Rule 9 skepticism, Rule 10 TDD)
+
+Red-green via mutation: temporarily break `_diffusion!` to `X-MCZ-Y`
+(replace the closing `for q in qs; X!(q); end` with `Y!(q)`), rerun
+tests. Observed 2 failures in the `_diffusion!` testset at the idx 1
+and idx 2 ratio checks — matches the predicted `(+, +, +, −)` vs.
+`(+, −, −, −)` divergence. Revert. Do the same for `phase_flip!`
+(replace the closing X!s with Y!s for both target=1 and target=2
+cases): 2 failures per testset. Revert.
+
+**Discriminator strength verified.** Tests pass on the correct code
+AND fail on the plausible asymmetric drift. This is what the 35s
+acceptance criterion explicitly asks for:
+
+> passes pre- and post-fix of bead 3yz AND would fail if _diffusion!
+> naively swapped X! for Y! in a non-sandwich scenario.
+
+### Files touched
+
+  * `test/test_patterns.jl` — three new testsets (+130 LOC), 25
+    assertions covering `_diffusion!`, `phase_flip!(_, 1)`,
+    `phase_flip!(_, 2)`.
+  * `WORKLOG.md` — this entry.
+
+No `src/` changes. No API changes. No runtests.jl change (test_patterns
+already wired).
+
+### Adjacent regression
+
+  * `test_patterns` 117/117 (was 92; +25 new assertions).
+  * `test_grover` 284/284 (unchanged — expected, the invariance means
+    Grover never needed a code change either).
+
+### Lesson
+
+When unit-testing quantum channels under the SU(2) + CNOT algebra,
+**never assert absolute amplitude values** — phase-invariance is load-
+bearing for correctness (CLAUDE.md §"Global Phase and Universality"
+and P3). Ratios `post[k] / pre[k]` cancel the global phase on real-
+valued inputs and expose the *relative* channel action, which is the
+physically meaningful thing. A phase-naïve test for S₀ would have had
+to track `e^{i3π/4}` through `_cz!` manually — fragile under any
+decomposition refactor of `_cz!` itself.
+
+Mutation testing — break the implementation, observe the test goes
+red, revert — is the explicit way to verify discriminator strength
+for invariance-hardening tests. Without mutation, a test can pass
+trivially and still be blind to the drift it was supposed to catch.
+
+### `9g5` (companion bead for block_encoding)
+
+Same pattern needed in `src/block_encoding/` — `_rotation_tree!` and
+`_flip_for_index!` use the same X-sandwich around a diagonal. Taking
+it next.
+
+---
+
 ## 2026-04-24 — Session 58: `guj` (Sturm.jl-guj) — bench_shor_scaling Int64 overflow at L=18 impl B
 
 Small bug hunt. `test/bench_shor_scaling.jl:144` multiplied
