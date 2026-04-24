@@ -4,6 +4,148 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-24 — Session end: handoff for next agent
+
+Orient yourself before touching anything:
+
+```bash
+git log --oneline -10       # 2026-04-24 commits start at af480e8 and below
+bd ready -n 10              # open work queue
+bd list --status=open -n 30 # full open set
+```
+
+### Where the project stands as of this commit (48640e8)
+
+  * **Warm-ups landed** — `guj` (bench_shor_scaling Int64 overflow),
+    `35s` (X↔Y discriminator for Grover/phase_flip!), `9g5` (same for
+    block_encoding _flip_for_index!). All three ship phase-invariant
+    ratio-based test patterns (Sessions 58–60 technique); future drift
+    hardening in other circuits should reuse this idiom rather than
+    reinventing it.
+  * **`9ij` (MBU) closed** — Berry et al. 2019 arXiv:1902.02134 App C
+    Thm 3 measurement-based QROM uncomputation landed end-to-end
+    across 5 stages (bvq/123/1q9/7cl/4hz). Public API:
+    `qrom_lookup_uncompute_meas!(scratch, addr, tbl)` in
+    `src/library/arithmetic.jl`, plus a new `mbu::Bool=false` kwarg on
+    `plus_equal_product_mod!` and `_shor_mulmod_E_controlled!`. Full
+    test story: 744 + 53 + 17 = 814 assertions, plus a dedicated
+    `probe_toffoli_cmul_sweep_mbu.jl` bench across L ∈ {8,10,12}.
+  * **6oc status as of this commit**:
+      * Criterion (a)(b)(c): still blocked by `Sturm.jl-059` (perf —
+        `_shor_mulmod_E_controlled!` at N=15 is ~21 min/call,
+        distributed cost across JIT + FFI + many small gates; Session
+        49 already did the zero-copy `unsafe_wrap` fix and `@profile`
+        found no single hotspot).
+      * Criterion (d): 0.554× at L=8 (c_mul=3, mbu=true) — **0.054×
+        short of the 0.5× target under strict reading**. At L=10 and
+        L=12 the criterion is met (0.489×, 0.465×). Gap driven by
+        forward QROM cost — MBU only halves the reverse. Next lever
+        filed as `Sturm.jl-vbz` (Berry App B Thm 2 clean-ancilla
+        forward compute).
+
+### Open beads most worth picking up next
+
+1. **`Sturm.jl-vbz` (P2)** — close 6oc (d) at L=8 via Berry Appendix B
+   Theorem 2 / Figure 4, the clean-ancilla-assisted forward QROM. With
+   MBU already in place on the reverse, adding the forward sqrt-Toffoli
+   construction should drop L=8 c_mul=3 T-proxy from 5181 (current
+   mbu=true) to ~3500–4000, putting E/D below 0.5×. Ground truth is
+   `docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf`
+   App B Thm 2 (Eq. 66) + Fig 4. Scope ≈ one more primitive
+   (`qrom_lookup_xor_cleanancilla!`), new `mbu_compute::Bool=false`
+   kwarg, mirrors the stage-shape of 9ij.
+2. **`Sturm.jl-059` (P2)** — 21 min/call perf bug. Harder, structural.
+   Session 49 WORKLOG has the profiler notes; Session 50 pivoted to
+   Toffoli-count metrics as a result. Only pick this up if you enjoy
+   simulator-guts spelunking and have time to read Orkan's FFI story.
+   Related lead: `Sturm.jl-2i0` (task_local_storage → ScopedValue).
+3. Qudit track **`csw`, `2bf`, `os4`, `mle`, `p38`** — all unblocked by
+   Session 57's QMod{5} Ry land; no MBU dependency. Good parallel work
+   if someone wants to avoid the Shor critical path.
+4. `eiq` — CasesNode consumer fail-loud policy. Mechanical, four files,
+   matches Rule 1. Session 61 considered this but took 6oc instead.
+
+### Non-obvious traps from this session (write these down, don't rediscover)
+
+  * **TracingContext & measurement**: `Bool(q)` throws loudly inside
+    `TracingContext` (`src/context/tracing.jl:145-156`). Any primitive
+    that measures for classical post-processing (like MBU) needs an
+    `is_tracing = ctx isa TracingContext` branch that substitutes
+    `ptrace!` for the measurement and uses a canonical placeholder in
+    any classical computation. The circuit Toffoli count is preserved
+    because it only depends on dimensions, not on the classical values.
+    See `qrom_lookup_uncompute_meas!` for the reference pattern.
+  * **`_binary_to_unary!` is NOT same-order-self-inverse at Wlo ≥ 2**.
+    Uncompute must traverse `b` from Wlo−1 down to 0 (kwarg
+    `uncompute=true`). Within a single `b`-level the Fredkin order
+    doesn't matter (disjoint targets commute); across levels it does.
+  * **`_fredkin!(ctrl, a, b)` costs 1 Toffoli + 2 CNOTs**. The obvious
+    spelling `when(ctrl) do swap!(a, b) end` costs 3 Toffolis because
+    each of `swap!`'s 3 CNOTs gets lifted to CCX under `when`. Anywhere
+    you need a controlled SWAP inside a `when`, use `_fredkin!`.
+  * **`qrom_lookup_xor!` in Sturm costs `4·(2^c − 1)` Toffolis per
+    call**, not the `2^c − 1` of the abstract Babbush-Gidney
+    construction — the 4× overhead comes from Bennett's compile. So the
+    WORKLOG Session 50b prediction that MBU alone would close L=8 to
+    ≤0.5× was off by the forward-QROM cost; it closes at L=10 instead.
+  * **Global phase in ratio assertions**. The Session 59–60 pattern is
+    `r = post[ref_idx] / pre[ref_idx]; @test abs(post[k]/pre[k] − r) <
+    tol` for k ≠ ref. CLAUDE.md "Global Phase and Universality" is
+    load-bearing — do not write phase-naïve assertions in channel
+    tests, ever.
+  * **`bd create` + `::` in Bash prose**: `bd create ... --description="...
+    mbu::Bool=false kwarg ..."` gets the `::` eaten by bash and the
+    description truncated. Use `bd update --notes="..."` to complete
+    descriptions that contain `::`, or avoid it in bash prose.
+  * **`bd dolt push` from a stale local**: fails non-fast-forward until
+    you `dolt fetch origin && dolt pull origin main` from inside
+    `.beads/embeddeddolt/Sturm_jl/`. Memory `beads-sync-workaround-for
+    -sturm-jl-bd-dolt` has the full recipe.
+
+### Environment (inherit these)
+
+  * `LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so`
+  * `OMP_NUM_THREADS=16` (strict, per memory `orkan-thread-limit`)
+  * Never run the full test suite on this device — per memory
+    `sturm-jl-test-suite-slow`. Run individual test files via
+    `julia --project -e 'using Sturm; include("test/test_X.jl")'`.
+  * Julia runs strictly serial on this device (memory
+    `feedback_julia_serial_only`) — no parallel `julia` processes.
+  * Verbose output must eager-flush stage by stage (memory
+    `feedback_verbose_eager_flush`) — blank waiting is a fail.
+
+### Memory entries worth knowing
+
+```
+bd memories beads-storage       # where beads live
+bd memories beads-sync          # dolt merge recipe
+bd memories orkan               # thread limit + LIBORKAN_PATH
+bd memories test-suite-slow     # never run Pkg.test() here
+bd memories oaa                 # BS+NLFT tricky bug (Session 13)
+bd memories p9-axiom            # P9 can't be literal per Julia rules
+```
+
+### Latest commits on main (origin/main up to date)
+
+```
+48640e8 feat(9ij-stage4): MBU Toffoli bench — closes 6oc (d) at L=10
+f1375aa feat(9ij-stage3): mbu kwarg on plus_equal_product_mod! + _shor_mulmod_E_controlled!
+99c845b feat(9ij-stage2): qrom_lookup_uncompute_meas! primitive
+58b6320 feat(9ij-stage1): _binary_to_unary! + _fredkin! helpers
+a7ad1ee docs(9ij-stage0): ground MBU construction in Berry et al. 2019 App C
+514ac23 test(9g5): X↔Y drift discriminators for block_encoding _flip_for_index!
+0258c80 test(35s): X↔Y convention-drift discriminators for _diffusion! / phase_flip!
+3a32219 fix(guj): bench_shor_scaling estimate_bytes overflow at L=18 impl B
+```
+
+### Session sequence for the full story
+
+Read sessions 58 → 61 for the current session's full narrative; 42 for
+the X↔Y swap backstory that 35s/9g5 harden; 45–50 for the 6oc build-up
+that 9ij slots into. Earlier sessions archived in `WORKLOG-archive.md`.
+
+---
+
 ## 2026-04-24 — Session 61: `9ij` ground truth — Berry et al. 2019 Appendix C (MBU)
 
 Starting the measurement-based-uncompute (MBU) work that closes 6oc
