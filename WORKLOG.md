@@ -110,6 +110,44 @@ Manual trace at Wlo=2 showed that applying the forward cascade twice in the same
 
 ### Stage 1 closed. Next: Stage 2 (`qrom_lookup_uncompute_meas!`).
 
+### Stage 2 — `qrom_lookup_uncompute_meas!`
+
+New public primitive in `src/library/arithmetic.jl`:
+
+```julia
+qrom_lookup_uncompute_meas!(scratch::QInt{Wtot}, addr::QInt{Win},
+                            tbl::QROMTable{Win, Wtot, Nentries})
+```
+
+Implements Berry Thm 3 / Fig 6 in four phases:
+
+1. **X-basis measure `scratch`** — iterate wires, `H!` then `Bool()`, collect outcomes into `m::UInt64`, mark `scratch.consumed = true`.
+2. **Classically compute** `phase_bits[x] = parity(m & tbl.data[x+1])` for every `x ∈ 0..2^Win-1`.
+3. **Fast-path return** if `any_flip == false` (measurement happened to yield identity fixup — rare but real: e.g. table of all zeros).
+4. **Phase fixup on `addr`**:
+   - Win=1 degenerate case: if `phase_bits[1] != phase_bits[2]`, apply `Z!` to addr's single wire. Global-phase arguments make this correct; Berry Thm 3 excludes Win=1 (`1 < k < d` with `d=2` has no valid `k`), so handled directly.
+   - Win ≥ 2: split-address `Wlo = ⌈Win/2⌉`, `Whi = Win − Wlo`, `K = 2^Wlo`. Allocate K ancillae; X on anc[1]; forward `_binary_to_unary!` on `addr_lo`; H⊗K; `qrom_lookup_xor!` on the precomputed `fixup_tbl::QROMTable{Whi,K}` with address = `addr_hi`, target = the K ancillae wrapped as a `QInt{K}` view; H⊗K; reverse `_binary_to_unary!`; X on anc[1]; ptrace each.
+
+### Stage 2 — design notes worth recording
+
+  * **`scratch` lifecycle**: after bit-by-bit `Bool()` casts, all wires are deallocated but the Julia `QInt` object still exists. Without `scratch.consumed = true`, a caller could try `Int(scratch)` and corrupt state silently. Setting the flag turns that into a linear-resource-violation error (Rule 1 — fail loud).
+  * **Fixup table changes per shot**. The fixup entries depend on the measurement outcome `m`, which is sampled per shot. Each call to `qrom_lookup_xor!(unary, addr_hi, fixup_tbl)` therefore misses Bennett's circuit cache (`_QROM_LOOKUP_XOR_CACHE`) unless `m` happens to repeat. Acceptable for correctness tests and for Toffoli-count traces (Stage 4 measures symbolic cost, not wall-clock); if wall-clock becomes a concern, a future optimisation is to factor out the shot-independent structure.
+  * **H-sandwich trick**. The phase to apply is `(−1)^phase_bits[x]` on addr states `|x⟩`. Without the H-sandwich we'd need a phase-only QROM. With H⊗K before and after the XOR lookup, "flip the j-th bit of ancilla" becomes "apply Z to the j-th ancilla" — and since the ancillae carry a one-hot encoding of `addr_lo`, Z on `anc[lo]` applies Z-conditional on `addr_lo == lo`. Combined with the address register on `addr_hi`, the ancilla XOR lookup delivers exactly the classically-desired phase pattern. Much cleaner than a bespoke phase-only QROM.
+
+### Stage 2 verification
+
+  * Basis-state roundtrip exhaustive over (Win ∈ 2..3) × (Wtot ∈ 1..2) × every `addr_val`: **24/24**.
+  * Superposition: addr in generic superposition via Ry(2π/7) ⊗ Ry(2π/11), 4 shots, each asserts (a) per-x magnitude preserved, (b) ratio `post[x]/pre[x]` constant across x (Session 59-60 phase-invariant technique). **28/28**.
+  * Identity-zero table: all-zero entries → no-op on addr. **1/1**.
+
+**53/53 green on `qrom_lookup_uncompute_meas!` alone.** `_binary_to_unary!` still 744/744.
+
+### Stage 2 gotcha — `any_flip` fast-path is real
+
+First draft didn't have the `any_flip` check. Every superposition test still passed, but the Win=3/Wtot=2 identity-zero-table test exercised the path where `m` contains bits set but every `phase_bits[x]` ends up zero (because table entries are all zero). Without the check we'd still build an all-zero fixup table, do the H-sandwich + XOR-lookup (doing nothing), reverse — wasted work. Added the short-circuit. No correctness impact, just a cheap perf win on the degenerate case.
+
+### Stage 2 closed. Next: Stage 3 (integration via `mbu` kwarg on `plus_equal_product_mod!`).
+
 ---
 
 ## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`
