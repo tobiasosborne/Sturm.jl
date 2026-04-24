@@ -746,3 +746,150 @@ function _binary_to_unary!(addr::QInt{Wlo},
     end
     return nothing
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sturm.jl-9ij Stage 2 — measurement-based QROM uncomputation.
+#
+# Ground truth: Berry et al. 2019 arXiv:1902.02134, Appendix C, Theorem 3
+# (Eq. 67) and Fig 6 (clean-ancilla version).
+#
+# Contract (channel acting on addr ⊗ scratch ⊗ environment):
+#   pre :  Σ_x α_x |x⟩_addr ⊗ |T[x]⟩_scratch ⊗ |rest⟩
+#   post:  Σ_x α_x |x⟩_addr ⊗ |rest⟩                    (up to global phase)
+#
+# The forward `qrom_lookup_xor!` puts scratch in |T[addr]⟩; this function
+# consumes scratch via X-basis measurement and applies a classically-
+# conditioned phase fixup to addr that cancels the random per-basis-state
+# phase induced by the measurement, restoring the addr marginal exactly
+# (up to a shot-dependent GLOBAL phase, which is unobservable).
+#
+# Toffoli cost: ⌈d/k⌉ + k per Berry Thm 3, minimised at k ≈ √d. For d = 2^Win
+# and k = 2^Wlo with Wlo = ⌈Win/2⌉, cost ≈ 2√d. At c_mul=5 (Win=5, d=32,
+# Wlo=3, k=8): 4 + 8 = 12 Toffoli, vs 62 for the naive reverse lookup.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    qrom_lookup_uncompute_meas!(scratch::QInt{Wtot}, addr::QInt{Win},
+                                tbl::QROMTable{Win, Wtot, Nentries}) -> nothing
+
+Measurement-based uncomputation of a QROM read `scratch ← T[addr]`. Consumes
+`scratch` via X-basis measurement and applies a classically-conditioned
+phase fixup to `addr` so that the combined `qrom_lookup_xor!` +
+`qrom_lookup_uncompute_meas!` pair is the identity on `addr` up to a shot-
+dependent global phase.
+
+# Cost
+`⌈2^Win / k⌉ + k` Toffoli for k = 2^Wlo with Wlo = ⌈Win/2⌉. Optimal ≈ 2·√(2^Win).
+Additional O(log k) ancillae from `qrom_lookup_xor!` on the fixup table.
+
+# Preconditions
+  * Same context for `scratch`, `addr`, and `tbl`.
+  * `scratch` must currently hold `|T[addr]⟩` (i.e., the partner
+    `qrom_lookup_xor!(scratch, addr, tbl)` was called immediately prior).
+
+# Postconditions
+  * `scratch` is consumed (wires deallocated via measurement).
+  * `addr` is left in its pre-forward-lookup state up to a shot-
+    dependent GLOBAL phase.
+
+# Reference
+  Berry, Gidney, Motta, McClean, Babbush (2019), "Qubitization of arbitrary
+  basis quantum chemistry leveraging sparsity and low rank factorization",
+  arXiv:1902.02134, Appendix C, Theorem 3 (Eq. 67) and Figs 6 + 8.
+  `docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf`
+"""
+function qrom_lookup_uncompute_meas!(scratch::QInt{Wtot},
+                                      addr::QInt{Win},
+                                      tbl::QROMTable{Win, Wtot, Nentries}
+                                      ) where {Wtot, Win, Nentries}
+    check_live!(scratch); check_live!(addr)
+    scratch.ctx === addr.ctx ||
+        error("qrom_lookup_uncompute_meas!: scratch and addr must share a context")
+    ctx = scratch.ctx
+
+    # ── Step 1: X-basis measure scratch, collecting m ∈ {0,1}^Wtot ──────────
+    m_word = UInt64(0)
+    for j in 1:Wtot
+        m_qb = QBool(scratch.wires[j], ctx, false)
+        H!(m_qb)                         # X-basis rotation: H · Z · H = X
+        bit = Bool(m_qb)                 # computational-basis measure, consumes wire
+        bit && (m_word |= UInt64(1) << (j - 1))
+    end
+    scratch.consumed = true              # all wires gone — mark scratch dead
+
+    # ── Step 2: classical phase_bits[x] = parity(m · T[x]) ─────────────────
+    n_entries = 1 << Win
+    any_flip = false
+    phase_bits = Vector{Bool}(undef, n_entries)
+    @inbounds for x in 0:(n_entries - 1)
+        pb = isodd(count_ones(m_word & tbl.data[x + 1]))
+        phase_bits[x + 1] = pb
+        any_flip |= pb
+    end
+
+    # No-op fast path: measurement outcome happens to yield identity fixup.
+    any_flip || return nothing
+
+    # ── Step 3: phase fixup on addr ────────────────────────────────────────
+    if Win == 1
+        # Berry Thm 3 requires 1 < k < d = 2; no valid k exists. Direct fixup:
+        # phase_bits[1] = phase on |0⟩, phase_bits[2] = phase on |1⟩.
+        # Up to a global phase that is unobservable, only the RELATIVE phase
+        # matters; apply Z (= Rz(π)) iff the bits differ.
+        if phase_bits[1] != phase_bits[2]
+            Z!(QBool(addr.wires[1], ctx, false))
+        end
+        return nothing
+    end
+
+    # General Win ≥ 2: split-address fixup per Berry Fig 6.
+    Wlo = cld(Win, 2)                        # ⌈Win/2⌉
+    Whi = Win - Wlo
+    K = 1 << Wlo
+    n_hi = 1 << Whi
+
+    # Allocate K clean ancillae; seed with |1⟩ at position 0.
+    anc_list = [QBool(ctx, 0.0) for _ in 1:K]
+    X!(anc_list[1])
+    anc = tuple(anc_list...)
+
+    # Views onto addr's low and high slices.
+    addr_lo_wires = ntuple(i -> addr.wires[i], Val(Wlo))
+    addr_hi_wires = ntuple(i -> addr.wires[Wlo + i], Val(Whi))
+    addr_lo = QInt{Wlo}(addr_lo_wires, ctx, false)
+    addr_hi = QInt{Whi}(addr_hi_wires, ctx, false)
+
+    # Forward binary→unary cascade.
+    _binary_to_unary!(addr_lo, anc)
+
+    # H-sandwich: maps phase-flip on ancilla → bit-flip on ancilla.
+    for a in anc; H!(a); end
+
+    # Classically compute the fixup table: entry h has bit j = phase_bits[h*K + j + 1].
+    fixup_entries = Vector{UInt64}(undef, n_hi)
+    @inbounds for h in 0:(n_hi - 1)
+        word = UInt64(0)
+        for j in 0:(K - 1)
+            phase_bits[h * K + j + 1] && (word |= UInt64(1) << j)
+        end
+        fixup_entries[h + 1] = word
+    end
+    fixup_tbl = QROMTable{Whi, K}(fixup_entries)
+
+    # XOR the fixup table into the unary ancillae.
+    anc_wires = ntuple(i -> anc[i].wire, Val(K))
+    anc_qint = QInt{K}(anc_wires, ctx, false)
+    qrom_lookup_xor!(anc_qint, addr_hi, fixup_tbl)
+
+    # Close the H-sandwich.
+    for a in anc; H!(a); end
+
+    # Reverse binary→unary cascade.
+    _binary_to_unary!(addr_lo, anc; uncompute=true)
+
+    # Ancillae back to |1, 0, 0, ..., 0⟩ → |0, 0, ..., 0⟩; release.
+    X!(anc[1])
+    for a in anc; ptrace!(a); end
+
+    return nothing
+end

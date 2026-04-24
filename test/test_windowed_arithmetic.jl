@@ -2,7 +2,7 @@ using Test
 using Sturm
 using Sturm: qrom_lookup_xor!, plus_equal_product!, plus_equal_product_mod!, decode!
 using Sturm: _shor_mulmod_E_controlled!
-using Sturm: _binary_to_unary!
+using Sturm: _binary_to_unary!, qrom_lookup_uncompute_meas!
 
 # Eager-flushed staged output (feedback_verbose_eager_flush).
 _t0 = time_ns()
@@ -202,6 +202,110 @@ _amp(ctx, idx) = Sturm.orkan_state_get(ctx.orkan.raw, idx, 0)
     end
 
     _log("EXIT _binary_to_unary!")
+end
+
+# ── Sturm.jl-9ij Stage 2 — qrom_lookup_uncompute_meas! ───────────────────────
+#
+# Channel contract:
+#   pre :  Σ_x α_x |x⟩_addr ⊗ |T[x]⟩_scratch ⊗ |rest⟩
+#   post:  Σ_x α_x |x⟩_addr ⊗ |rest⟩                    (up to shot-dependent global phase)
+#
+# Build-up: forward `qrom_lookup_xor!` puts scratch in |T[addr]⟩; then
+# `qrom_lookup_uncompute_meas!` measures scratch out in X basis and applies
+# the classically-conditioned phase fixup to addr. The joint channel is the
+# identity on addr (up to global phase), with scratch consumed.
+
+@testset "qrom_lookup_uncompute_meas!" begin
+    _log("ENTER qrom_lookup_uncompute_meas!")
+
+    @testset "basis-state roundtrip: Int(addr) preserved, scratch gone" begin
+        # Exhaustive over (Win, Wtot) ∈ {2,3} × {1,2}, every addr_val, every
+        # table value (one random-looking table per (Win, Wtot)).
+        _log("  ENTER basis roundtrip")
+        for Win in 2:3, Wtot in 1:2
+            d = 1 << Win
+            # A deterministic pseudo-random table, entries in [0, 2^Wtot).
+            tbl_data = [UInt64(mod(3 * x + 1, 1 << Wtot)) for x in 0:(d - 1)]
+            for addr_val in 0:(d - 1)
+                @context EagerContext() begin
+                    addr    = QInt{Win}(addr_val)
+                    scratch = QInt{Wtot}(0)
+                    tbl     = QROMTable{Win, Wtot}(collect(Int, tbl_data))
+                    qrom_lookup_xor!(scratch, addr, tbl)
+                    qrom_lookup_uncompute_meas!(scratch, addr, tbl)
+                    @test Int(addr) == addr_val
+                end
+            end
+        end
+        _log("  EXIT basis roundtrip")
+    end
+
+    @testset "superposition: addr marginal preserved up to global phase" begin
+        # Addr in generic superposition via Ry. Forward+MBU should leave addr
+        # in the same state up to a shot-dependent global phase. Phase-
+        # invariant assertion: ratio post[x]/pre[x] must be CONSTANT across x
+        # within a single shot (ratio comparison against idx 0 reference).
+        _log("  ENTER superposition [Win=2, Wtot=2]")
+        Win = 2; Wtot = 2
+        d = 1 << Win
+        tbl_data = [1, 2, 3, 1]  # non-trivial bitpatterns
+        angles = (π/7, π/11)
+        n_shots = 4  # different m outcomes likely across shots
+        for _ in 1:n_shots
+            @context EagerContext() begin
+                addr = QInt{Win}(0)
+                # Generic superposition.
+                q0 = QBool(addr.wires[1], addr.ctx, false); q0.θ += 2 * angles[1]
+                q1 = QBool(addr.wires[2], addr.ctx, false); q1.θ += 2 * angles[2]
+
+                # Pre-amplitudes on addr register (scratch still |0⟩ → joint idx = x).
+                pre = ntuple(x -> _amp(addr.ctx, x - 1), Val(d))
+
+                scratch = QInt{Wtot}(0)
+                tbl = QROMTable{Win, Wtot}(tbl_data)
+
+                qrom_lookup_xor!(scratch, addr, tbl)
+                qrom_lookup_uncompute_meas!(scratch, addr, tbl)
+
+                # After scratch is measured out, amplitudes on addr alone
+                # live at joint idx = addr (scratch wires are gone).
+                post = ntuple(x -> _amp(addr.ctx, x - 1), Val(d))
+
+                # Unitary — magnitudes preserved per amplitude.
+                for x in 1:d
+                    @test abs(abs(post[x]) - abs(pre[x])) < 1e-12
+                end
+                # Phase-invariant: post[x]/pre[x] == constant r across all x.
+                r = post[1] / pre[1]
+                for x in 2:d
+                    @test abs(post[x] / pre[x] - r) < 1e-10
+                end
+                # addr not consumed; Int(addr) works (collapses to a random basis).
+                _ = Int(addr)
+            end
+        end
+        _log("  EXIT superposition")
+    end
+
+    @testset "identity table T[x]=0: MBU is trivial no-op on addr" begin
+        # When all table entries are 0, qrom_lookup_xor! leaves scratch in |0⟩;
+        # X-basis measure yields deterministic m = parity outcomes but
+        # phase_bits[x] = parity(m & 0) = 0 for all x — fixup is identity.
+        _log("  ENTER identity-zero table")
+        Win = 3; Wtot = 2
+        d = 1 << Win
+        @context EagerContext() begin
+            addr = QInt{Win}(5)
+            scratch = QInt{Wtot}(0)
+            tbl = QROMTable{Win, Wtot}(zeros(Int, d))
+            qrom_lookup_xor!(scratch, addr, tbl)
+            qrom_lookup_uncompute_meas!(scratch, addr, tbl)
+            @test Int(addr) == 5
+        end
+        _log("  EXIT identity-zero table")
+    end
+
+    _log("EXIT qrom_lookup_uncompute_meas!")
 end
 
 @testset "plus_equal_product! (non-modular)" begin
