@@ -148,6 +148,36 @@ First draft didn't have the `any_flip` check. Every superposition test still pas
 
 ### Stage 2 closed. Next: Stage 3 (integration via `mbu` kwarg on `plus_equal_product_mod!`).
 
+### Stage 3 — `mbu` kwarg integration
+
+Added `mbu::Bool=false` kwarg to:
+  * `plus_equal_product_mod!` in `src/library/arithmetic.jl` (threaded through `_pep_mod_iter!`).
+  * `_shor_mulmod_E_controlled!` in `src/library/shor.jl` (passes through to the two `plus_equal_product_mod!` sweeps).
+
+`_pep_mod_iter!` now branches at the uncompute step:
+
+```julia
+if mbu
+    qrom_lookup_uncompute_meas!(scratch, y_win, tbl)   # MBU — scratch consumed
+else
+    qrom_lookup_xor!(scratch, y_win, tbl)              # naive reverse
+    ptrace!(scratch)
+end
+```
+
+Kwarg orthogonal to `ctrls` — `mbu` controls the reverse step, `ctrls` controls the add step; they compose cleanly.
+
+### Stage 3 verification
+
+  * **mbu=false regression** (N=3, window=2, k ∈ {1,2} × y0 ∈ {0,1}): decode!(b) matches mod(y0·k, 3). 4/4.
+  * **mbu=true** (same params): same classical output. 4/4.
+  * **mbu=true window=1** (exercises the Win=1 fallback inside `qrom_lookup_uncompute_meas!` — direct-Z path, not the split-address construction): 8/8.
+  * **`_shor_mulmod_E_controlled!` mbu=true** at N=3, `|1⟩` ctrl, a=2: decode!(target) = 2. 1/1.
+
+**17/17 green on Stage 3 integration.** Upstream `_binary_to_unary!` 744/744 and `qrom_lookup_uncompute_meas!` 53/53 unchanged.
+
+### Stage 3 closed. Next: Stage 4 (Toffoli-count bench, close 6oc (d)).
+
 ---
 
 ## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`

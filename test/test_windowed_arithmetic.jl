@@ -308,6 +308,65 @@ end
     _log("EXIT qrom_lookup_uncompute_meas!")
 end
 
+# ── Sturm.jl-9ij Stage 3 — `mbu=true` integration into plus_equal_product_mod!
+# and _shor_mulmod_E_controlled!. Both callers accept `mbu::Bool=false` kwarg;
+# the behaviour with `mbu=true` must match `mbu=false` on the classical Int
+# output (channel marginal is identical up to shot-dependent global phase).
+
+@testset "plus_equal_product_mod! mbu kwarg" begin
+    _log("ENTER plus_equal_product_mod! mbu")
+
+    @testset "mbu=false regression (N=3, window=2)" begin
+        for k in (1, 2), y0 in 0:1
+            @context EagerContext() begin
+                b = QCoset{2, 1}(0, 3)
+                y = QInt{2}(y0)
+                plus_equal_product_mod!(b, k, y; window=2, mbu=false)
+                @test decode!(b) == mod(y0 * k, 3)
+                _ = Int(y)
+            end
+        end
+    end
+
+    @testset "mbu=true (N=3, window=2) — matches mbu=false" begin
+        for k in (1, 2), y0 in 0:1
+            @context EagerContext() begin
+                b = QCoset{2, 1}(0, 3)
+                y = QInt{2}(y0)
+                plus_equal_product_mod!(b, k, y; window=2, mbu=true)
+                @test decode!(b) == mod(y0 * k, 3)
+                _ = Int(y)
+            end
+        end
+    end
+
+    @testset "mbu=true window=1 (ragged, Win=1 fixup path)" begin
+        # window=1 means every iteration's MBU is at Win=1 (degenerate —
+        # Berry Thm 3 inapplicable; primitive falls back to a direct Z).
+        for k in (1, 2), y0 in 0:3
+            @context EagerContext() begin
+                b = QCoset{2, 1}(0, 3)
+                y = QInt{2}(y0)
+                plus_equal_product_mod!(b, k, y; window=1, mbu=true)
+                @test decode!(b) == mod(y0 * k, 3)
+                _ = Int(y)
+            end
+        end
+    end
+
+    @testset "_shor_mulmod_E_controlled! mbu=true at N=3, ctrl=|1⟩" begin
+        @context EagerContext() begin
+            target = QCoset{2, 1}(1, 3)
+            ctrl = QBool(1.0)
+            _shor_mulmod_E_controlled!(target, 2, ctrl; c_mul=2, mbu=true)
+            @test decode!(target) == 2  # 1 · 2 mod 3 = 2
+            _ = Bool(ctrl)
+        end
+    end
+
+    _log("EXIT plus_equal_product_mod! mbu")
+end
+
 @testset "plus_equal_product! (non-modular)" begin
     _log("ENTER plus_equal_product!")
 

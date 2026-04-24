@@ -581,7 +581,8 @@ and the operation is deterministic per shot.
 """
 function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
                                   y::QInt{Ly}; window::Int,
-                                  ctrls::Tuple = ()) where {W, Cpad, Wtot, Ly}
+                                  ctrls::Tuple = (),
+                                  mbu::Bool = false) where {W, Cpad, Wtot, Ly}
     check_live!(target); check_live!(y)
     target.reg.ctx === y.ctx ||
         error("plus_equal_product_mod!: target and y must share a context")
@@ -604,10 +605,15 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
     # is narrower, the lookup table has fewer entries (2^window_last), and
     # the position factor 2^i still multiplies the entries. Julia dispatches
     # on the Val(w) boxing per distinct w seen at runtime (at most 2 here).
+    #
+    # mbu=true swaps the QROM reverse for Berry et al. 2019 measurement-based
+    # uncomputation: bead Sturm.jl-9ij. Changes the reverse cost from
+    # 2^w − 1 to ⌈2^w/k⌉ + k Toffoli ≈ 2√(2^w), at the cost of
+    # 2^⌈w/2⌉ temporary ancillae per iteration. Orthogonal to `ctrls`.
     i = 0
     while i < Ly
         w = min(window, Ly - i)
-        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N, ctrls)
+        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N, ctrls, mbu)
         i += w
     end
 
@@ -632,7 +638,8 @@ end
                                   i::Int,
                                   ::Val{w},
                                   N::Int,
-                                  ctrls::Tuple) where {W, Cpad, Wtot, Ly, w}
+                                  ctrls::Tuple,
+                                  mbu::Bool) where {W, Cpad, Wtot, Ly, w}
     ctx = target.reg.ctx
     n_entries = 1 << w
 
@@ -659,8 +666,15 @@ end
     end
     interfere!(target.reg)                       # unconditional
 
-    qrom_lookup_xor!(scratch, y_win, tbl)        # unconditional — scratch → |0⟩
-    ptrace!(scratch)
+    if mbu
+        # Berry et al. 2019 measurement-based uncompute: ⌈2^w/k⌉ + k Toffoli
+        # (vs 2^w − 1 for the naive re-lookup). Consumes scratch via X-basis
+        # measurement; no ptrace needed — scratch wires are gone.
+        qrom_lookup_uncompute_meas!(scratch, y_win, tbl)
+    else
+        qrom_lookup_xor!(scratch, y_win, tbl)    # unconditional — scratch → |0⟩
+        ptrace!(scratch)
+    end
     return nothing
 end
 
