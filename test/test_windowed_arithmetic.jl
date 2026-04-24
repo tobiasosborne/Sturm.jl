@@ -2,6 +2,7 @@ using Test
 using Sturm
 using Sturm: qrom_lookup_xor!, plus_equal_product!, plus_equal_product_mod!, decode!
 using Sturm: _shor_mulmod_E_controlled!
+using Sturm: _binary_to_unary!
 
 # Eager-flushed staged output (feedback_verbose_eager_flush).
 _t0 = time_ns()
@@ -91,6 +92,116 @@ _log("ENTER test_windowed_arithmetic.jl")
     end
 
     _log("EXIT qrom_lookup_xor!")
+end
+
+# ── Sturm.jl-9ij Stage 1 — _binary_to_unary! ─────────────────────────────────
+#
+# Ground truth: Berry, Gidney, Motta, McClean, Babbush (2019) arXiv:1902.02134,
+# "Qubitization of arbitrary basis quantum chemistry leveraging sparsity and
+# low rank factorization", Appendix C, Fig 8.
+# docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf
+#
+# Preconditions: anc[1] in |1⟩, anc[2..K] in |0⟩ (one-hot seeded at position 0).
+# Postcondition: after _binary_to_unary!(addr, anc), anc[addr+1] in |1⟩, others
+# in |0⟩ — a one-hot unary encoding of `addr` on the K = 2^Wlo ancillae.
+# Self-inverse via `uncompute=true` kwarg (reverses the b-level Fredkin order).
+#
+# This is the building block for the split-address phase fixup that turns the
+# naive 2(2^c − 1) Toffoli QROM reverse into the ⌈2^c/k⌉ + k ≈ 2√(2^c) Toffoli
+# measurement-based uncomputation. Cost: K − 1 Fredkins = K − 1 Toffoli.
+
+_amp(ctx, idx) = Sturm.orkan_state_get(ctx.orkan.raw, idx, 0)
+
+@testset "_binary_to_unary!" begin
+    _log("ENTER _binary_to_unary!")
+
+    @testset "basis state: |addr⟩ → one-hot at position addr" begin
+        _log("  ENTER basis [Wlo ∈ 1..4]")
+        for Wlo in 1:4
+            K = 1 << Wlo
+            for addr_val in 0:(K - 1)
+                @context EagerContext() begin
+                    addr = QInt{Wlo}(addr_val)
+                    # Seed: anc[1] in |1⟩, anc[2..K] in |0⟩.
+                    anc_list = [QBool(0) for _ in 1:K]
+                    X!(anc_list[1])
+                    anc = tuple(anc_list...)
+
+                    _binary_to_unary!(addr, anc)
+
+                    # Exactly one ancilla in |1⟩, at position addr_val.
+                    for j in 1:K
+                        b = Bool(anc[j])
+                        @test b == (j == addr_val + 1)
+                    end
+                    @test Int(addr) == addr_val
+                end
+            end
+        end
+        _log("  EXIT basis")
+    end
+
+    @testset "self-inverse: forward + uncompute = identity on seeded anc" begin
+        _log("  ENTER self-inverse [Wlo ∈ 1..4]")
+        for Wlo in 1:4
+            K = 1 << Wlo
+            for addr_val in 0:(K - 1)
+                @context EagerContext() begin
+                    addr = QInt{Wlo}(addr_val)
+                    anc_list = [QBool(0) for _ in 1:K]
+                    X!(anc_list[1])
+                    anc = tuple(anc_list...)
+
+                    _binary_to_unary!(addr, anc)
+                    _binary_to_unary!(addr, anc; uncompute=true)
+
+                    # Back to the seed state: anc[1]=|1⟩, rest |0⟩.
+                    for j in 1:K
+                        @test Bool(anc[j]) == (j == 1)
+                    end
+                    @test Int(addr) == addr_val
+                end
+            end
+        end
+        _log("  EXIT self-inverse")
+    end
+
+    @testset "superposition: Σ α_x |x⟩|1 0..0⟩ → Σ α_x |x⟩|e_x⟩" begin
+        # After _binary_to_unary!, the joint amplitude at (addr=x, unary=e_x)
+        # must equal the pre-call amplitude at (addr=x, unary=|1 0..0⟩), for
+        # every x. Orkan index = little-endian: addr on wires [1..Wlo], then
+        # anc[1..K] on the next K wires. Joint idx =  addr | (unary << Wlo).
+        _log("  ENTER superposition [Wlo = 2, K = 4]")
+        Wlo = 2; K = 1 << Wlo
+        # Generic amplitudes via Ry preparation on the addr qubits.
+        a, b = π/7, π/11
+        @context EagerContext() begin
+            addr = QInt{Wlo}(0)
+            # Put addr in a generic superposition with distinct non-zero amps.
+            q0 = QBool(addr.wires[1], addr.ctx, false); q0.θ += 2a
+            q1 = QBool(addr.wires[2], addr.ctx, false); q1.θ += 2b
+
+            anc_list = [QBool(0) for _ in 1:K]
+            X!(anc_list[1])
+            anc = tuple(anc_list...)
+
+            # Snapshot pre-call amplitudes at addr=x, unary=(1,0,0,0) i.e.
+            # joint idx = x | (1 << Wlo). (anc[1] = bit Wlo of the joint index.)
+            pre = ntuple(x -> _amp(addr.ctx, (x - 1) | (1 << Wlo)), Val(K))
+
+            _binary_to_unary!(addr, anc)
+
+            # Post amplitudes at addr=x, unary=e_x (only anc[x+1] = |1⟩):
+            #   joint idx = (x-1) | (1 << (Wlo + (x-1)))
+            for x in 1:K
+                joint_idx_post = (x - 1) | (1 << (Wlo + (x - 1)))
+                @test abs(_amp(addr.ctx, joint_idx_post) - pre[x]) < 1e-12
+            end
+        end
+        _log("  EXIT superposition")
+    end
+
+    _log("EXIT _binary_to_unary!")
 end
 
 @testset "plus_equal_product! (non-modular)" begin

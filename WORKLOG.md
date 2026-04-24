@@ -85,6 +85,31 @@ and push the ratio below 0.5×, closing 6oc criterion (d).
 
 ### Stage 0 closed. Next: Stage 1 (`_binary_to_unary!`).
 
+### Stage 1 — `_fredkin!` + `_binary_to_unary!`
+
+Added two internal helpers at the tail of `src/library/arithmetic.jl`:
+
+  * **`_fredkin!(ctrl, a, b)`** — efficient CSWAP via `CNOT(b,a) · CCX(ctrl,a,b) · CNOT(b,a)`: 1 Toffoli + 2 CNOTs per CSWAP. The naive `when(ctrl) do swap!(a, b) end` costs 3 Toffolis (each CNOT in `swap!` lifts to CCX under `when`), so this is a 3× savings over the obvious spelling.
+  * **`_binary_to_unary!(addr::QInt{Wlo}, anc::NTuple{K,QBool}; uncompute::Bool=false)`** — Berry Fig 8 cascade. Precondition: `anc[1]=|1⟩, anc[2..K]=|0⟩`. Postcondition: `anc[addr+1]=|1⟩`, others `|0⟩`. Cost: `K-1` Fredkin. `uncompute=true` traverses `b` high-to-low, which reverses the cascade exactly (each `b`-level's Fredkins commute within themselves — disjoint targets — so j-order inside a level is immaterial).
+
+Tests added in `test/test_windowed_arithmetic.jl`:
+
+  * Basis |addr⟩ → one-hot at position `addr`. Covers `Wlo ∈ 1..4` and every `addr_val ∈ 0..K-1` → 30 cases × ~11 assertions = **370 pass**.
+  * Self-inverse roundtrip (forward + uncompute). Same coverage → **370 pass**.
+  * Superposition joint-amplitude preservation at Wlo=2 via direct `_amp` access. **4 pass**.
+
+Total: 744/744 GREEN, 5.4s. Zero regressions in adjacent tests.
+
+### Stage 1 gotcha — field name
+
+QBool has field `wire` (singular), but `QInt{W}` has `wires::NTuple{W,WireID}` (plural). Early draft accessed `addr.wire[b+1]` and crashed. Fixed to `addr.wires[b+1]`.
+
+### Stage 1 gotcha — forward cascade is NOT self-inverse in same order
+
+Manual trace at Wlo=2 showed that applying the forward cascade twice in the same order leaves `|addr=11⟩` at position `01` instead of back at position `00`. Fredkins within a single `b`-level commute (disjoint targets), but Fredkins across `b`-levels do NOT (a b=1 Fredkin acts on anc[1↔3], a b=0 Fredkin acts on anc[1↔2] — they overlap at anc[1]). So uncompute traverses b in **reverse order**. The test for self-inverse caught this before any integration — cheap fix.
+
+### Stage 1 closed. Next: Stage 2 (`qrom_lookup_uncompute_meas!`).
+
 ---
 
 ## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`
