@@ -4,6 +4,89 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-24 — Session 61: `9ij` ground truth — Berry et al. 2019 Appendix C (MBU)
+
+Starting the measurement-based-uncompute (MBU) work that closes 6oc
+criterion (d). First substantial circuit-construction piece after three
+warm-ups (guj, 35s, 9g5). 6oc is 5/5 phases landed; (a)(b)(c) blocked
+by 059 perf (21 min/call at N=15 — structural simulator territory),
+(d) at 0.61× vs 0.5× target.
+
+### Stage 0 — grounding
+
+The 9ij bead description said "Gidney 2019 §2 text + Fig 3 + Fig 4".
+That's WRONG. Gidney 2019 ('Windowed quantum arithmetic',
+arXiv:1905.07682) §3 is lookup-adds, §2 is background — neither covers
+MBU. GE21 §2.5 correctly cites `[8]` = **Berry, Gidney, Motta, McClean,
+Babbush (2019)**, 'Qubitization of arbitrary basis quantum chemistry
+leveraging sparsity and low rank factorization', arXiv:1902.02134,
+**Appendix C, Theorem 3 (Eq. 67), Figs 5-8**.
+
+PDF fetched via TIB VPN → arXiv:
+`docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf`
+(1.1 MB, 44 pp). Read Apps B + C (pp. 25-28). Updated 9ij bead
+description with correct citation.
+
+### MBU construction (Theorem 3 + Fig 6, clean-ancilla version)
+
+Uncomputing `Σ_j ψ_j |j⟩|f(j)⟩ → Σ_j ψ_j |j⟩|0⟩` for `f: Z_d → Z_2^M`:
+
+1. **X-basis measure** every output qubit. Outcomes `m ∈ {0,1}^M`.
+2. **Classical** determination of `S = { j : parity(m · f(j)) = 1 }` —
+   the addr states whose amplitudes must be negated.
+3. **Phase fixup** via clean ancillae (Fig 6):
+   * allocate `k` clean ancillae with `k ≈ √d` (chosen power of 2);
+   * `X` on anc[0] + controlled-swap cascade (Fig 8) = binary→unary
+     encoding of `addr[low log k bits]`;
+   * `H⊗k` on the ancillae;
+   * standard XOR-table-lookup on `addr[high bits]` targeting the k
+     unary ancillae, with a classically-precomputed fixup table whose
+     entries negate exactly the states in `S`;
+   * `H⊗k` again;
+   * reverse controlled-swap cascade;
+   * `X` on anc[0]; release.
+
+Cost: `⌈d/k⌉ + k` Toffoli, optimum `2√d` at `k = √d`.
+Ancillae: `k + ⌈log(d/k)⌉` clean.
+
+### Why this is cleaner for Sturm than my original plan
+
+My initial plan mentioned a "new phase-only QROM sub-primitive" with
+per-`hi` controlled-Z application to unary-indexed ancillae. The Berry
+construction is smarter: **H-sandwich** around a standard XOR-table-
+lookup converts phase-application into bit-flip-application, so the
+existing `qrom_lookup_xor!` primitive in
+`src/library/arithmetic.jl` is reused verbatim for the lookup step.
+
+Only ONE new helper is needed: `_binary_to_unary!(addr::QInt{Wlo},
+anc::NTuple{K,QBool})` — a controlled-swap cascade that one-hot-
+encodes the address onto the ancilla register. That's Fig 8, ~30 LOC.
+
+### Cost numbers at Sturm's parameter range
+
+| c_mul | d = 2^c_mul | naive reverse | MBU k=2 | MBU k=4 | optimum |
+|-------|-------------|---------------|---------|---------|---------|
+|     2 |           4 |             6 |       4 |       — |       4 |
+|     3 |           8 |            14 |       6 |       6 |       6 |
+|     4 |          16 |            30 |      10 |       8 |       8 |
+|     5 |          32 |            62 |      18 |      12 |      12 |
+|     6 |          64 |           126 |      34 |      20 |      16 |
+
+The c_mul=5 savings (62 → 12 Toffoli per lookup pair) move Session
+50b's L=8 E/D ratio sweep's optimum from c_mul=3 (0.61×) to c_mul=5
+and push the ratio below 0.5×, closing 6oc criterion (d).
+
+### Plan revisions to the original proposal
+
+  * Original Stage 1 was "_phase_only_qrom! split-address primitive".
+  * Revised Stage 1 is **_binary_to_unary!** only (Fig 8). The rest
+    (H-sandwich + XOR-lookup) reuses existing infrastructure and lives
+    inside `qrom_lookup_uncompute_meas!` directly. Smaller, cleaner.
+
+### Stage 0 closed. Next: Stage 1 (`_binary_to_unary!`).
+
+---
+
 ## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`
 
 Companion to 35s. Same X-sandwich invariance at the block-encoding
