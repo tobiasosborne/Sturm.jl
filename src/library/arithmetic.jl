@@ -663,3 +663,86 @@ end
     ptrace!(scratch)
     return nothing
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sturm.jl-9ij Stage 1 — binary-to-unary encoder for measurement-based QROM
+# uncomputation.
+#
+# Ground truth: Berry, Gidney, Motta, McClean, Babbush (2019) arXiv:1902.02134,
+# "Qubitization of arbitrary basis quantum chemistry leveraging sparsity and
+# low rank factorization", Appendix C, Figs 6 + 8.
+# docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf
+#
+# `_binary_to_unary!` is the controlled-swap cascade (Fig 8) that converts a
+# binary address `addr::QInt{Wlo}` into a one-hot unary encoding on
+# K = 2^Wlo ancillae. `_fredkin!` is the efficient CSWAP (1 Toffoli + 2 CNOTs
+# per CSWAP, as opposed to the naive 3-Toffoli decomposition of
+# `when(ctrl) do swap! end`).
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    _fredkin!(ctrl::QBool, a::QBool, b::QBool)
+
+Controlled-SWAP (Fredkin gate): swap `a` and `b` iff `ctrl = |1⟩`.
+Decomposition: `CNOT(b,a); CCX(ctrl,a,b); CNOT(b,a)` — 1 Toffoli + 2 CNOTs,
+same as Nielsen-Chuang §4.3 and Berry et al. 2019 arXiv:1902.02134 App C.
+The naive spelling `when(ctrl) do swap!(a, b) end` expands to 3 Toffolis
+because `swap!` is 3 CNOTs each lifted to CCX under the control; this
+helper avoids that overhead.
+"""
+@inline function _fredkin!(ctrl::QBool, a::QBool, b::QBool)
+    a ⊻= b
+    when(ctrl) do
+        b ⊻= a
+    end
+    a ⊻= b
+    return nothing
+end
+
+"""
+    _binary_to_unary!(addr::QInt{Wlo}, anc::NTuple{K, QBool}; uncompute::Bool=false)
+
+Controlled-swap cascade that converts the binary value in `addr` into a one-
+hot unary encoding on `anc`, where `K = 2^Wlo`. Implements Berry et al. 2019
+arXiv:1902.02134 Appendix C Fig 8.
+
+# Preconditions
+  * `K == 1 << Wlo`.
+  * `anc[1]` in `|1⟩`, `anc[2..K]` all in `|0⟩` (one-hot seeded at position 0).
+  * All qubits share the same context as `addr`.
+
+# Postcondition
+For every basis state `|x⟩` of `addr`, `anc[x+1]` holds `|1⟩` and every other
+`anc[j]` holds `|0⟩` — a one-hot encoding of `addr` on the `anc` register.
+
+# Uncompute
+`_binary_to_unary!(addr, anc; uncompute=true)` reverses the cascade by
+traversing address bits from high to low. The forward + uncompute pair is
+exact identity on the joint state (not approximate — every Fredkin is self-
+inverse and b-levels with disjoint targets commute within themselves).
+
+# Cost
+`K − 1` Fredkin gates = `K − 1` Toffoli + `2(K − 1)` CNOTs. No extra
+workspace ancillae.
+
+# Reference
+  Berry, Gidney, Motta, McClean, Babbush (2019) arXiv:1902.02134, App C,
+  Fig 6 (clean-ancilla uncompute pipeline) and Fig 8 (explicit Fredkin
+  cascade, here for 3→8 bits).
+"""
+function _binary_to_unary!(addr::QInt{Wlo},
+                            anc::NTuple{K, QBool};
+                            uncompute::Bool=false) where {Wlo, K}
+    K == 1 << Wlo ||
+        error("_binary_to_unary!: K ($K) must equal 2^Wlo ($(1 << Wlo))")
+    ctx = addr.ctx
+    b_range = uncompute ? reverse(0:(Wlo - 1)) : (0:(Wlo - 1))
+    for b in b_range
+        ctrl_wire = addr.wires[b + 1]
+        for j in 0:((1 << b) - 1)
+            ctrl = QBool(ctrl_wire, ctx, false)
+            _fredkin!(ctrl, anc[j + 1], anc[j + 1 + (1 << b)])
+        end
+    end
+    return nothing
+end
