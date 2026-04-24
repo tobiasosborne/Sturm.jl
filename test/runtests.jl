@@ -57,4 +57,5 @@ using Sturm
     include("test_openqasm_cases.jl")
     include("test_autocleanup.jl")
     include("test_ptrace.jl")
+    include("test_bench_shor_scaling.jl")
 end
