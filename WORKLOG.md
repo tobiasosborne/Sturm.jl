@@ -4,6 +4,51 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-24 — Session 60: `9g5` (Sturm.jl-9g5) — X↔Y discriminator for block_encoding `_flip_for_index!`
+
+Companion to 35s. Same X-sandwich invariance at the block-encoding
+call sites: `src/block_encoding/select.jl:137-143, 176-178` and
+`src/block_encoding/prepare.jl:129-133, 206-210`. Session 42 (`3yz`)
+proved `Y|0⟩⟨0|Y = |1⟩⟨1| = X|0⟩⟨0|X`, so symmetric X↔Y in the
+sandwich is invariant; the drift risk is asymmetric / structural.
+
+### Tests added (two testsets, 64 assertions)
+
+1. **`_flip_for_index!(ancillas, j)` on `|j⟩` produces `|1..1⟩`** up to
+   global phase, for j ∈ {0,1,2,3} on W=2 ancillas. Double-application
+   restores `|j⟩` (self-inverse). Prep uses raw primitives (`q.θ += π;
+   q.φ += π`) rather than `X!` from gates.jl — keeps the prep
+   independent of the function under test.
+
+2. **`_flip_for_index!(j) · _multi_controlled_z! · _flip_for_index!(j)`
+   phase-flips exactly `|j⟩`** on a generic non-|+⟩ superposition.
+   Exact call structure of `_select!` line 137-143. Phase-invariant:
+   compare `post[k]/pre[k]` ratios against a non-flipped reference;
+   correct channel gives `+r_ref` on every `k ≠ j` and `−r_ref` at
+   `k = j`.
+
+### Mutation testing
+
+Mutated `_flip_for_index!` bitmask: `== 0` → `== 1` (realistic
+off-by-one refactor error). Result: **21 failures** across the suite
+— 8 in testset 1, 8 in testset 2, 5 in upstream LCU/SELECT tests that
+rely on the correct semantics. Both new testsets caught the mutation
+specifically and precisely; the upstream breakage confirms the bug is
+reachable from real call paths. Revert → 127/127 green.
+
+### Files touched
+
+  * `test/test_block_encoding.jl` — +97 LOC, 64 new assertions.
+  * `WORKLOG.md` — this entry.
+
+No `src/` changes. No API changes.
+
+### Adjacent regression
+
+  * `test_block_encoding` 127/127 (was 63; +64 new).
+
+---
+
 ## 2026-04-24 — Session 59: `35s` (Sturm.jl-35s) — X↔Y convention-drift discriminators for _diffusion! / phase_flip!
 
 Session 42 shipped the X!/Y! swap fix (bead `3yz`). The five call-sites

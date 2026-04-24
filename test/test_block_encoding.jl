@@ -680,4 +680,100 @@ end
         end
     end
 
+    # ═════════════════════════════════════════════════════════════════════
+    # 9g5: X↔Y convention-drift discriminators for _flip_for_index! and its
+    #      X-sandwich around _multi_controlled_z! (the control-polarity
+    #      construction used throughout src/block_encoding/select.jl and
+    #      src/block_encoding/prepare.jl).
+    #
+    # WORKLOG Session 42 (bead 3yz) proved:
+    #   Y|0⟩⟨0|Y = |1⟩⟨1| = X|0⟩⟨0|X
+    # so the X-sandwich is X↔Y INVARIANT under a symmetric swap. The real
+    # drift risk is ASYMMETRIC X↔Y, or a broken sandwich that omits / adds
+    # / reorders one of the flips, or changes the bit-mask condition. These
+    # tests pin the two guarantees the block-encoding code depends on:
+    #
+    #   (a) `_flip_for_index!(ancillas, j)` on |j⟩ produces |1…1⟩ up to
+    #       global phase — the all-controls-high state MCZ / MC-PauliExp
+    #       fires on. Double-application restores |j⟩ (self-inverse).
+    #   (b) The full sandwich
+    #           _flip_for_index!(j); _multi_controlled_z!; _flip_for_index!(j)
+    #       phase-flips EXACTLY |j⟩ and leaves every other |k⟩ unchanged —
+    #       this is the core SELECT-loop step (select.jl:137-143).
+    #
+    # Tests are phase-invariant (CLAUDE.md §Global Phase and Universality):
+    # (b) compares ratios post[k]/pre[k] against a non-flipped reference.
+    # ═════════════════════════════════════════════════════════════════════
+
+    @testset "9g5: _flip_for_index! maps |j⟩ → |1..1⟩ on W=2 ancillas" begin
+        for j in 0:3
+            @context EagerContext() begin
+                ancillas = [QBool(0) for _ in 1:2]
+                # Prepare |j⟩ on the ancilla register using raw primitives
+                # (not `X!` from gates.jl — keeps the prep independent of
+                # the function under test so a drift inside _flip_for_index!
+                # cannot mask itself via a matching drift in the prep).
+                (j >> 0) & 1 == 1 && (ancillas[1].θ += π; ancillas[1].φ += π)
+                (j >> 1) & 1 == 1 && (ancillas[2].θ += π; ancillas[2].φ += π)
+
+                # After `_flip_for_index!(j)`, ancilla register should be in
+                # |1..1⟩ (idx = 3 at W=2) up to global phase.
+                Sturm._flip_for_index!(ancillas, j)
+                @test abs(abs(_amp(ancillas[1].ctx, 3)) - 1.0) < 1e-12
+                for k in 0:2
+                    @test abs(_amp(ancillas[1].ctx, k)) < 1e-12
+                end
+
+                # Self-inverse: second application restores |j⟩.
+                Sturm._flip_for_index!(ancillas, j)
+                @test abs(abs(_amp(ancillas[1].ctx, j)) - 1.0) < 1e-12
+                for k in 0:3
+                    k == j && continue
+                    @test abs(_amp(ancillas[1].ctx, k)) < 1e-12
+                end
+
+                for q in ancillas; discard!(q); end
+            end
+        end
+    end
+
+    @testset "9g5: flip·MCZ·flip sandwich phase-flips exactly |j⟩" begin
+        # Exact call structure at src/block_encoding/select.jl:137-143.
+        # On a generic non-|0…0⟩ superposition, ratios post[k]/pre[k] must
+        # be equal across all k ≠ j (global phase) and opposite at k == j
+        # (the single target flipped).
+        for j in 0:3
+            @context EagerContext() begin
+                ancillas = [QBool(0) for _ in 1:2]
+                a, b = π/7, π/11
+                ancillas[1].θ += 2a
+                ancillas[2].θ += 2b
+
+                pre  = [_amp(ancillas[1].ctx, k) for k in 0:3]
+
+                Sturm._flip_for_index!(ancillas, j)
+                Sturm._multi_controlled_z!(ancillas)
+                Sturm._flip_for_index!(ancillas, j)
+
+                post = [_amp(ancillas[1].ctx, k) for k in 0:3]
+
+                # Unitary — magnitudes preserved on every amplitude.
+                for k in 0:3
+                    @test abs(abs(post[k+1]) - abs(pre[k+1])) < 1e-12
+                end
+
+                # Pick a non-flipped index as the phase reference.
+                ref = j == 0 ? 1 : 0
+                r_ref = post[ref+1] / pre[ref+1]
+                for k in 0:3
+                    ratio_k = post[k+1] / pre[k+1]
+                    expected = k == j ? -r_ref : r_ref
+                    @test abs(ratio_k - expected) < 1e-12
+                end
+
+                for q in ancillas; discard!(q); end
+            end
+        end
+    end
+
 end
