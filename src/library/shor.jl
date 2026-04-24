@@ -901,7 +901,8 @@ Controlled-SWAP costs 3 Toffoli per wire × (Wtot + Cpad) wires.
 """
 function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
                                      a::Integer, ctrl::QBool;
-                                     c_mul::Int=2) where {W, Cpad, Wtot}
+                                     c_mul::Int=2,
+                                     mbu::Bool=false) where {W, Cpad, Wtot}
     check_live!(target); check_live!(ctrl)
     target.reg.ctx === ctrl.ctx ||
         error("_shor_mulmod_E_controlled!: target and ctrl must share a context")
@@ -922,7 +923,10 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
     # `when(ctrl) do plus_equal_product_mod!(...) end` but without cascading
     # the control onto QROM Toffolis (which would force _multi_controlled_cx!
     # workspace ancillae past Orkan's 30-qubit cap at N=15, c_mul=2).
-    plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul, ctrls=(ctrl,))
+    # `mbu=true` enables Berry et al. 2019 measurement-based QROM uncompute
+    # inside each plus_equal_product_mod! iteration (bead Sturm.jl-9ij):
+    # reverse-lookup cost drops from 2^c_mul − 1 to ⌈2^c_mul/k⌉ + k Toffoli.
+    plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul, ctrls=(ctrl,), mbu=mbu)
 
     # Step 2: controlled-SWAP(target, b) — still needs full when(ctrl) because
     # SWAP has no self-inverse structure (it's CNOT³, each of which needs the
@@ -940,7 +944,7 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
 
     # Step 3: b -= a⁻¹ · target  (same ctrls pattern as step 1).
     minus_a_inv = mod(N - a_inv, N)
-    plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul, ctrls=(ctrl,))
+    plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul, ctrls=(ctrl,), mbu=mbu)
 
     # b is now |0⟩ coset on both ctrl branches — free it.
     ptrace!(b)
