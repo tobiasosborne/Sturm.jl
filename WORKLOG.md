@@ -4,6 +4,92 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-24 — Session 58: `guj` (Sturm.jl-guj) — bench_shor_scaling Int64 overflow at L=18 impl B
+
+Small bug hunt. `test/bench_shor_scaling.jl:144` multiplied
+`estimate_gates · NODE_BYTES(25) · RUNTIME_OVERHEAD(3.0)` as
+`Int · Int · Float64`, which evaluates `Int · Int` first.
+
+### Ground truth probe (before any edits)
+
+At `(L=18, t=36)` impl B:
+  * `estimate_gates` = `(L+14)·2^(t+L+1)` = `32·2^55` = `2^60` ≈ 1.15e18 — fits Int64.
+  * `× NODE_BYTES(25)` = 2.88e19, wraps Int64 (typemax 9.22e18) to −8.07e18.
+  * `× RUNTIME_OVERHEAD(3.0)` promotes to Float64 → −2.42e19.
+  * `round(Int, −2.42e19)` → **InexactError**.
+
+Intended behaviour at that case is `ok=false` ("skip — over budget"),
+so the throw crashed the whole preflight run instead of reporting
+verdict. Workaround on the books: `STURM_BENCH_MAX_L ≤ 14`.
+
+### TDD cycle
+
+  * **Scaffold**: bench script ran `main()` unconditionally at EOF,
+    making `include("test/bench_shor_scaling.jl")` from a test file
+    execute the full benchmark. Guarded with
+    `if abspath(PROGRAM_FILE) == @__FILE__ … end` — standard Julia
+    script idiom, testability prerequisite, not the fix.
+  * **RED** (before any code change): added
+    `test/test_bench_shor_scaling.jl` with 13 assertions across 5
+    testsets — Float64 return type, hand-computed small case,
+    no-throw at L=18 impl B, clean `preflight` ok=false at L=18, still
+    ok=true at L=4. Initial run: **3 pass, 4 fail, 6 error** — Float64
+    assertions failed (Int return), L=18 assertions errored
+    (InexactError propagated through `@test` RHS, cascading
+    `UndefVarError: pf` on follow-ons).
+  * **GREEN**: `estimate_bytes` now multiplies in Float64:
+
+        Float64(estimate_gates(impl, L, t)) * NODE_BYTES * RUNTIME_OVERHEAD
+
+    Float64 is exact for integers up to 2^53; estimates are already
+    approximate (20–130% safety margins on the gate fits). Overflow
+    above the Float64 finite range degrades to `Inf`, which compares
+    `> budget_bytes` correctly → `ok=false`. No throws.
+    Second run: **13/13 GREEN**.
+
+### End-to-end sanity
+
+Full preflight table with `STURM_BENCH_DRY_RUN=1 STURM_BENCH_MAX_L=18`
+completes without error. L=18 impl B now prints a silly-but-honest
+`~8.05e10 GB` mem estimate and correctly flags `skip (over budget
+4.44e9×)`. Cosmetic note: at these magnitudes the fixed-width `rpad`
+columns overflow and squish against the adjacent "verdict" column.
+Not fixing — bead is about not crashing, not layout polish (Rule 11).
+
+### Design choice: Float64 vs saturated-Int sentinel
+
+Bead offered two fixes: (a) Float64 throughout, (b) detect overflow
+and return `typemax(Int)`. Picked (a) — minimal diff (one line of
+logic + docstring), honest numerics (printed value reflects the true
+wildness of the case), graceful degradation to `Inf` above 1.8e308
+(which no conceivable gate count approaches at CASES' top end L=18).
+(b) would lose information and add an overflow-check branch.
+
+`estimate_gates` stays Int: it never overflows at CASES' top case
+(2^60 fits), and `sizehint!(ctx.dag, …)` needs Int at line 241.
+
+### Files touched
+
+  * `test/bench_shor_scaling.jl` — `estimate_bytes` body + docstring;
+    script-guard around `main()`.
+  * `test/test_bench_shor_scaling.jl` — new, 13 assertions.
+  * `test/runtests.jl` — added include.
+  * `WORKLOG.md` — this entry.
+
+No `src/` changes, no API changes.
+
+### Lesson
+
+`Int · Int · Float64` evaluates left-to-right: the Int multiplication
+happens *before* Float promotion. When any of the intermediate products
+can plausibly overflow — here, `gates · NODE_BYTES` with gates at 2^60
+— put the Float cast on the *first* factor (`Float64(gates) · … · …`)
+or compute wholly in Float64. The pattern bit us here because
+`NODE_BYTES` and `RUNTIME_OVERHEAD` look innocuous as constants; the
+overflow only triggers at one corner of the CASES grid.
+
+---
+
 ## 2026-04-23 — Session 57: `ixd` (Sturm.jl-ixd) — QMod{5} Ry via Euler sandwich, orchestrator catches a 1e-8 angle-transcription bug
 
 Claimed `Sturm.jl-ixd` (QMod{d} Ry at d ≥ 4). csw critical-path only

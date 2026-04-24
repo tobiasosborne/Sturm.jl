@@ -134,14 +134,22 @@ function estimate_gates(impl::Symbol, L::Int, t::Int)
 end
 
 """
-    estimate_bytes(impl, L, t) -> Int
+    estimate_bytes(impl, L, t) -> Float64
 
 Projected peak RAM in bytes for the DAG alone, including runtime overhead.
 Does NOT include classical precompute tables (Impl A's 2^t UInt64 mod-N
 table is ~8·2^t bytes extra — negligible until t > 30).
+
+Returned as Float64 on purpose: at (L=18, t=36) impl B the intermediate
+`estimate_gates · NODE_BYTES` is 2^60 · 25 ≈ 2.9e19, which wraps Int64
+(typemax ≈ 9.22e18). The previous Int-first formulation then fed a negative
+wrapped value to `round(Int, …)` and threw InexactError, masking the
+intended "skip — over budget" verdict. Float64 is exact for integers up to
+2^53 (estimates here are already approximate) and degrades to Inf above
+its finite range rather than throwing.
 """
 function estimate_bytes(impl::Symbol, L::Int, t::Int)
-    round(Int, estimate_gates(impl, L, t) * NODE_BYTES * RUNTIME_OVERHEAD)
+    Float64(estimate_gates(impl, L, t)) * NODE_BYTES * RUNTIME_OVERHEAD
 end
 
 """
@@ -443,4 +451,6 @@ function main()
     LOG("DONE.")
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
