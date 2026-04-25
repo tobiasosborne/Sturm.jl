@@ -307,6 +307,15 @@ re-encode them at the corresponding *old* slot positions in `old_index`.
 Freed slots default to bit=0 in `old_index` — the |0⟩ branch.
 
 Auditable, no clever bit tricks. Cost: O(2^new_n · new_n).
+
+# Fast path (bead Sturm.jl-2fg)
+When `live_slots == 0:new_n-1` — the typical Bennett-ancilla-burst
+post-state where the freed slots are at the high end — the bit-expand
+collapses to identity (`old_index == j` for every j) and the scatter
+becomes a prefix copy. We detect this with a single range comparison
+(no allocation) and short-circuit to `unsafe_copyto!`. Saves the
+`O(new_n)` inner loop per element; meaningful on small contexts and
+asymptotically free on large ones (bandwidth-bound).
 """
 function _compact_scatter!(new_orkan::OrkanState, old_orkan::OrkanState, plan::CompactPlan)
     old_dim = 1 << plan.old_n
@@ -315,6 +324,13 @@ function _compact_scatter!(new_orkan::OrkanState, old_orkan::OrkanState, plan::C
     new_amps = unsafe_wrap(Array{ComplexF64,1}, new_orkan.raw.data, new_dim)
     live_slots = plan.old_slots
     new_n = plan.new_n
+    # Contiguous-live fast path: if every live wire is already at slot k
+    # for k in 0..new_n-1, bit-expand is identity. Detection is a single
+    # vector-vs-range elementwise comparison — no allocation.
+    if live_slots == 0:new_n - 1
+        unsafe_copyto!(new_amps, 1, old_amps, 1, new_dim)
+        return nothing
+    end
     @inbounds for j in 0:new_dim - 1
         old_index = 0
         for k in 0:new_n - 1
