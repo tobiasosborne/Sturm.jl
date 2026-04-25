@@ -414,6 +414,86 @@ end
         end
     end
 
+    # ── 6.5 CONTIGUOUS-LIVE SHORTCUT (bead Sturm.jl-2fg) ───────────────────
+    #
+    # When `live_slots == 0:new_n-1` (= the typical Bennett-ancilla-burst
+    # post-state where the freed slots are at the high end), the
+    # bit-expand inner loop in `_compact_scatter!` collapses to identity
+    # and the scatter is a prefix `unsafe_copyto!`. Pin both:
+    #   (a) the shortcut produces the same state as the general scatter
+    #   (b) it activates in the expected scenario.
+
+    @testset "contiguous-live shortcut" begin
+
+        @testset "alloc 6, ptrace last 3 → contiguous-live, state preserved" begin
+            @context EagerContext() begin
+                ctx = current_context()
+                # Allocate 6, prepare distinct angles, ptrace the last 3 first
+                # (their slots [3, 4, 5] are at the high end → live_slots
+                # stays [0, 1, 2] after compact, the contiguous-live case).
+                a = QBool(0); a.θ += π / 7
+                b = QBool(0); b.θ += π / 11; b.φ += π / 5
+                c = QBool(0); c.θ += π / 13; c.φ += π / 3
+                d = QBool(0); e = QBool(0); f = QBool(0)
+                # Pre-compact amplitudes (live region is the prefix; high
+                # slots are |0⟩ since d, e, f are unrotated).
+                pre_amps = copy(_amps_view(ctx))
+                ptrace!(d); ptrace!(e); ptrace!(f)   # 3 < 8, no auto-compact
+                @test ctx._compact_count == 0
+                @test sort(ctx.free_slots) == [3, 4, 5]
+                Sturm.compact_state!(ctx)
+                @test ctx._compact_count == 1
+                @test ctx.n_qubits == 3
+                # Post-compact amps: prefix of pre_amps over the live block.
+                # Since d/e/f were |0⟩, the live amplitudes occupy bits 0..2
+                # of the original layout — bit-expand is identity → the
+                # post-compact 8-amp block equals pre_amps[1:8].
+                post_amps = copy(_amps_view(ctx))
+                @test length(post_amps) == 8
+                for i in 1:8
+                    @test post_amps[i] ≈ pre_amps[i] atol=1e-12
+                end
+                ptrace!(a); ptrace!(b); ptrace!(c)
+            end
+        end
+
+        @testset "non-contiguous live → falls back to bit-scatter" begin
+            # Allocate 4, ptrace MIDDLE wire (slot 1). live_slots becomes
+            # [0, 2, 3] which is NOT [0:2] — the shortcut must NOT fire,
+            # and the general scatter must produce the right state.
+            @context EagerContext() begin
+                ctx = current_context()
+                a = QBool(0); a.θ += π / 7
+                b = QBool(0)               # b will be ptraced
+                c = QBool(0); c.θ += π / 11
+                d = QBool(0); d.θ += π / 13
+                # Pre-compact: a@0, b@1, c@2, d@3.
+                pre_amps = copy(_amps_view(ctx))
+                ptrace!(b)
+                @test sort(ctx.free_slots) == [1]
+                Sturm.compact_state!(ctx)
+                @test ctx.n_qubits == 3
+                # New layout: a→0, c→1, d→2 (sorted by old slot ascending).
+                # Bit-expand maps new bit k to old slot live_slots[k+1]:
+                #   new=000 → old=0000  → new[1] = pre[1]
+                #   new=001 → old=0001  → new[2] = pre[2]
+                #   new=010 → old=0100  → new[3] = pre[5]
+                #   new=011 → old=0101  → new[4] = pre[6]
+                #   new=100 → old=1000  → new[5] = pre[9]
+                #   new=101 → old=1001  → new[6] = pre[10]
+                #   new=110 → old=1100  → new[7] = pre[13]
+                #   new=111 → old=1101  → new[8] = pre[14]
+                post_amps = copy(_amps_view(ctx))
+                @test length(post_amps) == 8
+                expected_indices = [1, 2, 5, 6, 9, 10, 13, 14]
+                for (k, idx) in enumerate(expected_indices)
+                    @test post_amps[k] ≈ pre_amps[idx] atol=1e-12
+                end
+                ptrace!(a); ptrace!(c); ptrace!(d)
+            end
+        end
+    end
+
     # ── 7. STURM_COMPACT_VERIFY env-gate (bead Sturm.jl-179) ───────────────
     #
     # The freed-slot residual scan is mandatory by default (CLAUDE.md rule

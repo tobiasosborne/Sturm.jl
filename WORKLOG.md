@@ -4,6 +4,64 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 69: bead `Sturm.jl-2fg` closed, contiguous-live shortcut
+
+Headline: small perf shortcut in `_compact_scatter!(::EagerContext)`. When
+`live_slots == 0:new_n-1` (the typical Bennett-ancilla-burst post-state),
+the bit-expand inner loop collapses to identity and the scatter becomes
+a prefix `unsafe_copyto!`. Detection is one range-comparison, no
+allocation; saves the `O(new_n)` per-element decode.
+
+### What landed
+
+  * `src/context/eager.jl _compact_scatter!` — fast-path branch at
+    function entry: `live_slots == 0:new_n-1 → unsafe_copyto!` and
+    return; otherwise the existing bit-scatter loop.
+  * `test/test_compact_state.jl` — two new testsets (+24 assertions):
+    contiguous-live case (alloc 6, ptrace last 3 → state preserved) and
+    non-contiguous fallback (alloc 4, ptrace middle slot 1 → bit-scatter
+    permutes amplitudes correctly per the explicit lookup table).
+
+### Why correctness is by construction
+
+In the contiguous-live case, the bit-expand `j → bit_expand(j,
+live_slots)` is the identity on `[0, 2^new_n)` because each new bit `k`
+maps to old slot `live_slots[k+1] == k`. So `new_amps[j+1] =
+old_amps[j+1]` for every j — the prefix copy is exactly what the general
+loop produces, just without the per-element decode. Both paths yield
+the same state; the test verifies this end-to-end on representative
+inputs.
+
+### When the shortcut fires
+
+The Bennett pattern: live wires occupy slots `[0..n_pre-1]`, then a
+burst of K ancillae allocates at `[n_pre..n_pre+K-1]`, then ALL K are
+ptraced. After auto-trigger, `_compact_plan` sorts live wires by their
+old slot index → `live_slots = [0..n_pre-1] = [0..new_n-1]`. CONTIGUOUS.
+
+The shortcut does NOT fire when freed slots are scattered through the
+live region (e.g., user code that ptraces a middle wire). The bit-
+scatter handles that fine; it's just a few percent slower than the
+shortcut would have been.
+
+### Verification
+
+  - test_compact_state.jl: 297 → 321 (+24) ✓
+  - test_compact_state_dm.jl: 408/408 ✓ (DM scatter unchanged)
+  - test_density_matrix.jl: 1753/1753 ✓
+  - test_do_block_alloc.jl: 44/44 ✓
+
+### Open follow-ons
+
+  - **DM scatter contiguous-live shortcut** (no bead yet) — same
+    optimization for `_compact_scatter_dm!`. The packed-buffer path
+    already does per-column `unsafe_copyto!` on contiguous strips, but
+    the inner bit-expand fires for every (r_new, c_new). When
+    `live_slots == 0:new_n-1`, c_old == c_new and the inner can skip
+    the r_old recompute. File as P4 follow-on.
+
+---
+
 ## 2026-04-25 — Session 68: bead `Sturm.jl-cbl` closed, do-block allocation lands
 
 Headline: `QBool(p) do q … end` and `QInt{W}(value) do reg … end` now
