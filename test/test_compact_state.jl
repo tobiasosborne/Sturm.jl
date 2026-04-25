@@ -370,7 +370,51 @@ end
         end
     end
 
-    # ── 6. PRE-FLIGHT VALIDATION (each error path fires) ───────────────────
+    # ── 6. HWM TRACKER (bead Sturm.jl-w9e) ─────────────────────────────────
+    #
+    # `_n_qubits_hwm` is the per-allocate hook that lets tests bound the
+    # peak qubit count of an operation even when compaction fires
+    # mid-execution. allocate! bumps the field; compact_state! must NOT
+    # reset it. Required by tests that previously read `ctx.n_qubits` as
+    # a peak (test_shor.jl HWM, test_bennett_integration deallocate_batch).
+
+    @testset "_n_qubits_hwm tracks peak across allocations and compactions" begin
+        @context EagerContext() begin
+            ctx = current_context()
+            @test ctx._n_qubits_hwm == 0
+            a = QBool(0); b = QBool(0); c = QBool(0)
+            @test ctx.n_qubits == 3
+            @test ctx._n_qubits_hwm == 3
+            # ptrace (below auto-trigger threshold) must not lower HWM.
+            ptrace!(b)
+            @test ctx._n_qubits_hwm == 3
+            # Allocate into a recycled slot — n_qubits unchanged, HWM unchanged.
+            d = QBool(0)
+            @test ctx.n_qubits == 3
+            @test ctx._n_qubits_hwm == 3
+            # Allocate fresh — HWM bumps.
+            e = QBool(0)
+            @test ctx.n_qubits == 4
+            @test ctx._n_qubits_hwm == 4
+            # Force a compaction via threshold burst.
+            burst = [QBool(0) for _ in 1:8]
+            @test ctx._n_qubits_hwm >= 12   # 4 (live) + 8 (burst) at peak
+            peak_before_compact = ctx._n_qubits_hwm
+            for q in burst; ptrace!(q); end
+            # After compact: n_qubits drops (live count = a, c, d, e = 4),
+            # but HWM is preserved.
+            @test ctx._compact_count >= 1
+            @test ctx.n_qubits == 4
+            @test ctx._n_qubits_hwm == peak_before_compact
+            # New allocations after compact only bump HWM if they exceed peak.
+            tail = [QBool(0) for _ in 1:5]   # n_qubits goes 4 → 9, below HWM
+            @test ctx._n_qubits_hwm == peak_before_compact   # unchanged
+            for q in tail; ptrace!(q); end
+            ptrace!(a); ptrace!(c); ptrace!(d); ptrace!(e)
+        end
+    end
+
+    # ── 7. PRE-FLIGHT VALIDATION (each error path fires) ───────────────────
 
     @testset "pre-flight validation errors" begin
         @testset "free_slots out-of-range" begin

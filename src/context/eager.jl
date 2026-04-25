@@ -17,6 +17,8 @@ mutable struct EagerContext <: AbstractContext
     capacity::Int                      # pre-allocated Orkan qubit count
     free_slots::Vector{Int}            # recycled qubit indices available for reuse
     _compact_count::Int                # bead 059: number of compact_state! commits
+    _n_qubits_hwm::Int                 # bead w9e: peak n_qubits ever reached;
+                                       #   bumped on allocate, never reset by compact
 
     function EagerContext(; capacity::Int=8)
         capacity > MAX_QUBITS && error(
@@ -25,7 +27,7 @@ mutable struct EagerContext <: AbstractContext
         )
         orkan = OrkanState(ORKAN_PURE, capacity)
         orkan[0] = 1.0 + 0.0im
-        new(orkan, 0, Dict{WireID, Int}(), Set{WireID}(), WireID[], capacity, Int[], 0)
+        new(orkan, 0, Dict{WireID, Int}(), Set{WireID}(), WireID[], capacity, Int[], 0, 0)
     end
 end
 
@@ -35,7 +37,8 @@ function allocate!(ctx::EagerContext)::WireID
     wire = fresh_wire!()
 
     if !isempty(ctx.free_slots)
-        # Reuse a recycled slot — it's already in |0>
+        # Reuse a recycled slot — it's already in |0>. n_qubits unchanged,
+        # HWM unchanged (no new peak).
         qubit_idx = pop!(ctx.free_slots)
         ctx.wire_to_qubit[wire] = qubit_idx
         return wire
@@ -47,6 +50,11 @@ function allocate!(ctx::EagerContext)::WireID
     qubit_idx = ctx.n_qubits
     ctx.wire_to_qubit[wire] = qubit_idx
     ctx.n_qubits += 1
+    # bead w9e: track all-time peak so tests can bound a function's HWM
+    # even when compaction fires mid-execution and resets `n_qubits`.
+    if ctx.n_qubits > ctx._n_qubits_hwm
+        ctx._n_qubits_hwm = ctx.n_qubits
+    end
     return wire
 end
 

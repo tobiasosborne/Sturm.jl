@@ -142,11 +142,27 @@ end
     end
 
     @testset "deallocate_batch!" begin
+        # bead Sturm.jl-w9e: pin the user-visible invariant ("ancillae are
+        # consumed and no longer live"), not the implementation detail
+        # (`free_slots`), which compaction may zero. The slot-recycling
+        # bookkeeping is checked separately, branching on whether the
+        # auto-trigger fired (sub-threshold here at 3 < 2*GROW_STEP=8, so
+        # compact does NOT fire — but the assertion is robust either way).
         @context EagerContext() begin
             ctx = current_context()
             wires = Sturm.allocate_batch!(ctx, 3)
             Sturm.deallocate_batch!(ctx, wires)
-            @test length(ctx.free_slots) >= 3
+            for w in wires
+                @test w in ctx.consumed
+                @test !haskey(ctx.wire_to_qubit, w)
+            end
+            @test isempty(ctx.wire_to_qubit)
+            if ctx._compact_count == 0
+                @test length(ctx.free_slots) == 3
+            else
+                @test isempty(ctx.free_slots)
+                @test ctx.n_qubits == 0
+            end
         end
     end
 

@@ -335,15 +335,23 @@ using Sturm
         # primitive with 2 controls; Sturm's engine lowers doubly-controlled
         # Rz via a 1-workspace Toffoli cascade, giving 2L+4. The counter
         # savings still holds: HWM is independent of t.
+        #
+        # bead Sturm.jl-w9e: read peak from `ctx._n_qubits_hwm` (set by every
+        # `allocate!`, never reset by `compact_state!`). The previous
+        # `ctx.n_qubits - before` formulation read FINAL n_qubits, which
+        # compaction may reset mid-call — making the delta a lower bound on
+        # the actual peak (passing accidentally when compact zeroed live
+        # count). The HWM tracker survives compaction, so the peak it
+        # reports is the true peak across the operation.
         @testset "HWM = 2L + 4 (independent of t)" begin
             for (N, t) in [(15, 3), (15, 6), (21, 6)]
                 L = max(1, ceil(Int, log2(N)))
                 expected_hwm = 2*L + 4
                 @context EagerContext() begin
                     ctx = current_context()
-                    before = ctx.n_qubits
+                    before_hwm = ctx._n_qubits_hwm
                     _ = shor_order_D_semi(2, N; t=t, verbose=false)
-                    peak_new = ctx.n_qubits - before
+                    peak_new = ctx._n_qubits_hwm - before_hwm
                     @test peak_new <= expected_hwm
                 end
             end

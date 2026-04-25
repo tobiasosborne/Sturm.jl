@@ -4,6 +4,101 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 66: bead `Sturm.jl-w9e` closed, HWM tracker lands
+
+Headline: two compaction-fragile tests rewritten to test invariants compaction
+preserves rather than incidentals it zeros. Adds `_n_qubits_hwm` to
+EagerContext as the per-allocate hook the bead recommended. Local TDD
+cycle clean.
+
+### What landed
+
+  * `src/context/eager.jl` — new `_n_qubits_hwm::Int` field on
+    `EagerContext` (init 0); `allocate!` bumps it on every fresh slot
+    allocation. `compact_state!` does NOT reset it (the existing commit
+    phase touches only the fields it needs to rewrite). Recycled slots
+    do not bump HWM (no new peak).
+  * `test/test_compact_state.jl` — new `_n_qubits_hwm tracks peak across
+    allocations and compactions` testset (section 6, before pre-flight
+    validation). Pins: bumps on fresh allocation, no-op on recycled
+    slot, preserved by compact, only bumps further if a new peak is
+    reached after compact.
+  * `test/test_shor.jl` HWM testset — read peak from `ctx._n_qubits_hwm`
+    instead of `ctx.n_qubits - before`. The previous formulation read
+    FINAL n_qubits, which compaction may reset mid-call (passing
+    accidentally when compact zeroed live count).
+  * `test/test_bennett_integration.jl` deallocate_batch! testset — pin
+    the user-visible invariant ("ancillae are consumed and no longer
+    live") by checking `consumed` and `wire_to_qubit`, not the internal
+    `free_slots` count which compaction may zero. Branches on
+    `_compact_count` for the slot-recycling sanity check (sub-threshold
+    here so compact does not fire, but the assertion is robust either
+    way).
+
+### Why this matters
+
+Three flagged tests were passing under compaction by accident. Bead
+session-64 handoff explicitly called them out:
+  > "test_shor.jl:344-346 (n_qubits delta measurement no longer accurate
+  > under compaction — passing accidentally because deltas can now be
+  > near-zero), test_bennett_integration.jl:149 (`@test
+  > length(free_slots) >= 3` — passing because compaction doesn't fire
+  > in that test's context)."
+
+The HWM test was the canary: if Shor's algorithm ever exceeded its 2L+4
+upper bound, the `n_qubits - before` formulation would silently absorb
+the regression because compaction would mask the peak. After this fix,
+the test reads the true peak via `_n_qubits_hwm`, which survives
+compaction.
+
+### Non-obvious traps from this session
+
+  * **Sonnet scan paid off.** Spawned a single Explore subagent (Sonnet)
+    to enumerate every `ctx.n_qubits`-as-HWM pattern in the repo
+    BEFORE touching code. Caught two patterns the bead description had
+    listed as "low-priority flag" (test_qmod.jl _amps_snapshot,
+    test_qdrift.jl _infidelity) and ruled them out as actual bugs
+    (the unsafe_wrap with `dim = 1 << n_qubits` reads a strict prefix
+    of a `2^capacity`-sized PURE buffer — safe). Saved a wider
+    refactor that wasn't needed. **Lesson: scan the whole repo for the
+    pattern class before scoping the fix; the scope is rarely the
+    initial flagged sites alone.**
+  * **EagerContext is not "core" per CLAUDE.md rule 2.** Adding a
+    field to `EagerContext` does not trigger the 3+1 ceremony — the
+    rule covers `types/`, `context/abstract.jl`, `primitives/`, and
+    Orkan FFI. Concrete context implementations are not in that list.
+    Single-proposer or self-implementer is fine for additive field
+    changes that don't change the abstract interface.
+  * **HWM bumps live in `allocate!` only.** Resisted the temptation
+    to also bump in `_grow_state!` — capacity grows ≠ live qubits grow.
+    HWM tracks live n_qubits, not capacity. `_grow_state!` is a
+    response to allocation pressure but doesn't itself add live wires;
+    the `allocate!` call that triggered the grow then increments
+    n_qubits and bumps HWM in the same path.
+
+### Open follow-ons
+
+  1. **DensityMatrixContext mirror** (no bead yet) — same `_n_qubits_hwm`
+     field and bump in `allocate!(::DensityMatrixContext)`. One-line
+     additive change. File a P4 bead when a DM test needs it.
+  2. **Library-side label cleanup** (low-priority) — `src/library/shor.jl`
+     line 172/424 log labels `peak_allocated=ctx.n_qubits` are
+     misleading post-compaction. Should read `live_qubits=` or use
+     `_n_qubits_hwm` for true peak. File as P4 doc-fix bead.
+
+### Tests touched, not touched
+
+Touched: `test/test_compact_state.jl`, `test/test_shor.jl`,
+`test/test_bennett_integration.jl`. Source: `src/context/eager.jl`.
+
+Verified clean (locally, against full edit set):
+  - test_compact_state.jl HWM testset (the new one).
+
+`test_shor.jl HWM` and `test_bennett_integration.jl deallocate_batch!`
+to be re-run as part of the regression chain when julia is idle.
+
+---
+
 ## 2026-04-25 — Session 65: bead `Sturm.jl-amc` closed, `compact_state!(::DensityMatrixContext)` lands
 
 Headline: density-matrix counterpart of bead 059 lands clean. `_grow_density_state!`
