@@ -149,28 +149,47 @@ end
 Validate `ctx` invariants and return a plan. Returns `nothing` if
 `free_slots` is empty (fast-path no-op for `compact_state!`). Errors loud
 on any invariant violation — every check has a precise message.
+
+The body is factored into `_compact_plan_impl` (operating on the field set)
+so `DensityMatrixContext` can reuse it verbatim — both contexts carry the
+same `n_qubits / capacity / free_slots / wire_to_qubit / consumed` layout
+relevant to the plan, and the plan itself is buffer-shape-agnostic.
 """
-function _compact_plan(ctx::EagerContext)::Union{Nothing, CompactPlan}
-    isempty(ctx.free_slots) && return nothing
+_compact_plan(ctx::EagerContext) = _compact_plan_impl(
+    ctx.n_qubits, ctx.capacity, ctx.free_slots, ctx.wire_to_qubit, ctx.consumed)
+
+"""
+    _compact_plan_impl(n_qubits, capacity, free_slots, wire_to_qubit, consumed)
+        -> Union{Nothing, CompactPlan}
+
+Internal: shared plan-builder for state-owning contexts (EagerContext,
+DensityMatrixContext). Operates only on the field arguments — no buffer
+access, no FFI — so it is correct for any context whose state-meta layout
+matches eager's. Errors loud on every invariant violation.
+"""
+function _compact_plan_impl(n_qubits::Int, capacity::Int, free_slots::Vector{Int},
+                            wire_to_qubit::Dict{WireID, Int},
+                            consumed::Set{WireID})::Union{Nothing, CompactPlan}
+    isempty(free_slots) && return nothing
 
     # Invariant: capacity ≥ n_qubits (otherwise allocate would have grown).
-    ctx.capacity >= ctx.n_qubits ||
-        error("compact_state!: invariant violation — capacity ($(ctx.capacity)) < n_qubits ($(ctx.n_qubits))")
+    capacity >= n_qubits ||
+        error("compact_state!: invariant violation — capacity ($(capacity)) < n_qubits ($(n_qubits))")
 
     # Invariant: every free_slot index is in [0, n_qubits).
-    for s in ctx.free_slots
-        (0 <= s < ctx.n_qubits) ||
-            error("compact_state!: free_slots contains out-of-range index $s (n_qubits=$(ctx.n_qubits))")
+    for s in free_slots
+        (0 <= s < n_qubits) ||
+            error("compact_state!: free_slots contains out-of-range index $s (n_qubits=$(n_qubits))")
     end
 
     # Invariant: free_slots has no duplicates.
-    if length(unique(ctx.free_slots)) != length(ctx.free_slots)
-        error("compact_state!: free_slots contains duplicates: $(ctx.free_slots)")
+    if length(unique(free_slots)) != length(free_slots)
+        error("compact_state!: free_slots contains duplicates: $(free_slots)")
     end
 
     # Invariant: free_slots and live-slot set are disjoint.
-    free_set = Set(ctx.free_slots)
-    live_slot_vals = collect(values(ctx.wire_to_qubit))
+    free_set = Set(free_slots)
+    live_slot_vals = collect(values(wire_to_qubit))
     for s in live_slot_vals
         s in free_set &&
             error("compact_state!: slot $s appears in BOTH free_slots and wire_to_qubit values — corruption")
@@ -182,15 +201,15 @@ function _compact_plan(ctx::EagerContext)::Union{Nothing, CompactPlan}
     end
 
     # Invariant: every live wire is NOT in `consumed`.
-    for w in keys(ctx.wire_to_qubit)
-        w in ctx.consumed &&
+    for w in keys(wire_to_qubit)
+        w in consumed &&
             error("compact_state!: wire $(w) is in BOTH wire_to_qubit and consumed — corruption")
     end
 
     # Invariant: live + freed slot count fits in n_qubits.
-    if length(ctx.wire_to_qubit) + length(ctx.free_slots) > ctx.n_qubits
-        error("compact_state!: live ($(length(ctx.wire_to_qubit))) + freed ($(length(ctx.free_slots))) " *
-              "exceeds n_qubits ($(ctx.n_qubits))")
+    if length(wire_to_qubit) + length(free_slots) > n_qubits
+        error("compact_state!: live ($(length(wire_to_qubit))) + freed ($(length(free_slots))) " *
+              "exceeds n_qubits ($(n_qubits))")
     end
 
     # Build the plan. Order live wires by their *old slot index* ascending,
@@ -201,8 +220,10 @@ function _compact_plan(ctx::EagerContext)::Union{Nothing, CompactPlan}
     # Sorting by WireID.id and then re-sorting old_slots was a bug — it broke
     # the slot↔wire correspondence and silently permuted amplitudes within
     # the live set (regressed test_shor.jl statistical tests until fixed).
-    live_wires = sort!(collect(keys(ctx.wire_to_qubit)), by = w -> ctx.wire_to_qubit[w])
-    old_slots = Int[ctx.wire_to_qubit[w] for w in live_wires]   # ascending by construction
+    # The same monotonicity is what makes the DM scatter's lower-triangle
+    # preservation property hold (see density.jl).
+    live_wires = sort!(collect(keys(wire_to_qubit)), by = w -> wire_to_qubit[w])
+    old_slots = Int[wire_to_qubit[w] for w in live_wires]   # ascending by construction
     new_n = length(live_wires)
 
     # Capacity hysteresis. Three constraints:
@@ -216,18 +237,18 @@ function _compact_plan(ctx::EagerContext)::Union{Nothing, CompactPlan}
     #       this cap, the trajectory could be 17→21→25→29, hitting
     #       29 (8 GiB transient > available/2 on a 10-GiB-free machine);
     #   (c) clamp to MAX_QUBITS to stay within the Orkan limit.
-    floor_cap = max(new_n + GROW_STEP, ctx.capacity - 2 * GROW_STEP)
+    floor_cap = max(new_n + GROW_STEP, capacity - 2 * GROW_STEP)
     new_capacity = min(floor_cap, MAX_QUBITS)
     new_capacity >= new_n ||
         error("compact_state!: hysteresis clamp produced new_capacity=$new_capacity < new_n=$new_n")
 
     # Build the freed-bit mask (UInt64, plenty for n_qubits ≤ 30).
     freed_mask = UInt64(0)
-    for s in ctx.free_slots
+    for s in free_slots
         freed_mask |= UInt64(1) << s
     end
 
-    return CompactPlan(ctx.n_qubits, new_n, new_capacity, live_wires, old_slots, freed_mask)
+    return CompactPlan(n_qubits, new_n, new_capacity, live_wires, old_slots, freed_mask)
 end
 
 """
