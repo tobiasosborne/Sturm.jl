@@ -92,6 +92,10 @@ include("hardware/server.jl")
 # ── Module init (runs at load time, not precompile time) ─────────────────────
 function __init__()
     _set_omp_threads!()
+    # bead Sturm.jl-179: STURM_COMPACT_VERIFY env-gate for the compact_state!
+    # residual-norm precondition scan. Cached at init so the hot path reads
+    # a single Ref deref instead of the ENV dictionary.
+    _COMPACT_VERIFY_ENABLED[] = _parse_compact_verify_env(get(ENV, "STURM_COMPACT_VERIFY", nothing))
 end
 
 # ── Exports ───────────────────────────────────────────────────────────────────

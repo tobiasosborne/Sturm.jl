@@ -414,7 +414,129 @@ end
         end
     end
 
-    # ── 7. PRE-FLIGHT VALIDATION (each error path fires) ───────────────────
+    # ── 7. STURM_COMPACT_VERIFY env-gate (bead Sturm.jl-179) ───────────────
+    #
+    # The freed-slot residual scan is mandatory by default (CLAUDE.md rule
+    # 1: FAIL FAST, FAIL LOUD). After empirical confirmation that the
+    # precondition is never violated in real workloads, the env-gate
+    # `STURM_COMPACT_VERIFY=0` lets users opt out for hot-path workloads.
+    # Cached in a `Ref{Bool}` at module init to keep the env read off the
+    # hot path. Default: enabled.
+
+    @testset "STURM_COMPACT_VERIFY env-gate" begin
+
+        @testset "_parse_compact_verify_env: env value parsing" begin
+            @test Sturm._parse_compact_verify_env(nothing) == true   # unset
+            for s in ("0", "false", "off", "no", "FALSE", "Off", " 0 ")
+                @test Sturm._parse_compact_verify_env(s) == false
+            end
+            for s in ("1", "true", "on", "yes", "", "anything-else")
+                @test Sturm._parse_compact_verify_env(s) == true
+            end
+        end
+
+        @testset "default: enabled (residual violation errors loud)" begin
+            @test Sturm._COMPACT_VERIFY_ENABLED[] == true   # default state
+            @context EagerContext() begin
+                ctx = current_context()
+                a = QBool(0.5); b = QBool(0)
+                b ⊻= a   # Bell pair — has |1⟩ branch amplitude
+                # Forcibly free b's slot WITHOUT measuring (residual nonzero).
+                b_slot = ctx.wire_to_qubit[b.wire]
+                delete!(ctx.wire_to_qubit, b.wire)
+                push!(ctx.consumed, b.wire)
+                push!(ctx.free_slots, b_slot)
+                b.consumed = true
+                @test_throws ErrorException Sturm.compact_state!(ctx)
+                ptrace!(a)
+            end
+        end
+
+        @testset "disabled: residual violation is NOT detected" begin
+            saved = Sturm._COMPACT_VERIFY_ENABLED[]
+            try
+                Sturm._COMPACT_VERIFY_ENABLED[] = false
+                @context EagerContext() begin
+                    ctx = current_context()
+                    a = QBool(0); b = QBool(0)
+                    a_slot = ctx.wire_to_qubit[a.wire]
+                    # Force a benign residual: free `a` (which is in |0⟩, so
+                    # no actual residual). With verify off, compact runs
+                    # without checking. With verify on it would also pass
+                    # (precondition holds). We just confirm the path doesn't
+                    # error out — and via _compact_count that compact ran.
+                    delete!(ctx.wire_to_qubit, a.wire)
+                    push!(ctx.consumed, a.wire)
+                    push!(ctx.free_slots, a_slot)
+                    a.consumed = true
+                    Sturm.compact_state!(ctx)
+                    @test ctx._compact_count == 1
+                    ptrace!(b)
+                end
+                # Now the ACTUAL gate-disabled path: a real residual that
+                # the verify scan would catch — must NOT error when off.
+                @context EagerContext() begin
+                    ctx = current_context()
+                    a = QBool(0.5); b = QBool(0)
+                    b ⊻= a   # Bell — residual would be 0.5
+                    b_slot = ctx.wire_to_qubit[b.wire]
+                    delete!(ctx.wire_to_qubit, b.wire)
+                    push!(ctx.consumed, b.wire)
+                    push!(ctx.free_slots, b_slot)
+                    b.consumed = true
+                    # With gate off, NO error — compact runs the (unsound)
+                    # scatter producing a wrong post-state. The wire is
+                    # removed but the |1⟩ branch amplitude is silently
+                    # lost. We just check the call doesn't error.
+                    Sturm.compact_state!(ctx)
+                    @test ctx._compact_count == 1
+                    # a is now at slot 0; consume it to clean up.
+                    a.consumed = true
+                end
+            finally
+                Sturm._COMPACT_VERIFY_ENABLED[] = saved
+            end
+        end
+
+        @testset "DensityMatrixContext shares the same gate" begin
+            saved = Sturm._COMPACT_VERIFY_ENABLED[]
+            try
+                # On (default): residual violation errors.
+                Sturm._COMPACT_VERIFY_ENABLED[] = true
+                @context DensityMatrixContext() begin
+                    ctx = current_context()
+                    a = QBool(0.5); b = QBool(0)
+                    b ⊻= a
+                    b_slot = ctx.wire_to_qubit[b.wire]
+                    delete!(ctx.wire_to_qubit, b.wire)
+                    push!(ctx.consumed, b.wire)
+                    push!(ctx.free_slots, b_slot)
+                    b.consumed = true
+                    @test_throws ErrorException Sturm.compact_state!(ctx)
+                    ptrace!(a)
+                end
+                # Off: same setup, no error.
+                Sturm._COMPACT_VERIFY_ENABLED[] = false
+                @context DensityMatrixContext() begin
+                    ctx = current_context()
+                    a = QBool(0.5); b = QBool(0)
+                    b ⊻= a
+                    b_slot = ctx.wire_to_qubit[b.wire]
+                    delete!(ctx.wire_to_qubit, b.wire)
+                    push!(ctx.consumed, b.wire)
+                    push!(ctx.free_slots, b_slot)
+                    b.consumed = true
+                    Sturm.compact_state!(ctx)
+                    @test ctx._compact_count == 1
+                    a.consumed = true
+                end
+            finally
+                Sturm._COMPACT_VERIFY_ENABLED[] = saved
+            end
+        end
+    end
+
+    # ── 8. PRE-FLIGHT VALIDATION (each error path fires) ───────────────────
 
     @testset "pre-flight validation errors" begin
         @testset "free_slots out-of-range" begin

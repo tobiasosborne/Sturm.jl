@@ -168,6 +168,9 @@ sequences accumulate noise as `eps() · O(2^(2n))` per stored element, but
 the gap to a real violation is still huge (~1/(2^n) vs ~eps()·G·2^(2n)).
 """
 function _compact_verify_freed_zero(ctx::DensityMatrixContext, plan::CompactPlan)
+    # bead Sturm.jl-179: env-gated. When `STURM_COMPACT_VERIFY=0` the scan
+    # is skipped. Default is on (fail-loud).
+    _COMPACT_VERIFY_ENABLED[] || return nothing
     # The Orkan packed buffer is laid out for `state->qubits = ctx.capacity`,
     # NOT for the live `n_qubits`. Packed indices use the buffer's dim
     # `cap_dim = 2^capacity` (not `2^n_qubits`) — `_dm_col_off(d, c)` depends
