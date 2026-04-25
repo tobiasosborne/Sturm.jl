@@ -275,7 +275,7 @@ end
 
 `Bool(q)` is the P2 cast — measurement. On `HardwareContext` it flushes pending ops, blocks on the device response, returns the classical Bool. The `if` is plain Julia. This is exactly the dynamic-circuit pattern IBM/Quantinuum hardware supports, exposed at zero ceremony.
 
-`Int(q::QInt)` does the same for multi-bit registers (one round-trip per bit in v0.1; bead `Sturm.jl-???` to come for batched). Use `if`, `switch`, `while` over the result freely — it's a regular Julia value.
+`Int(q::QInt)` does the same for multi-bit registers (one round-trip per bit currently; batched all-bits-in-one-round-trip is a follow-on). Use `if`, `switch`, `while` over the result freely — it's a regular Julia value.
 
 **The footgun is `TracingContext` only**, because tracing runs the function once symbolically and Julia's `if` is opaque to runtime tracing — there's no way to capture both arms without source-level rewriting (Cassette/IRTools, which the Julia DSL ecosystem has moved away from). For the symbolic-tracing path (building a `Channel` for OpenQASM export, or feeding the optimisation passes), use the explicit primitive **`cases()`** / **`@cases`**:
 
@@ -498,7 +498,7 @@ julia --project -e 'using Pkg; Pkg.test()'
 
 ## Project Status
 
-All 12 phases of the [implementation plan](docs/PLAN.md) are structurally complete:
+All 16 phases of the [implementation plan](docs/PLAN.md) are structurally complete:
 
 | Phase | What | Status |
 |-------|------|--------|
@@ -514,6 +514,19 @@ All 12 phases of the [implementation plan](docs/PLAN.md) are structurally comple
 | 14 | P8 quantum promotion (mixed-type arithmetic) | Complete |
 | 15 | P9 Bennett.jl integration (`oracle`, `quantum`) | Complete |
 | 16 | Visualization (`to_ascii`, `to_png`, Birren palette) | Complete |
+
+Additional shipped features beyond the original plan:
+
+| What | Notes |
+|------|-------|
+| `HardwareContext` + transport (TCP/IPC) + idealised simulator | Dynamic-circuit pattern (mid-circuit measurement → classical branch) works on `HardwareContext` |
+| `cases(q, then, [else_])` / `@cases q begin … end` | Mid-circuit measurement primitive for `TracingContext`; `if Bool(q)` is the natural form on Eager / Density / Hardware |
+| `compact_state!` for `EagerContext` and `DensityMatrixContext` | Reclaims the n_qubits ratchet after Bennett ancilla bursts; auto-triggered from `deallocate!` |
+| `QBool(p) do q … end` and `QInt{W}(value) do reg … end` | Do-block allocators with auto partial-trace on exit (mirrors Julia's `open(f, path) do …`) |
+| `STURM_COMPACT_VERIFY` env-gate | Opt out of the `compact_state!` residual scan in hot paths |
+| `oracle_table` LRU cache + `clear_oracle_cache!` / `set_oracle_cache_size!` | Bounded cache (default 64); public management API |
+| Shor's algorithm impls A/B/C/D/D-semi + windowed arithmetic | Beauregard 2L+4 HWM; Gidney-Ekerå mulmod |
+| QSVT / QSP block-encoding primitives | Pillar 4 quantum linear algebra scaffolding |
 
 See `WORKLOG.md` for detailed session notes and gotchas.
 

@@ -131,25 +131,25 @@ Sturm.jl/
   Project.toml
   src/
     Sturm.jl              # module definition, exports
-    orkan/                 # FFI bindings to liborkan
-      ffi.jl               # raw ccall wrappers
-      state.jl             # OrkanState handle + finalizer
-    types/                 # WireID, QBool, QInt, ClassicalRef
-    context/               # AbstractContext, EagerContext, DensityMatrixContext, TracingContext
+    orkan/                 # FFI bindings to liborkan (PURE + MIXED_PACKED)
+    types/                 # WireID, QBool, QInt, QMod, QCoset, QRunway
+    context/               # AbstractContext, EagerContext, DensityMatrixContext, TracingContext, compact_state!
     primitives/            # preparation, rotation, entangle, boundary
-    control/               # when.jl
+    control/               # when, cases / @cases (mid-circuit measurement)
     noise/                 # depolarise, dephase, amplitude_damp, classicalise
-    channel/               # Channel struct, trace, compose, openqasm
+    channel/               # Channel struct, trace, compose, OpenQASM, draw (ASCII + PNG)
     passes/                # deferred_measurement, gate_cancel, clifford_simp
-    qecc/                  # AbstractCode, Steane
-    library/               # patterns.jl (superpose, interfere, fourier_sample, phase_estimate)
+    qecc/                  # AbstractCode, Steane [[7,1,3]]
+    library/               # patterns (superpose, interfere, fourier_sample, phase_estimate),
+                           #   shor (impl A/B/C/D/D-semi), windowed arithmetic, ...
+    bennett/               # Bennett.jl bridge: oracle, oracle_table, quantum, @quantum_lift
+    block_encoding/        # block-encoding primitives for QSVT/QSP
+    qsvt/                  # quantum singular value transformation
+    simulation/            # Trotter-Suzuki, Ising, Heisenberg evolve!
+    hardware/              # HardwareContext, IdealisedSimulator, transport (TCP/IPC), protocol
     gates.jl               # convenience gates built from 4 primitives
   test/
-    runtests.jl
-    test_primitives.jl
-    test_bell.jl
-    test_teleportation.jl
-    ...
+    runtests.jl            # ~60 test files across all subsystems
 ```
 
 ## Build & Test
