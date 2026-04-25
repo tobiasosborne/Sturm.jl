@@ -4,6 +4,75 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 67: bead `Sturm.jl-179` closed, STURM_COMPACT_VERIFY env-gate
+
+Headline: ships the env-gate as design-on (default-enabled), not an
+operational change. Caches the env value at module init in a single
+`Ref{Bool}` so the hot path is one deref, not an `ENV` lookup. Both
+EagerContext and DensityMatrixContext share the same gate. The
+default-OFF flip is a separate deferred action gated on empirical
+evidence (1–2 sessions of zero residual violations on real workloads).
+
+### What landed
+
+  * `src/context/abstract.jl` — `const _COMPACT_VERIFY_ENABLED = Ref(true)`.
+    `_parse_compact_verify_env(s)` parses env values: `nothing → true`;
+    `"0"`, `"false"`, `"off"`, `"no"` (case-insensitive, trimmed) → false;
+    anything else → true (lenient, prefer fail-loud over fail-silent on
+    typos).
+  * `src/Sturm.jl __init__()` — reads `ENV["STURM_COMPACT_VERIFY"]` once
+    at load time and writes the parsed bool to the Ref.
+  * `src/context/eager.jl _compact_verify_freed_zero` — short-circuit
+    `_COMPACT_VERIFY_ENABLED[] || return nothing` at the top.
+  * `src/context/density.jl _compact_verify_freed_zero` — same gate.
+  * `test/test_compact_state.jl` — three new testsets (+20 assertions):
+    parser unit tests, default-enabled end-to-end (residual violation
+    errors), disabled end-to-end (same residual is silently accepted),
+    DM mirror.
+
+### Verification
+
+  - test_compact_state.jl: 277 → 297 (+20) ✓
+  - test_compact_state_dm.jl: 408/408 still ✓
+  - env smoke test: `STURM_COMPACT_VERIFY=0 julia` → Ref reads false;
+    unset → Ref reads true.
+
+### Why default-on stays for now
+
+The bead description explicitly says: "Don't ship the off-default until
+at least 1–2 sessions confirm zero residual violations across mulmod/Shor
+runs." The gate is a knob; the default policy is a separate decision.
+Flipping the default-off is its own (small) bead when the empirical
+evidence is in.
+
+### Non-obvious decisions
+
+  * **Lenient parser** (anything that isn't a recognised disable word
+    treats as enabled): the failure mode of typoing `STRUM_COMPACT_VERFY=0`
+    should be "the gate stays on" (safe), not "the gate silently
+    disables" (unsafe). The set of disable words is small and
+    well-documented.
+  * **Single shared Ref, not per-context.** Both EagerContext and
+    DensityMatrixContext check the same `_COMPACT_VERIFY_ENABLED[]`.
+    That keeps the operational story simple — flip one switch, both
+    backends respond — and reflects that the underlying invariant
+    (freed-slot residual must be zero) is the same for both.
+  * **Test mutation pattern.** Tests directly write to the Ref under
+    `try/finally` to save and restore. This is faster and more
+    deterministic than `ENV["STURM_COMPACT_VERIFY"] = ...` + reload.
+
+### Open follow-ons
+
+  1. **Bench the scan cost on real workloads** (no bead yet) — the bead
+     description's parenthetical: "if it's <5% of total compact cost
+     the optimisation isn't worth the operational complexity." If the
+     scan is fast enough, we may decide to keep the gate but never
+     flip the default.
+  2. **Default-off flip** (deferred) — flip default after 1–2 sessions
+     of zero residual violations on Shor + mulmod. File as a P4 task.
+
+---
+
 ## 2026-04-25 — Session 66: bead `Sturm.jl-w9e` closed, HWM tracker lands
 
 Headline: two compaction-fragile tests rewritten to test invariants compaction

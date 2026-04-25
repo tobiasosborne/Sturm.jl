@@ -172,6 +172,41 @@ end
 # ── State compaction (bead Sturm.jl-059) ──────────────────────────────────────
 
 """
+    _COMPACT_VERIFY_ENABLED :: Ref{Bool}
+
+Module-level toggle for the freed-slot residual-norm precondition scan in
+`compact_state!` (bead Sturm.jl-179). Loaded from `ENV["STURM_COMPACT_VERIFY"]`
+in `__init__`, so users can opt out without a recompile:
+
+  - unset / `"1"` / `"true"` / `"on"` / `"yes"` (case-insensitive) → enabled (default)
+  - `"0"` / `"false"` / `"off"` / `"no"`                            → disabled
+
+Cached in a `Ref{Bool}` so the hot path reads a single dereference instead
+of an `ENV` dictionary lookup. Tests may temporarily flip this directly
+(save and restore with `try/finally`).
+
+The default is **on**. CLAUDE.md rule 1 (FAIL FAST, FAIL LOUD) governs:
+the residual scan catches a class of bugs (a measure! variant that fails
+to fully reset the freed slot) that produce silently-wrong post-compact
+states. Disable only after empirical confirmation that the precondition
+is never violated in your workload.
+"""
+const _COMPACT_VERIFY_ENABLED = Ref(true)
+
+"""
+    _parse_compact_verify_env(s::Union{Nothing, AbstractString}) -> Bool
+
+Parse a `STURM_COMPACT_VERIFY` env-var value into a Bool. `nothing`
+(unset) → true (default-on). Recognised disable values: `0`, `false`,
+`off`, `no` (case-insensitive). Anything else → true (lenient: prefer
+fail-loud over fail-silent for typos).
+"""
+function _parse_compact_verify_env(s::Union{Nothing, AbstractString})
+    s === nothing && return true
+    return !(lowercase(strip(s)) in ("0", "false", "off", "no"))
+end
+
+"""
     compact_state!(ctx::AbstractContext) -> ctx
 
 Compact the backend state to the live tensor factor, recovering memory

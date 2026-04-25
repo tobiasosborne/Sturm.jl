@@ -272,6 +272,10 @@ gate sequences accumulates at `eps() · O(2^n)`; a single failed reset
 tolerance — the gap is huge.
 """
 function _compact_verify_freed_zero(ctx::EagerContext, plan::CompactPlan)
+    # bead Sturm.jl-179: env-gated. When `STURM_COMPACT_VERIFY=0` the scan
+    # is skipped — useful only for hot-path workloads that have empirically
+    # confirmed the precondition holds. Default is on (fail-loud).
+    _COMPACT_VERIFY_ENABLED[] || return nothing
     old_dim = 1 << plan.old_n
     old_amps = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, old_dim)
     residual = 0.0
