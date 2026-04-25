@@ -328,11 +328,97 @@ existing control stack.
 end
 ```
 """
-# Module-private cache: data-hash → compiled QROM circuit. Bennett's
+# Module-private LRU cache: data-hash → compiled QROM circuit. Bennett's
 # `emit_qrom!` + `bennett(lr)` is the expensive part of `oracle_table` —
 # two shots that share the same table (same `(a, N, W_in, W_out)` in Shor's
 # case) compile the circuit once and reuse it on every subsequent call.
-const _ORACLE_TABLE_CACHE = Dict{Tuple{UInt64, Int, Int}, ReversibleCircuit}()
+#
+# Bead Sturm.jl-t1v: bounded LRU. Without eviction, a long-running session
+# that calls `oracle_table` with distinct tables (e.g. quantising a
+# continuous parameter) accumulates one entry per unique data hash forever.
+# Default cap 64 is plenty for typical Shor + windowed-arithmetic patterns
+# (each mulmod's distinct (a, N) needs one entry; sweep over a-values
+# exhausts roughly L²/2 distinct constants in the worst case).
+#
+# `_ORACLE_TABLE_CACHE_ORDER` is the LRU queue: `front = oldest`, `back =
+# most recently used`. Hit moves the key to the back. Miss appends; evicts
+# from the front while size > max.
+const _OracleCacheKey = Tuple{UInt64, Int, Int}
+const _ORACLE_TABLE_CACHE = Dict{_OracleCacheKey, ReversibleCircuit}()
+const _ORACLE_TABLE_CACHE_ORDER = Vector{_OracleCacheKey}()
+const _ORACLE_TABLE_CACHE_MAX_SIZE = Ref(64)
+
+"""
+    oracle_cache_size() -> Int
+
+Current number of compiled QROM circuits cached by `oracle_table`.
+"""
+oracle_cache_size() = length(_ORACLE_TABLE_CACHE)
+
+"""
+    oracle_cache_max_size() -> Int
+
+Current cap on the `oracle_table` LRU cache. Default 64.
+"""
+oracle_cache_max_size() = _ORACLE_TABLE_CACHE_MAX_SIZE[]
+
+"""
+    set_oracle_cache_size!(n::Integer)
+
+Set the LRU cap for the `oracle_table` cache. Evicts the oldest entries
+immediately if the current size exceeds `n`. `n == 0` is allowed and
+disables caching (every call recompiles). Errors on negative `n`.
+"""
+function set_oracle_cache_size!(n::Integer)
+    n >= 0 || error("set_oracle_cache_size!: n must be ≥ 0, got $n")
+    _ORACLE_TABLE_CACHE_MAX_SIZE[] = Int(n)
+    _evict_oracle_cache_to_cap!()
+    return nothing
+end
+
+"""
+    clear_oracle_cache!()
+
+Empty the `oracle_table` LRU cache. Useful between long-running
+phases of a session to release compiled-circuit memory.
+"""
+function clear_oracle_cache!()
+    empty!(_ORACLE_TABLE_CACHE)
+    empty!(_ORACLE_TABLE_CACHE_ORDER)
+    return nothing
+end
+
+# Internal: evict from the front of the LRU queue until size ≤ cap.
+function _evict_oracle_cache_to_cap!()
+    cap = _ORACLE_TABLE_CACHE_MAX_SIZE[]
+    while length(_ORACLE_TABLE_CACHE_ORDER) > cap
+        oldest = popfirst!(_ORACLE_TABLE_CACHE_ORDER)
+        delete!(_ORACLE_TABLE_CACHE, oldest)
+    end
+    return nothing
+end
+
+# Internal: get-or-compute with LRU bookkeeping. On hit, move the key to
+# the back of the queue (most recently used); on miss, compute, insert,
+# and evict from the front if over cap.
+function _oracle_cache_get!(compute_fn, key::_OracleCacheKey)
+    if haskey(_ORACLE_TABLE_CACHE, key)
+        # Hit: promote to MRU. The findfirst is O(N) but N ≤ cap = 64
+        # by default, so this is cheap.
+        idx = findfirst(==(key), _ORACLE_TABLE_CACHE_ORDER)
+        idx === nothing || deleteat!(_ORACLE_TABLE_CACHE_ORDER, idx)
+        push!(_ORACLE_TABLE_CACHE_ORDER, key)
+        return _ORACLE_TABLE_CACHE[key]
+    end
+    # Miss: compute, insert, possibly evict. Return the computed value
+    # directly — when cap == 0 the just-inserted entry is evicted before
+    # we return, but the caller still needs the circuit for THIS call.
+    circuit = compute_fn()
+    _ORACLE_TABLE_CACHE[key] = circuit
+    push!(_ORACLE_TABLE_CACHE_ORDER, key)
+    _evict_oracle_cache_to_cap!()
+    return circuit
+end
 
 function oracle_table(f, x::QInt{W_in}, ::Val{W_out}) where {W_in, W_out}
     check_live!(x)
@@ -352,7 +438,7 @@ function oracle_table(f, x::QInt{W_in}, ::Val{W_out}) where {W_in, W_out}
     # which `f` produced them) share a circuit — this is correct because the
     # circuit depends only on the table contents, not on the function body.
     key = (hash(data), W_in, W_out)
-    circuit = get!(_ORACLE_TABLE_CACHE, key) do
+    circuit = _oracle_cache_get!(key) do
         wa = WireAllocator()
         gates = ReversibleGate[]
         idx_wires_b = _bennett_wa_allocate!(wa, W_in)
