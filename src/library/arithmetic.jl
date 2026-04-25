@@ -582,7 +582,8 @@ and the operation is deterministic per shot.
 function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
                                   y::QInt{Ly}; window::Int,
                                   ctrls::Tuple = (),
-                                  mbu::Bool = false) where {W, Cpad, Wtot, Ly}
+                                  mbu::Bool = false,
+                                  mbu_compute::Bool = false) where {W, Cpad, Wtot, Ly}
     check_live!(target); check_live!(y)
     target.reg.ctx === y.ctx ||
         error("plus_equal_product_mod!: target and y must share a context")
@@ -591,6 +592,15 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
         error("plus_equal_product_mod!: window=$window exceeds Ly=$Ly")
     Ly < 62 ||
         error("plus_equal_product_mod!: Ly=$Ly exceeds 2^i arithmetic margin (max 61)")
+    # Berry App B forward (mbu_compute) consumes the kM scratch via App C
+    # X-basis measurement — there is no naive XOR-undo path for the kM-wide
+    # post-state, so the matching reverse must be measurement-based. Force
+    # mbu=true when mbu_compute=true rather than silently flip it.
+    if mbu_compute && !mbu
+        error("plus_equal_product_mod!: mbu_compute=true requires mbu=true " *
+              "(the App B forward post-state is consumed via App C X-basis " *
+              "measurement; no naive XOR uncompute exists)")
+    end
     ctx = target.reg.ctx
     N = Int(target.modulus)
 
@@ -610,10 +620,18 @@ function plus_equal_product_mod!(target::QCoset{W, Cpad, Wtot}, k::Integer,
     # uncomputation: bead Sturm.jl-9ij. Changes the reverse cost from
     # 2^w − 1 to ⌈2^w/k⌉ + k Toffoli ≈ 2√(2^w), at the cost of
     # 2^⌈w/2⌉ temporary ancillae per iteration. Orthogonal to `ctrls`.
+    #
+    # mbu_compute=true additionally swaps the FORWARD QROM for Berry et al.
+    # 2019 App B Theorem 2 clean-ancilla compute (bead Sturm.jl-vbz). Forward
+    # cost goes from 4·(2^w - 1) (Bennett-compiled qrom_lookup_xor!) to
+    # 4·(2^Whi - 1) + Wtot·(k_b - 1) where k_b is the App B compression
+    # factor (default 2 — see _pep_mod_iter!). Falls back to plain mbu when
+    # the iteration's window is too small (w < 2) or the kM stacked table
+    # overflows UInt64 (k_b · Wtot > 64).
     i = 0
     while i < Ly
         w = min(window, Ly - i)
-        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N, ctrls, mbu)
+        _pep_mod_iter!(target, k_mod_N, y, i, Val(w), N, ctrls, mbu, mbu_compute)
         i += w
     end
 
@@ -639,7 +657,8 @@ end
                                   ::Val{w},
                                   N::Int,
                                   ctrls::Tuple,
-                                  mbu::Bool) where {W, Cpad, Wtot, Ly, w}
+                                  mbu::Bool,
+                                  mbu_compute::Bool) where {W, Cpad, Wtot, Ly, w}
     ctx = target.reg.ctx
     n_entries = 1 << w
 
@@ -656,6 +675,54 @@ end
         entries[j + 1] = UInt64(v)
     end
     tbl = QROMTable{w, Wtot}(entries, N)
+
+    # Pick the App B compression factor k_b ∈ {2, 4, 8, …} that minimises the
+    # analytical Sturm forward Toffoli cost
+    #     cost(k) = 4·(2^(w − log₂k) − 1) + Wtot·(k − 1)         (k_b ≥ 2)
+    #     cost(1) = 4·(2^w − 1)                                  (no App B)
+    # subject to the storage cap k·Wtot ≤ 64. The 4× factor is Sturm's
+    # Bennett-compile overhead on the inner lookup vs the raw Babbush-Gidney
+    # unary iteration the Berry paper assumes (see `bd memories
+    # app-b-vs-bennett-overhead`). Falls back to no-App-B when nothing wins.
+    k_b = 1
+    if mbu_compute && w >= 2
+        no_app_b_cost = 4 * ((1 << w) - 1)
+        best_cost = no_app_b_cost
+        kk = 2
+        while kk * Wtot <= 64 && kk < (1 << w)
+            whi = w - trailing_zeros(kk)
+            cost = 4 * ((1 << whi) - 1) + Wtot * (kk - 1)
+            if cost < best_cost
+                best_cost = cost
+                k_b = kk
+            end
+            kk <<= 1
+        end
+    end
+    use_app_b = k_b >= 2
+
+    if use_app_b
+        kM = k_b * Wtot
+        scratch_full = QInt{kM}(0)
+        qrom_lookup_xor_cleanancilla!(scratch_full, y_win, tbl; k=k_b)
+
+        # Non-owning view of the first Wtot wires — these hold T[y_win] per
+        # App B Theorem 2's "position 0 = f(addr)". The QFT-add only sees
+        # the M-qubit slice; the other (k_b - 1)·Wtot wires of scratch_full
+        # hold permuted other table entries that get consumed by the
+        # matching App C measurement-based reverse below.
+        scratch_view_wires = ntuple(j -> scratch_full.wires[j], Val(Wtot))
+        scratch_view = QInt{Wtot}(scratch_view_wires, ctx, false)
+
+        superpose!(target.reg)
+        _apply_ctrls(ctrls) do
+            add_qft_quantum!(target.reg, scratch_view)
+        end
+        interfere!(target.reg)
+
+        qrom_lookup_uncompute_meas_cleanancilla!(scratch_full, y_win, tbl; k=k_b)
+        return nothing
+    end
 
     scratch = QInt{Wtot}(0)
     qrom_lookup_xor!(scratch, y_win, tbl)        # unconditional — scratch = T[y_win]
@@ -925,6 +992,308 @@ function qrom_lookup_uncompute_meas!(scratch::QInt{Wtot},
     # Ancillae back to |1, 0, 0, ..., 0⟩ → |0, 0, ..., 0⟩; release.
     X!(anc[1])
     for a in anc; ptrace!(a); end
+
+    return nothing
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sturm.jl-vbz Phase D4 — clean-ancilla forward QROM compute.
+#
+# Ground truth: Berry, Gidney, Motta, McClean, Babbush (2019) arXiv:1902.02134,
+# "Qubitization of arbitrary basis quantum chemistry leveraging sparsity and
+# low rank factorization", Appendix B Theorem 2 (Eq. 66).
+# docs/physics/berry_gidney_motta_mcclean_babbush_2019_qubitization.pdf
+#
+# Pairs with the App C measurement-based uncompute already shipped in 9ij to
+# give a sqrt-Toffoli pair: forward ⌈d/k⌉ + M(k-1), reverse ⌈d/k⌉ + k.
+#
+# Note (vbz memory): Berry's forward count assumes a unit-cost-per-entry
+# table lookup (raw Babbush-Gidney unary iteration). Sturm's
+# `qrom_lookup_xor!` is Bennett-compiled and carries a 4× overhead, so the
+# practical Sturm App B forward cost is `4·(2^Whi - 1) + M·(k-1)` vs the
+# original `4·(2^Win - 1)`. The headline saving at k=2 is ~25%, not the
+# ~70% the bare Berry count implies. See `bd memories app-b-vs-bennett-overhead`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    _app_b_sigma_perm(l::Integer, i::Integer, c::Integer) -> Int
+
+Classical model of the σ_l permutation produced by the App B "swap subroutine
+S": after `S` is applied to k = 2^c registers controlled by the bottom log k
+bits of address (= `l`), position `i` holds the data that was originally at
+position `σ_l(i)`. So if before S we lookup the high address `h` and store
+`f(h·k + j)` at position `j`, then after S, position `i` holds
+`f(h·k + σ_l(i))` and in particular position 0 holds `f(h·k + l) = f(j)`
+where `j = h·k + l`.
+
+The descending-tree pair-block-swap construction: at level p ∈ {c-1, …, 0}
+(high bit first), if bit p of `l` is set, swap pairs at distance 2^p within
+the leading 2^(p+1) positions. Position `i` is touched by level p iff
+`i < 2^(p+1)`, i.e., for all p ≥ highest-set-bit(i). Therefore
+
+    σ_l(i) = i ⊻ (l & mask_i),
+    mask_i = ~((1 << h_i) - 1) & (k - 1)
+    h_i = floor(log_2 i)        (with the convention h_0 = -1 so mask_0 = k-1)
+
+For `i = 0` the formula collapses to `σ_l(0) = l`, recovering r_l → r_0.
+
+Pure classical helper — no quantum operations.
+"""
+function _app_b_sigma_perm(l::Integer, i::Integer, c::Integer)::Int
+    c >= 1 || error("_app_b_sigma_perm: c must be ≥ 1, got $c")
+    i_int = Int(i); l_int = Int(l)
+    k = 1 << c
+    (0 <= i_int < k) || error("_app_b_sigma_perm: i=$i_int outside [0, $k)")
+    (0 <= l_int < k) || error("_app_b_sigma_perm: l=$l_int outside [0, $k)")
+    if i_int == 0
+        return l_int   # h_0 ≡ -1 ⇒ mask is all c bits ⇒ σ_l(0) = l
+    end
+    # h_i = highest set bit position (0-indexed). For Int64 / UInt: 8·8 - 1 - leading_zeros.
+    h_i = 8 * sizeof(Int) - 1 - leading_zeros(i_int)
+    mask = ~((1 << h_i) - 1) & (k - 1)
+    return i_int ⊻ (l_int & mask)
+end
+
+"""
+    _app_b_swap_cascade!(scratch_full::QInt{N}, addr_lo::QInt{Wlo}, M::Int)
+
+In-place pair-block-swap cascade on the kM-qubit scratch register, controlled
+on the log k bits of `addr_lo`. Implements the App B swap subroutine S:
+after the cascade, the M-qubit block at position 0 holds whatever was at
+position `Int(addr_lo)` before the cascade.
+
+Cost: M·(k-1) Toffoli + 2M·(k-1) CNOT, where k = 2^Wlo. The swap order
+is high-bit-first (descending p ∈ {Wlo-1, …, 0}); at each level p, swap
+register pairs at distance 2^p within the leading 2^(p+1) registers.
+
+Self-inverse: the same cascade applied a second time undoes the first
+(Fredkin is self-inverse, and the level order is symmetric — high-then-low
+mirrors low-then-high since each level commutes with itself).
+"""
+function _app_b_swap_cascade!(scratch_full::QInt{N},
+                                addr_lo::QInt{Wlo},
+                                M::Integer) where {N, Wlo}
+    check_live!(scratch_full); check_live!(addr_lo)
+    scratch_full.ctx === addr_lo.ctx ||
+        error("_app_b_swap_cascade!: scratch_full and addr_lo must share a context")
+    M_int = Int(M)
+    k = 1 << Wlo
+    N == k * M_int ||
+        error("_app_b_swap_cascade!: N=$N must equal k·M = $(k*M_int) (k=2^Wlo=$k, M=$M_int)")
+    ctx = scratch_full.ctx
+
+    # Descending tree: high bit first. At level p ∈ {Wlo-1, …, 0}, conditional
+    # on bit p of addr_lo, swap register pairs at distance 2^p within the
+    # leading 2^(p+1) registers. Each register is M qubits; each register-
+    # level swap is M Fredkins.
+    for p in (Wlo - 1):-1:0
+        ctrl_wire = addr_lo.wires[p + 1]
+        block_size = 1 << p          # = number of pairs at this level
+        for j in 0:(block_size - 1)
+            base_a = j * M_int
+            base_b = (j + block_size) * M_int
+            for m in 1:M_int
+                ctrl = QBool(ctrl_wire,                ctx, false)
+                a    = QBool(scratch_full.wires[base_a + m], ctx, false)
+                b    = QBool(scratch_full.wires[base_b + m], ctx, false)
+                _fredkin!(ctrl, a, b)
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _stacked_permuted_table(tbl::QROMTable{Win, M, NumEntries}, k::Integer)
+        -> Vector{UInt64}
+
+Classical preprocessor: build the d-entry kM-bit table whose entry j is the
+kM-bit concatenation matching `scratch_full` at the end of the App B
+forward primitive when called at address `j`. Used by
+`qrom_lookup_uncompute_meas_cleanancilla!` to phase-fix `addr` against the
+right effective lookup value.
+
+For each address `j` ∈ [0, d) with `l = j mod k`, `h = j div k`, the stacked
+entry packs `tbl[h·k + σ_l(i)]` into bits `[i·M, (i+1)·M)` for i ∈ [0, k).
+Bit i·M of position 0 holds `tbl[j]`'s LSB (the user-visible f(j)).
+
+Returns `Vector{UInt64}` (length d, each element a kM-bit packed value).
+"""
+function _stacked_permuted_table(tbl::QROMTable{Win, M, NumEntries},
+                                  k::Integer
+                                  )::Vector{UInt64} where {Win, M, NumEntries}
+    k_int = Int(k)
+    k_int >= 2 && (k_int & (k_int - 1)) == 0 ||
+        error("_stacked_permuted_table: k=$k_int must be a power of 2 ≥ 2")
+    c = trailing_zeros(k_int)
+    c < Win || error(
+        "_stacked_permuted_table: k=$k_int (= 2^$c) must satisfy k < 2^Win=2^$Win")
+    kM = k_int * M
+    kM <= 64 || error(
+        "_stacked_permuted_table: k·M=$kM exceeds the UInt64 storage limit (64). " *
+        "Reduce k or M (or extend to UInt128 if a future caller needs it).")
+    d = NumEntries
+    block_mask = (UInt64(1) << M) - UInt64(1)
+    out = Vector{UInt64}(undef, d)
+    @inbounds for j in 0:(d - 1)
+        l = j & (k_int - 1)
+        h = j >> c
+        word = UInt64(0)
+        for i in 0:(k_int - 1)
+            src_idx = h * k_int + _app_b_sigma_perm(l, i, c)
+            entry = tbl.data[src_idx + 1] & block_mask
+            word |= entry << (i * M)
+        end
+        out[j + 1] = word
+    end
+    return out
+end
+
+"""
+    qrom_lookup_xor_cleanancilla!(scratch_full::QInt{N}, addr::QInt{Win},
+                                    tbl::QROMTable{Win, M, NumEntries};
+                                    k::Int) -> scratch_full
+
+Berry et al. 2019 App B Thm 2 (Eq. 66) clean-ancilla forward QROM compute.
+Allocates `scratch_full` of width `N = k·M` (caller-owned), and after
+return: bits `[0, M)` of `scratch_full` hold `tbl[Int(addr)]`; bits
+`[M, kM)` hold permuted other table entries (specifically
+`tbl[h·k + σ_l(i)]` at bit-block `i` for i ∈ [1, k)). The "other" bits are
+NOT zeroed — they are consumed by the matching
+[`qrom_lookup_uncompute_meas_cleanancilla!`](@ref) reverse call.
+
+# Cost
+`⌈2^Win/k⌉ + M·(k − 1)` Toffoli (Berry Eq. 66 abstract count). Sturm's
+inner lookup is Bennett-compiled with a 4× overhead vs raw Babbush-Gidney
+unary iteration, so the practical Toffoli count is
+`4·(2^Whi − 1) + M·(k − 1)` with `Whi = Win − log₂ k`.
+
+# Preconditions (fail-loud per Rule 1)
+  * `k` is a power of 2 with `1 < k < 2^Win`.
+  * `N == k·M`.
+  * `k·M ≤ 64` (UInt64 storage limit on the stacked table entries).
+  * `scratch_full`, `addr`, and `tbl` share a context.
+  * `scratch_full` initial state is `|0⟩^N`.
+
+# References
+  * Berry, Gidney, Motta, McClean, Babbush (2019), "Qubitization of arbitrary
+    basis quantum chemistry leveraging sparsity and low rank factorization",
+    arXiv:1902.02134, Appendix B Thm 2 (Eq. 66).
+  * Procedure described p. 25; the matching figure (Fig 4) shows the
+    *dirty*-ancilla App A variant. App B is described in text only.
+"""
+function qrom_lookup_xor_cleanancilla!(scratch_full::QInt{N},
+                                         addr::QInt{Win},
+                                         tbl::QROMTable{Win, M, NumEntries};
+                                         k::Int
+                                         ) where {N, Win, M, NumEntries}
+    check_live!(scratch_full); check_live!(addr)
+    scratch_full.ctx === addr.ctx ||
+        error("qrom_lookup_xor_cleanancilla!: scratch_full and addr must share a context")
+    k >= 2 && (k & (k - 1)) == 0 ||
+        error("qrom_lookup_xor_cleanancilla!: k=$k must be a power of 2 ≥ 2")
+    Wlo = trailing_zeros(k)
+    Wlo < Win ||
+        error("qrom_lookup_xor_cleanancilla!: k=$k (= 2^$Wlo) must satisfy k < 2^Win = 2^$Win")
+    Whi = Win - Wlo
+    N == k * M ||
+        error("qrom_lookup_xor_cleanancilla!: scratch_full width N=$N must equal k·M=$(k*M) " *
+              "(k=$k, M=$M)")
+    kM = k * M
+    kM <= 64 ||
+        error("qrom_lookup_xor_cleanancilla!: k·M=$kM exceeds 64-bit table-entry storage. " *
+              "Reduce k or M.")
+    ctx = scratch_full.ctx
+    n_h = 1 << Whi
+
+    # ── Step 1: build the stacked table T_stacked indexed by h.
+    # T_stacked[h] has bits [i·M, (i+1)·M) = tbl[h·k + i] for i ∈ [0, k).
+    # This is a one-shot classical preprocessing — no quantum ops yet.
+    block_mask = (UInt64(1) << M) - UInt64(1)
+    stacked_entries = Vector{UInt64}(undef, n_h)
+    @inbounds for h in 0:(n_h - 1)
+        word = UInt64(0)
+        for i in 0:(k - 1)
+            entry = tbl.data[h * k + i + 1] & block_mask
+            word |= entry << (i * M)
+        end
+        stacked_entries[h + 1] = word
+    end
+    tbl_stacked = QROMTable{Whi, kM}(collect(Int, stacked_entries))
+
+    # Non-owning view of addr's high bits (top Whi qubits) and low bits.
+    addr_hi_wires = ntuple(i -> addr.wires[Wlo + i], Val(Whi))
+    addr_hi = QInt{Whi}(addr_hi_wires, ctx, false)
+    addr_lo_wires = ntuple(i -> addr.wires[i], Val(Wlo))
+    addr_lo = QInt{Wlo}(addr_lo_wires, ctx, false)
+
+    # ── Step 2: T — single lookup at addr_hi targeting all kM scratch bits.
+    qrom_lookup_xor!(scratch_full, addr_hi, tbl_stacked)
+
+    # ── Step 3: S — pair-block-swap cascade controlled on addr_lo.
+    _app_b_swap_cascade!(scratch_full, addr_lo, M)
+
+    return scratch_full
+end
+
+"""
+    qrom_lookup_uncompute_meas_cleanancilla!(scratch_full::QInt{N},
+                                              addr::QInt{Win},
+                                              tbl::QROMTable{Win, M, NumEntries};
+                                              k::Int) -> nothing
+
+Matching reverse for [`qrom_lookup_xor_cleanancilla!`](@ref). X-basis
+measures all `kM` wires of `scratch_full`, applies an addr phase fixup
+against the σ_l-permuted stacked table so the joint forward+reverse pair
+is identity on `addr` (up to a shot-dependent global phase). Internally
+delegates to `qrom_lookup_uncompute_meas!` with the stacked table.
+
+# Cost
+`⌈2^Win/k_inner⌉ + k_inner ≈ 2·√(2^Win)` Toffoli for the App C clean-
+ancilla phase fixup with optimal `k_inner = 2^⌈Win/2⌉`.
+
+# Preconditions
+  Same as `qrom_lookup_xor_cleanancilla!` plus `scratch_full` must currently
+  hold the App B forward post-state (i.e., the partner forward call was
+  immediately prior, with the same `addr`, `tbl`, and `k`).
+
+# Postconditions
+  * `scratch_full` is consumed (all wires deallocated via measurement).
+  * `addr` is left in its pre-forward state up to a shot-dependent global
+    phase.
+"""
+function qrom_lookup_uncompute_meas_cleanancilla!(scratch_full::QInt{N},
+                                                    addr::QInt{Win},
+                                                    tbl::QROMTable{Win, M, NumEntries};
+                                                    k::Int
+                                                    ) where {N, Win, M, NumEntries}
+    check_live!(scratch_full); check_live!(addr)
+    scratch_full.ctx === addr.ctx ||
+        error("qrom_lookup_uncompute_meas_cleanancilla!: scratch_full and addr must share a context")
+    k >= 2 && (k & (k - 1)) == 0 ||
+        error("qrom_lookup_uncompute_meas_cleanancilla!: k=$k must be a power of 2 ≥ 2")
+    Wlo = trailing_zeros(k)
+    Wlo < Win ||
+        error("qrom_lookup_uncompute_meas_cleanancilla!: k=$k (= 2^$Wlo) must satisfy k < 2^Win = 2^$Win")
+    N == k * M ||
+        error("qrom_lookup_uncompute_meas_cleanancilla!: scratch_full width N=$N must equal k·M=$(k*M) " *
+              "(k=$k, M=$M)")
+    kM = k * M
+    kM <= 64 ||
+        error("qrom_lookup_uncompute_meas_cleanancilla!: k·M=$kM exceeds 64-bit table-entry storage.")
+
+    # Build the σ-permuted stacked table indexed by FULL addr j ∈ [0, 2^Win).
+    # Entry j at bit-block i holds tbl[h·k + σ_l(i)] where h = j÷k, l = j mod k.
+    # This is the kM-bit value of `scratch_full` after the App B forward call
+    # at address j; X-measuring against this table is exactly the App C
+    # uncompute pattern (already implemented for arbitrary table widths).
+    stacked_perm = _stacked_permuted_table(tbl, k)
+    tbl_eff = QROMTable{Win, kM}(collect(Int, stacked_perm))
+
+    # Delegate to the existing measurement-based uncompute. It X-measures
+    # all `kM` wires of `scratch_full`, computes phase_bits[j] = parity(m &
+    # tbl_eff[j]), and applies the App C clean-ancilla phase fixup to addr.
+    qrom_lookup_uncompute_meas!(scratch_full, addr, tbl_eff)
 
     return nothing
 end
