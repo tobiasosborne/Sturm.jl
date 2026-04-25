@@ -4,6 +4,71 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 70: bead `Sturm.jl-t1v` closed, oracle-table LRU cache
+
+Headline: `_ORACLE_TABLE_CACHE` in Bennett's bridge is now bounded LRU
+(default cap 64). Adds public management API. Stops the unbounded growth
+that long sessions sweeping over distinct lookup tables would otherwise
+exhibit.
+
+### What landed
+
+  * `src/bennett/bridge.jl` — replace the bare `Dict{...}` cache with:
+      - `_ORACLE_TABLE_CACHE` :: `Dict{key, ReversibleCircuit}`
+      - `_ORACLE_TABLE_CACHE_ORDER` :: `Vector{key}` (LRU queue: front =
+        oldest, back = MRU)
+      - `_ORACLE_TABLE_CACHE_MAX_SIZE` :: `Ref{Int}` (default 64)
+    Internal `_oracle_cache_get!(compute_fn, key)` does:
+      hit → promote key to MRU; miss → compute, append, evict from front
+      while size > cap. Returns the computed value directly so cap=0
+      degenerates cleanly (every call recompiles).
+  * Public API: `oracle_cache_size()`, `oracle_cache_max_size()`,
+    `set_oracle_cache_size!(n)`, `clear_oracle_cache!()`. Exported from
+    `src/Sturm.jl`.
+  * `test/test_oracle_cache_lru.jl` (new) — 18 assertions across 6
+    testsets: API exists, clear empties, hit-no-growth, eviction caps,
+    set-shrinks-immediately, LRU semantics (re-access promotes), cap=0
+    sanity. Wired into runtests.jl.
+
+### Non-obvious traps
+
+  * **Hash collisions in tests at small W_out.** First-pass tests used
+    `oracle_table(k -> k + offset, x, Val(2))` — the masked W_out=2
+    output cycles every 4 offsets, so distinct-`offset` calls produced
+    identical tables and identical hashes; cache size capped at 4
+    instead of the expected N. Fix: switch to `Val(8)` (256-value
+    range) so the offset variation maps to distinct table contents.
+    **Lesson: when testing a content-hashed cache, compute the hash
+    inputs explicitly instead of relying on "different `f` produces
+    different table" — Bennett masks to W_out bits before hashing.**
+  * **`return circuit` not `return _ORACLE_TABLE_CACHE[key]`.** When
+    cap=0 the just-inserted entry is evicted before returning; looking
+    it up in the dict at that point would `KeyError`. Returning the
+    locally-computed `circuit` makes the cap=0 path correct (every
+    call recompiles, every call gets the right circuit). Caught
+    during the cap=0 sanity testset.
+  * **`findfirst(==(key), order)` is O(N).** For the 64-entry default
+    cap that's negligible. For very-large caps it would matter; the
+    bead description targets ~64, so this is fine. A `Dict{key, idx}`
+    side-table would O(1) the move-to-MRU but adds bookkeeping
+    complexity for no real win at typical cap.
+
+### Verification
+
+  - test_oracle_cache_lru.jl: 18/18 ✓
+  - test_bennett_integration.jl: 156/3/11 — exactly the same as
+    pre-bead baseline (the 3 fail / 11 error are pre-existing
+    `_CIRCUIT_INC.n_wires == 41` artifacts; unrelated to this bead)
+
+### Open follow-ons
+
+  - **Env-gate for the cache size** (no bead yet) — mirror
+    `STURM_COMPACT_VERIFY` with `STURM_ORACLE_CACHE_SIZE`. Useful for
+    long-running batch jobs where the right cap depends on workload
+    shape and recompiling on session start would be tedious. P4.
+
+---
+
 ## 2026-04-25 — Session 69: bead `Sturm.jl-2fg` closed, contiguous-live shortcut
 
 Headline: small perf shortcut in `_compact_scatter!(::EagerContext)`. When
