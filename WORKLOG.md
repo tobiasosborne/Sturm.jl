@@ -4,6 +4,164 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session end: handoff for next agent
+
+Two beads closed this session — `eiq` (CasesNode consumer fail-loud,
+Session 62) and `vbz` (Berry App B clean-ancilla forward QROM, Session 63).
+**6oc criterion (d) is now ✓ at L=8 (exact 0.500×), L=10, and L=12.**
+
+Orient yourself before touching anything:
+
+```bash
+git log --oneline -8       # 2026-04-25 commits start at 9d95ef0
+bd ready -n 10              # open work queue (30 ready as of session end)
+bd list --status=open -n 30 # full open set (38 open, 8 blocked, 0 in progress)
+bd stats                    # high-level counts
+```
+
+### Where the project stands as of this commit (9d95ef0)
+
+  * **`vbz` closed** — Berry App B Thm 2 (Eq. 66) clean-ancilla forward
+    QROM landed end-to-end. New primitives:
+    `qrom_lookup_xor_cleanancilla!` (public) and
+    `qrom_lookup_uncompute_meas_cleanancilla!`. New kwarg
+    `mbu_compute::Bool=false` on `plus_equal_product_mod!` and
+    `_shor_mulmod_E_controlled!`. Dynamic `k_b ∈ {2, 4, 8, …}` selection
+    inside `_pep_mod_iter!` (cost-gated, auto-falls-back to no-App-B
+    when it doesn't pay). Bench
+    `probe_toffoli_vbz_sweep.jl` confirms 6oc(d) closure across L ∈
+    {8, 10, 12}. Tests: 317 net-new assertions, all green; no regressions.
+  * **`eiq` closed** — CasesNode consumer fail-loud / warn-once policy.
+    Channel compat ctor and `gate_cancel(::Vector{DAGNode})` overload
+    now error on non-HotNode (was silent strip). `_draw_node!` /
+    `_paint_node_px!` for CasesNode add `@warn maxlog=1`. New test file
+    `test/test_cases_consumer_policy.jl` pins the four behaviours.
+    Note: bead's criterion (a) [openqasm.jl errors] was OBSOLETE — the
+    `tak` bead landed dynamic-circuit emission earlier; preserved.
+  * **6oc(d) — DONE.** vbz bench at session-end weighting:
+
+    | L  | best ratio (mbu_compute=true) | c_mul | k_b |
+    |----|--------|---|---|
+    | 8  | **0.500×** (exact) | 5 | 4 |
+    | 10 | 0.456× | 4 | 2 |
+    | 12 | 0.414× | 5 | 4 |
+
+    L=8 closure is *tight* under Session 50b T-proxy weighting
+    (`7·CCX + 14·CCCX + rot + 2·crot + 6·ccrot`). Future tightening:
+    `Sturm.jl-ao1` (filed this session, P3) — hand-rolled
+    Babbush-Gidney unary iteration would bypass Bennett's 4× overhead
+    on the inner T lookup and unlock another ~75% on forward cost.
+
+### Open beads most worth picking up next
+
+The `vbz`-was-the-headline P2 has been retired. Top of the queue now:
+
+1. **`Sturm.jl-059` (P2)** — perf bug. `_shor_mulmod_E_controlled!` at
+   N=15 takes ~21 min/call. Structural simulator-guts work; blocks
+   6oc(a)(b)(c). Hard but high-value. Session 49 WORKLOG has profiler
+   notes; Session 50 pivoted to Toffoli-count metrics because of this.
+   Related: `Sturm.jl-2i0` (task_local_storage → ScopedValue).
+2. **`Sturm.jl-ao1` (P3, NEW)** — hand-rolled Babbush-Gidney unary
+   iteration to bypass Bennett's 4× overhead. Filed at vbz close.
+   Would push the L=8 6oc(d) ratio well below 0.500× (current
+   closure is exact). Ground truth at
+   `docs/physics/babbush_2018_qrom_linear_T.pdf` §III.C Fig 10. Scope:
+   one new primitive (`qrom_lookup_xor_unary!` or kwarg on existing)
+   built directly from the 4 primitives + when() / `_fredkin!`.
+3. **Qudit track** (`csw, 2bf, p38, mle, os4, jba, dj3, …`) — all
+   unblocked since Session 57's QMod{5} Ry land; parallel to the
+   Shor critical path. Good if you want a bead with no dependencies
+   on the windowed-arithmetic / Bennett surface.
+4. **`Sturm.jl-7ab` (P2)** — Pass registry / DAG transformation API.
+   Sturm wants to ship publishable circuit-construction passes as
+   first-class IR transforms. This bead sets up the API.
+5. **`Sturm.jl-bkv` (P2, speculative)** — TracingContext speculative
+   execution tracer for `if Bool(q)`. Research-y; would unlock the
+   PRD §P4 promise of "if q emits the implicit-cast warning then
+   takes both arms in tracing". Cassette/IRTools territory.
+
+### Non-obvious traps from this session (write these down)
+
+  * **Stale bead descriptions decay fast.** `vbz` cited Berry "Fig 4"
+    — Fig 4 is App A (dirty); App B is text-only on p.25. `eiq`
+    cited an `openqasm.jl` line that had already been fixed by the
+    `tak` bead months earlier. **Lesson: diff every old bead's
+    description against the current source before scoping.**
+  * **Sturm's `qrom_lookup_xor!` carries a 4× Bennett-compile
+    overhead** vs the bare Babbush-Gidney unary iteration tree the
+    Berry paper assumes. Practical Sturm savings from App B at k_b=2
+    are ~25%, not the ~70% the paper's bare counts imply. The
+    dynamic-k_b heuristic is what made up the rest of the difference
+    at L=8. Saved as `bd memories app-b-vs-bennett-overhead`.
+  * **App B's swap subroutine S** is described as "a series of Mk
+    controlled swaps" in the paper but is actually a *descending
+    tree of pair-block-swaps* with k−1 register-level swaps total.
+    Closed-form σ_l permutation: `σ_l(i) = i ⊻ (l & mask_i)` with
+    `mask_i = ~((1<<h_i) - 1) & (k−1)`. Verified k ∈ {1..4}
+    brute-force; `_app_b_sigma_perm` ships this.
+  * **Hardcoded k_b regresses at small w.** When `M ≥ 2^(w+1)`,
+    App B at k_b=2 costs MORE than the no-App-B baseline. The
+    dynamic-k_b cost-gate auto-falls-back. If a future caller uses
+    `mbu_compute=true` directly without the analytical gate, the
+    same regression returns. Saved as `bd memories vbz-dynamic-k-b`.
+  * **`@cases` macro existed but I almost missed it.** When writing
+    the new vbz primitives I considered a custom `if is_tracing`
+    branch on Bool(q); checked `qrom_lookup_uncompute_meas!` and
+    saw the existing TracingContext fallback (X-basis substitution
+    + canonical phase_bits). That path inherits cleanly through the
+    `qrom_lookup_uncompute_meas_cleanancilla!` delegate. No new
+    tracing branch needed.
+  * **The Read tool can't open WORKLOG.md whole** (now ~360 KB,
+    over the 256 KB cap). Read the head + tail with `offset/limit`
+    to orient — handoff entries always live near the top, archived
+    sessions are linked from `WORKLOG-archive.md`.
+
+### Environment (inherit these — unchanged from Session 61)
+
+  * `LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so`
+  * `OMP_NUM_THREADS=16` (strict, per memory `orkan-thread-limit`)
+  * Never run the full test suite — per memory `sturm-jl-test-suite-slow`.
+    Run individual files via
+    `julia --project -e 'using Sturm; include("test/test_X.jl")'`.
+  * Julia runs strictly serial on this device (memory
+    `feedback_julia_serial_only`).
+  * Verbose output must eager-flush stage by stage (memory
+    `feedback_verbose_eager_flush`).
+
+### Memory entries worth knowing
+
+```
+bd memories beads-storage           # where beads live (Dolt-over-git)
+bd memories beads-sync              # dolt merge recipe
+bd memories orkan                   # OMP thread cap, LIBORKAN_PATH
+bd memories test-suite-slow         # never run Pkg.test()
+bd memories app-b-vs-bennett-overhead   # NEW: vbz Sturm-specific overhead
+bd memories vbz-dynamic-k-b         # NEW: dynamic k_b heuristic + L=8 tight closure
+bd memories oaa                     # BS+NLFT bug (Session 13)
+bd memories p9-axiom                # P9 can't be literal per Julia rules
+```
+
+### Latest commits on main (origin/main up to date)
+
+```
+9d95ef0 feat(vbz): Berry App B Thm 2 clean-ancilla forward QROM — closes 6oc(d) at L=8
+de79042 fix(eiq): CasesNode consumer fail-loud / warn-once policy
+4dbc49f docs(worklog): session handoff entry for next agent
+48640e8 feat(9ij-stage4): MBU Toffoli bench — closes 6oc (d) at L=10
+f1375aa feat(9ij-stage3): mbu kwarg on plus_equal_product_mod! + _shor_mulmod_E_controlled!
+99c845b feat(9ij-stage2): qrom_lookup_uncompute_meas! primitive
+58b6320 feat(9ij-stage1): _binary_to_unary! + _fredkin! helpers
+a7ad1ee docs(9ij-stage0): ground MBU construction in Berry et al. 2019 App C
+```
+
+### Session sequence for the full story
+
+Read sessions 62 → 63 in this WORKLOG for the current session's full
+narrative; 58 → 61 for the 9ij build-up that vbz lands on top of;
+earlier sessions in `WORKLOG-archive.md`.
+
+---
+
 ## 2026-04-25 — Session 63: close `vbz` — Berry App B clean-ancilla forward QROM
 
 Next pickup after `eiq`. The Session 61 handoff explicitly tagged this bead
