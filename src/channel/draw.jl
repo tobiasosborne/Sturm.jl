@@ -310,7 +310,13 @@ end
 function _draw_node!(grid, styles, node::CasesNode, col, offs, widths,
                      row_of, bit_rows, n_q_rows, unicode)
     # v1: emit a labelled placeholder glyph. Full recursive rendering of
-    # sub-branches is a v2 feature (see Sturm.jl-11a follow-up).
+    # sub-branches is a v2 feature (see Sturm.jl-11a follow-up). Warn once
+    # per source location so the placeholder isn't silently mistaken for a
+    # faithful rendering (Sturm.jl-eiq, Rule 1).
+    site = _first_user_frame(stacktrace(backtrace()))
+    @warn "Rendering CasesNode as a placeholder glyph (`c#?`) — sub-branch " *
+          "contents are not drawn (v1 limitation). For a faithful render, " *
+          "lower classical-control IR first via `optimise(ch, :deferred)`." maxlog=1 _id=(:sturm_cases_render_ascii, site.file, site.line) _file=string(site.file) _line=Int(site.line)
     c0 = offs[col+1] + 1
     label = "c#$(node.condition_id)?"
     chars = collect(label)

@@ -30,9 +30,23 @@ function gate_cancel(dag::Vector{HotNode})::Vector{HotNode}
     return result
 end
 
-# Backward compat: accept abstract Vector{DAGNode} (from tests/defer_measurements)
+# Backward compat: accept abstract Vector{DAGNode} (from tests / lowered output of
+# `defer_measurements`). Errors loudly on any non-HotNode (typically a
+# residual CasesNode — `defer_measurements(dag; strict=false)` may return one
+# if the branches contain a non-pure-quantum op). Silently stripping would
+# discard user-meaningful structure (Rule 1: fail fast, fail loud). See
+# Sturm.jl-eiq.
 function gate_cancel(dag::Vector{DAGNode})::Vector{HotNode}
-    gate_cancel(HotNode[n for n in dag if n isa HotNode])
+    bad = findfirst(n -> !(n isa HotNode), dag)
+    if bad !== nothing
+        node = dag[bad]
+        error("gate_cancel operates on HotNode only; got $(typeof(node)) at index " *
+              "$bad. Lower classical-control IR first via `defer_measurements(dag)` " *
+              "or `optimise(ch, :deferred)`. CasesNode is an intermediate IR form " *
+              "that must be either lowered to controlled gates or emitted directly " *
+              "(via the raw-DAG `to_openqasm`).")
+    end
+    gate_cancel(HotNode[n for n in dag])
 end
 
 # ── Merging ────────────────────────────────────────────────────────────
