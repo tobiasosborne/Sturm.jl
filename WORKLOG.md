@@ -4,6 +4,59 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 71: bead `Sturm.jl-zv1` closed, doc refresh
+
+Headline: CLAUDE.md, README.md, Sturm-PRD.md aligned with what Sturm IS
+today. Stale phase tables / "v0.1 POC" / "not yet implemented" framing
+removed; live code examples in the PRD that triggered the P2 implicit-
+cast warning rewritten with explicit `Bool(q)` / `Int(qi)` casts.
+
+### What landed
+
+  * **CLAUDE.md** — File Structure listing refreshed: adds `simulation/`,
+    `block_encoding/`, `qsvt/`, `bennett/`, `library/`, `passes/`,
+    `noise/`, `qecc/`, `hardware/` to the source tree; updates
+    `control/` to mention `cases`/`@cases`; updates `context/` to
+    mention `compact_state!`; updates `library/` to reference Shor +
+    windowed arithmetic.
+  * **README.md** — phase header changed from "All 12 phases" to "All
+    16 phases"; dropped the `v0.1 / Sturm.jl-???` placeholder around
+    `Int(q::QInt)` round-trip semantics; added a new "Additional
+    shipped features beyond the original plan" table covering
+    HardwareContext, cases/@cases, compact_state! (Eager + DM),
+    do-block syntax, STURM_COMPACT_VERIFY, oracle-table LRU API,
+    Shor variants, QSVT/QSP scaffolding.
+  * **Sturm-PRD.md §7.1** — extended the "what is shipped" list to
+    cover QMod / QCoset / QRunway, do-block allocation, four contexts
+    (HardwareContext added), `cases`/`@cases`, `compact_state!`,
+    `STURM_COMPACT_VERIFY`, oracle-table LRU + public API.
+  * **§7.2** — removed "hardware backends" from the unshipped list
+    (HardwareContext shipped); kept tensor-network. QMod removed from
+    the QArray + qudit-research framing.
+  * **§9.6** — entire section rewritten. The previous "ClassicalRef
+    convert returns false; options A/B/C; (C) is current" framing
+    predated `cases`/`@cases` shipping. Now describes `cases` as the
+    third distinct branching channel (alongside `if Bool(q)` and
+    `when(q)`), with the per-context behaviour table reproduced from
+    the README.
+  * **§Future directions hardware-compilation entry** — clarified
+    that `HardwareContext` + transport + idealised simulator have
+    shipped; future work is device adapters and OpenQASM dynamic-
+    circuit emission for vendor SDKs.
+  * **§8 example programs** — all live code with `x::Bool = q` /
+    `y::Int = qi` form converted to explicit `Bool(q)` / `Int(qi)`.
+    Sites: §5.1 eager-mode example, §8.1 Bell, §8.2 Teleport, §8.3
+    RUS, §8.4 arithmetic, §8.6 fourier_sample, §8.7 noise, §8.9
+    promotion (three sites). The two pedagogical references at lines
+    34 and 326 (the P2 explanation itself) stay — they explicitly
+    mention the implicit form as "permitted but emits the warning".
+
+### Verification
+
+Doc-only change; no code touched. Source tests unaffected.
+
+---
+
 ## 2026-04-25 — Session 70: bead `Sturm.jl-t1v` closed, oracle-table LRU cache
 
 Headline: `_ORACLE_TABLE_CACHE` in Bennett's bridge is now bounded LRU

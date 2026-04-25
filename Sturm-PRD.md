@@ -323,14 +323,14 @@ The same source code runs in two modes. The `CompilationContext` type determines
 
 ### 5.1 Eager mode (simulation)
 
-`QBool` wraps actual simulator state. Operations execute immediately. Type-boundary crossings (`x::Bool = q`) collapse the state and return a real `Bool`.
+`QBool` wraps actual simulator state. Operations execute immediately. Explicit type-boundary casts (`Bool(q)`) collapse the state and return a real `Bool`. (Implicit `x::Bool = q` form is permitted but emits the P2 implicit-cast warning — see §1, P2.)
 
 ```julia
 ctx = EagerContext(backend=:statevector)  # or :densitymatrix, :stabiliser
 q = QBool(ctx, 1/2)
 r = QBool(ctx, 0)
 r ⊻= q
-result::Bool = q    # actually collapses state, returns Bool
+result = Bool(q)    # explicit cast: actually collapses state, returns Bool
 ```
 
 ### 5.2 Tracing mode (compilation)
@@ -416,8 +416,8 @@ This is the Principle of Deferred Measurement expressed as a compiler rewrite ru
 
 Live, tested, exported:
 
-- **Core DSL** — `QBool`, `QInt{W}`, `WireID`, `ClassicalRef`; the four primitives; `when(q) do … end`; standard gates (`H!`, `X!`, `Y!`, `Z!`, `S!`, `T!`, `Sdg!`, `Tdg!`, `swap!`); quantum→classical casts (`Bool(q)`, `Int(q)`); runtime linearity via `consumed::Bool`.
-- **Three contexts** — `EagerContext` (Orkan statevector, 30-qubit hard cap), `DensityMatrixContext` (Orkan mixed-packed), `TracingContext` (DAG builder). `@context ctx begin … end` + task-local-storage propagation. Qubit recycling via `free_slots`.
+- **Core DSL** — `QBool`, `QInt{W}`, `QMod{d}`, `QCoset`, `QRunway`, `WireID`, `ClassicalRef`; the four primitives; `when(q) do … end`; `cases(q, then, [else_])` / `@cases` mid-circuit measurement primitive; standard gates (`H!`, `X!`, `Y!`, `Z!`, `S!`, `T!`, `Sdg!`, `Tdg!`, `swap!`); quantum→classical casts (`Bool(q)`, `Int(q)`); runtime linearity via `consumed::Bool`. Do-block allocation `QBool(p) do q … end` and `QInt{W}(value) do reg … end` mirrors `open(f, path) do …` (auto-ptrace on exit).
+- **Four contexts** — `EagerContext` (Orkan statevector, 30-qubit hard cap), `DensityMatrixContext` (Orkan mixed-packed), `TracingContext` (DAG builder), `HardwareContext` (transport over TCP/IPC; idealised in-process simulator + future device adapters). `@context ctx begin … end` + task-local-storage propagation. Qubit recycling via `free_slots`. `compact_state!(::EagerContext)` and `compact_state!(::DensityMatrixContext)` reclaim the n_qubits ratchet after Bennett ancilla bursts; auto-triggered from `deallocate!` at `length(free_slots) >= 2*GROW_STEP`. The freed-slot residual scan is governed by the `STURM_COMPACT_VERIFY` env-gate (default on).
 - **Channel IR** — `Channel{In,Out}` over an isbits `HotNode` union (25 bytes/element, 6 node types); `>>` and `⊗` composition; `trace(f, ::Val{N})`.
 - **Export + rendering** — OpenQASM 3.0, Unicode-ASCII terminal renderer with ANSI colour, pixel-art PNG renderer scaling to 1000+ wires, Birren industrial-safety colour palettes.
 - **Passes** — `gate_cancel` (O(n), per-wire candidate tables, Rz-through-CX-control commutation); `defer_measurements`; `optimise(ch, :cancel|:deferred|:all)`. Passes treat non-unitary nodes (Observe/Discard/Cases) as hard barriers — channel-discipline is respected.
@@ -427,18 +427,17 @@ Live, tested, exported:
 - **Hamiltonian simulation** — `Trotter1`, `Trotter2`, `Suzuki{K}` (any even K≥4 via `Val{K}` recursive dispatch), `QDrift`, `Composite` (Trotter + qDRIFT partition per Hagan-Wiebe 2023); unified `evolve!` API; `ising(N)`, `heisenberg(N)` models; analytic Trotter error bounds (commutator-scaling + naive) per Childs et al. 2021.
 - **Block encoding** — `BlockEncoding{N,A}`, `block_encode_lcu(H::PauliHamiltonian)`, PREPARE (Shende-Bullock-Markov rotation tree), SELECT (Barenco Toffoli cascade), product composition (GSLW19 Lemma 30).
 - **QSVT / QSP** — Berntson-Sünderhauf completion + Weiss + RHW Toeplitz factorisation + phase extraction (NLFT pipeline); reflection QSVT (`qsvt_combined_reflect!`), oblivious amplitude amplification (`oaa_amplify!`), `evolve!(reg, H, t, QSVT(ε))` end-to-end.
-- **Bennett.jl bridge** — `oracle(f, x::QInt{W})` compiles a classical Julia function to a reversible circuit; cost-model-selected memory strategy (Shadow / MUX / QROM / Feistel) and arithmetic strategy (`ripple` / `cuccaro` / `qcla` / `shift_add` / `karatsuba` / `qcla_tree` / `:tabulate` / `:expression`); `quantum(f)` pre-compiles; `estimate_oracle_resources` returns `(gates, toffoli, t_count, qubits, t_depth)` without executing; automatic control propagation inside `when()`.
+- **Bennett.jl bridge** — `oracle(f, x::QInt{W})` compiles a classical Julia function to a reversible circuit; cost-model-selected memory strategy (Shadow / MUX / QROM / Feistel) and arithmetic strategy (`ripple` / `cuccaro` / `qcla` / `shift_add` / `karatsuba` / `qcla_tree` / `:tabulate` / `:expression`); `quantum(f)` pre-compiles; `estimate_oracle_resources` returns `(gates, toffoli, t_count, qubits, t_depth)` without executing; automatic control propagation inside `when()`. `oracle_table` is a content-hashed LRU (default cap 64) with public `oracle_cache_size`, `set_oracle_cache_size!`, `clear_oracle_cache!` API.
 - **Tests** — ~600 testsets across 35 files; physics ground-truth verification (exact matrix exponentials vs simulator output) for every major algorithm; statistical N=1 000–10 000 measurement tests.
 
 ### 7.2 What is not shipped
 
 Axiom-aligned, not yet built (tracked as beads or noted in `KNOWN_ISSUES.md`):
 
-- `QMod{N}` modular arithmetic, `QArray{T,N}` arrays of quantum values.
-- Qutrit / arbitrary finite qudit contexts (`QTrit`, `QDit{D}`) — P7 finite arm.
+- `QArray{T,N}` arrays of quantum values. (`QMod{d}` is shipped, but the broader qudit primitive set — `T_d!` for non-prime d, qudit Bennett interop, qudit stabiliser codes — remains research-driven.)
 - Anyonic contexts (`QAnyon{C<:FusionCategory}`) — P7 topological arm.
 - Gaussian CV / bosonic / Fock contexts (`QMode`, displacement, squeezing, beamsplitters) — P7 infinite-dim arm.
-- Tensor-network and hardware backends — pillar 4 work.
+- Tensor-network backend — pillar 4 work. (Hardware backend has shipped via `HardwareContext` + transport.)
 - Full QECC syndrome extraction + correction; beyond-Steane codes (surface, colour) and fault-tolerant T.
 - Compile-time linearity checking (macro or compiler plugin) to replace the runtime `consumed::Bool`.
 - Stabiliser simulator backend.
@@ -492,8 +491,8 @@ a = QBool(ctx, 1/2)     # |+⟩
 b = QBool(ctx, 0)        # |0⟩
 b ⊻= a                   # Bell pair: (|00⟩ + |11⟩)/√2
 
-ra::Bool = a
-rb::Bool = b
+ra = Bool(a)
+rb = Bool(b)
 @assert ra == rb          # always correlated
 ```
 
@@ -507,8 +506,8 @@ function teleport!(q::QBool) :: QBool
 
     a ⊻= q
 
-    rq::Bool = q
-    ra::Bool = a
+    rq = Bool(q)
+    ra = Bool(a)
 
     if ra; b.θ += π; end
     if rq; b.φ += π; end
@@ -525,7 +524,7 @@ function rus_T!(target::QBool)
         anc ⊻= target
         anc ⊻= target
 
-        ok::Bool = anc
+        ok = Bool(anc)
 
         if ok; return; end
         target.φ -= π/4
@@ -542,7 +541,7 @@ a = QInt{8}(ctx, 42)
 b = QInt{8}(ctx, 17)
 s = a + b
 
-result::Int = s           # measurement via type boundary
+result = Int(s)           # explicit cast: measurement via type boundary
 @assert result == 59
 ```
 
@@ -603,7 +602,7 @@ function fourier_sample(oracle!::Function, n::Int) :: Int
     x = superpose(x)
     oracle!(x)
     x = interfere(x)
-    result::Int = x        # type boundary = measurement
+    result = Int(x)        # explicit cast: type boundary = measurement
     return result
 end
 
@@ -630,7 +629,7 @@ The library handles the quantum mechanics.
 @context DensityMatrixContext() begin
     q = QBool(1/2)          # |+⟩ as density matrix
     depolarise!(q, 0.1)     # 10% depolarising noise — just a channel
-    result::Bool = q         # measurement: type boundary, same as always
+    result = Bool(q)         # explicit cast: measurement, same as always
 end
 ```
 
@@ -664,13 +663,13 @@ a = QInt{8}(ctx, 42)
 
 # Classical 17 auto-promotes to QInt{8}(17) using a's context and width
 s = a + 17
-result::Int = s
+result = Int(s)
 @assert result == 59
 
 # Commutative: classical on either side
 b = QInt{8}(ctx, 10)
 t = 5 + b
-result2::Int = t
+result2 = Int(t)
 @assert result2 == 15
 
 # XOR with Bool: true = X gate, false = no-op
@@ -681,7 +680,7 @@ q ⊻= true                    # equivalent to X!(q)
 # Overflow wraps: 300 mod 256 = 44
 c = QInt{8}(ctx, 42)
 u = c + 300
-result3::Int = u
+result3 = Int(u)
 @assert result3 == 86         # (42 + 44) mod 256
 
 # Gates do NOT participate in promotion — they require exact quantum types
@@ -855,19 +854,39 @@ end
 
 ### 9.6 Handling `if` on ClassicalRef in tracing mode
 
-In tracing mode, `x::Bool = q` returns a `ClassicalRef`, not a real `Bool`. When the programmer writes `if x ... end`, Julia calls `Bool(x)` on the `ClassicalRef`.
+In tracing mode, `Bool(q)` returns a `ClassicalRef`, not a real `Bool`. When the programmer writes `if x ... end`, Julia calls `Bool(x)` on the `ClassicalRef` — and there is no way for tracing to capture both arms without source-level rewriting.
 
-**Current status (a known limitation; see `KNOWN_ISSUES.md`).** `ClassicalRef.convert(::Type{Bool})` returns `false` — classical branching on measurement outcomes is not yet emitted from user-level `if` into `CasesNode`s automatically. `CasesNode` exists in the DAG hierarchy and is consumed by `defer_measurements`, but it is produced only by test fixtures, not by `if` in traced user code.
+**Resolution: the explicit `cases()` / `@cases` primitive.** Mid-circuit measurement that needs to be captured into a traceable `CasesNode` is written as:
 
-Options for closing the gap:
+```julia
+ch = trace(1) do q
+    target = QBool(0)
+    cases(q, () -> X!(target))    # captures both branches into a CasesNode
+    target
+end
 
-- **A.** Macro `@qif` or explicit `branch(x) do val; …; end` — captured branching at the source. Rejected as violating P2 (the user shouldn't know about tracing vs eager at the source level).
-- **B.** Cassette.jl-style overdubbing or a Julia compiler plugin — transparent `if` capture, no source change. Implementation cost is high.
-- **C.** Accept the eager/tracing asymmetry and only support `ifelse` in tracing. The documented limitation today.
+# Macro form (Julia's do-block syntax doesn't chain; use begin-blocks):
+@cases q begin
+    X!(target)        # then-branch (measurement = 1)
+end begin
+    Z!(target)        # else-branch (measurement = 0, optional)
+end
+```
 
-Current implementation is effectively (C). (A) and (B) remain future options; most algorithms can be expressed without tracing-mode branching or with a deferred-measurement rewrite.
+`cases` and `@cases` are the third distinct branching channel, alongside `if Bool(q)` (post-measurement classical branch) and `when(q)` (coherent quantum control). The 1:1 OpenQASM 3 lowering target for `cases` is `if (c[i] == 1) { … } [else { … }]`.
 
-In eager mode, measurement returns a real `Bool` and `if` works natively.
+The behaviour split across contexts is documented:
+
+| Context | `if Bool(q) … end` | `cases(q, then, else_)` |
+|---------|--------------------|--------------------------|
+| `EagerContext` | ✓ measure + classical branch | ✓ same effect |
+| `HardwareContext` | ✓ round-trip + classical branch | ✓ same effect |
+| `DensityMatrixContext` | ✓ sampled measure + classical branch | ✓ same effect |
+| `TracingContext` | ✗ errors loudly (silent mis-trace footgun) | ✓ captures both branches into `CasesNode` |
+
+Why not auto-lift `if` to `cases`: the same three reasons that govern `if` vs `when` (P4) apply here. The user must be explicit about which channel is desired; transparent overdubbing (Cassette / IRTools) was considered and rejected as a P2 violation (the user shouldn't have to know about tracing-vs-eager at the source level, but they SHOULD see distinct syntactic forms for distinct channels).
+
+In eager / density / hardware contexts, measurement returns a real `Bool` and `if` works natively. The `cases` primitive is the tracing-context bridge.
 
 ---
 
@@ -965,7 +984,7 @@ Recorded for context; they must not influence current-state design decisions exc
 - **Anyonic systems** — `QAnyon{C<:FusionCategory}` with braiding as the entangling primitive. Requires compact closed categorical structure (duals, traces). `>>` and `⊗` must still work; braiding replaces CNOT.
 - **Gaussian CV / bosonic / Fock** — `QMode`, displacement, squeezing, beamsplitters, homodyne/heterodyne. CV context stores covariance matrix plus displacement vector; non-Gaussian extension stores truncated Fock-basis density operator. Bosonic codes (cat / binomial / GKP) built on top.
 - **Tensor-network backend** — a `TensorNetworkContext` that records contraction-friendly tensors instead of a statevector. Prerequisite: `AbstractContext` surface hardening (bead).
-- **Hardware compilation** — emit OpenQASM 3.0 for IBM / IonQ, or direct SDK calls. Current OpenQASM export covers unitary + measurement; CasesNode classical branching and noise channels are present gaps.
+- **Hardware compilation** — `HardwareContext` + transport (TCP/IPC) + idealised in-process simulator have shipped (the dynamic-circuit pattern works end-to-end). Direct OpenQASM 3.0 emission for IBM / IonQ device adapters and explicit hooks for vendor SDKs are future work; OpenQASM export covers unitary + measurement + `CasesNode` classical branching, with noise channels still a present gap.
 - **Lean 4 verification layer** — prove channel composition preserves CP, deferred-measurement equivalence, QECC distance, pass correctness. Generate Julia type definitions with certificates.
 - **Compile-time linearity** — replace runtime `consumed::Bool` check with a macro or compiler plugin that proves no-cloning statically.
 - **Variational / hybrid algorithms** — classical optimiser loop around `trace` + `evaluate`. The channel representation makes parameter extraction natural.
