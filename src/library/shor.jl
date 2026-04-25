@@ -902,7 +902,8 @@ Controlled-SWAP costs 3 Toffoli per wire × (Wtot + Cpad) wires.
 function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
                                      a::Integer, ctrl::QBool;
                                      c_mul::Int=2,
-                                     mbu::Bool=false) where {W, Cpad, Wtot}
+                                     mbu::Bool=false,
+                                     mbu_compute::Bool=false) where {W, Cpad, Wtot}
     check_live!(target); check_live!(ctrl)
     target.reg.ctx === ctrl.ctx ||
         error("_shor_mulmod_E_controlled!: target and ctrl must share a context")
@@ -926,7 +927,12 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
     # `mbu=true` enables Berry et al. 2019 measurement-based QROM uncompute
     # inside each plus_equal_product_mod! iteration (bead Sturm.jl-9ij):
     # reverse-lookup cost drops from 2^c_mul − 1 to ⌈2^c_mul/k⌉ + k Toffoli.
-    plus_equal_product_mod!(b, a_mod, target.reg; window=c_mul, ctrls=(ctrl,), mbu=mbu)
+    # `mbu_compute=true` additionally swaps the FORWARD QROM for Berry App B
+    # Theorem 2 clean-ancilla forward (bead Sturm.jl-vbz). Forward cost drops
+    # from 4·(2^c_mul − 1) to 4·(2^Whi − 1) + Wtot·(k_b − 1) at k_b=2.
+    plus_equal_product_mod!(b, a_mod, target.reg;
+                              window=c_mul, ctrls=(ctrl,),
+                              mbu=mbu, mbu_compute=mbu_compute)
 
     # Step 2: controlled-SWAP(target, b) — still needs full when(ctrl) because
     # SWAP has no self-inverse structure (it's CNOT³, each of which needs the
@@ -944,7 +950,9 @@ function _shor_mulmod_E_controlled!(target::QCoset{W, Cpad, Wtot},
 
     # Step 3: b -= a⁻¹ · target  (same ctrls pattern as step 1).
     minus_a_inv = mod(N - a_inv, N)
-    plus_equal_product_mod!(b, minus_a_inv, target.reg; window=c_mul, ctrls=(ctrl,), mbu=mbu)
+    plus_equal_product_mod!(b, minus_a_inv, target.reg;
+                              window=c_mul, ctrls=(ctrl,),
+                              mbu=mbu, mbu_compute=mbu_compute)
 
     # b is now |0⟩ coset on both ctrl branches — free it.
     ptrace!(b)

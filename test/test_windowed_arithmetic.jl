@@ -3,6 +3,8 @@ using Sturm
 using Sturm: qrom_lookup_xor!, plus_equal_product!, plus_equal_product_mod!, decode!
 using Sturm: _shor_mulmod_E_controlled!
 using Sturm: _binary_to_unary!, qrom_lookup_uncompute_meas!
+using Sturm: qrom_lookup_xor_cleanancilla!, qrom_lookup_uncompute_meas_cleanancilla!
+using Sturm: _app_b_sigma_perm, _stacked_permuted_table
 
 # Eager-flushed staged output (feedback_verbose_eager_flush).
 _t0 = time_ns()
@@ -365,6 +367,252 @@ end
     end
 
     _log("EXIT plus_equal_product_mod! mbu")
+end
+
+# ── Sturm.jl-vbz Phase D4 — clean-ancilla forward QROM (Berry App B Thm 2) ───
+#
+# Ground truth: Berry, Gidney, Motta, McClean, Babbush (2019) arXiv:1902.02134
+# Appendix B Theorem 2 (Eq. 66). docs/physics/berry_*.pdf.
+#
+# Pairs with the App C measurement-based uncompute already shipped in 9ij. The
+# forward operation produces a kM-qubit scratch where bits [0, M) hold f(addr)
+# and bits [M, kM) hold permuted other table entries — these are consumed by
+# the matching reverse, which X-measures all kM wires and applies a phase
+# fixup to addr.
+
+@testset "_app_b_sigma_perm (vbz Stage A — pure classical)" begin
+    # σ_l permutation: descending-tree pair-block-swap.
+    # Brute-force ground truth via simulation of the swap cascade.
+    function brute_sigma(l::Int, c::Int)
+        k = 1 << c
+        positions = collect(0:(k-1))
+        for p in (c-1):-1:0  # high bit first
+            if (l >> p) & 1 == 1
+                # Swap pairs at distance 2^p within leading 2^(p+1) positions.
+                for j in 0:((1 << p) - 1)
+                    a, b = j, j + (1 << p)
+                    positions[a + 1], positions[b + 1] = positions[b + 1], positions[a + 1]
+                end
+            end
+        end
+        return positions
+    end
+    _log("ENTER _app_b_sigma_perm")
+    @testset "matches brute-force for c ∈ 1..3, all l" begin
+        for c in 1:3
+            k = 1 << c
+            for l in 0:(k - 1)
+                expected = brute_sigma(l, c)
+                for i in 0:(k - 1)
+                    @test _app_b_sigma_perm(l, i, c) == expected[i + 1]
+                end
+            end
+        end
+    end
+    @testset "σ_l(0) == l" begin
+        for c in 1:4
+            for l in 0:((1 << c) - 1)
+                @test _app_b_sigma_perm(l, 0, c) == l
+            end
+        end
+    end
+    _log("EXIT _app_b_sigma_perm")
+end
+
+@testset "_stacked_permuted_table (vbz Stage A — pure classical)" begin
+    _log("ENTER _stacked_permuted_table")
+    @testset "Win=3, M=2, k=2 — bit packing matches σ_l" begin
+        Win, M, k = 3, 2, 2
+        d = 1 << Win
+        # Random-looking table, entries in [0, 4).
+        tbl_data = [(3 * x + 1) & 3 for x in 0:(d - 1)]
+        tbl = QROMTable{Win, M}(tbl_data)
+
+        stacked = _stacked_permuted_table(tbl, k)
+        @test length(stacked) == d
+
+        c = trailing_zeros(k)  # = 1
+        for j in 0:(d - 1)
+            l = j & (k - 1)
+            h = j >> c
+            for i in 0:(k - 1)
+                expected_value = tbl_data[h * k + _app_b_sigma_perm(l, i, c) + 1]
+                # Bits [i*M, (i+1)*M) of stacked[j+1] should equal expected_value.
+                actual = (stacked[j + 1] >> (i * M)) & ((UInt64(1) << M) - 1)
+                @test Int(actual) == expected_value
+            end
+        end
+    end
+
+    @testset "Win=4, M=3, k=4 — kM=12 ≤ 64 OK" begin
+        Win, M, k = 4, 3, 4
+        d = 1 << Win
+        tbl_data = [(5 * x + 2) & 7 for x in 0:(d - 1)]
+        tbl = QROMTable{Win, M}(tbl_data)
+        stacked = _stacked_permuted_table(tbl, k)
+        @test length(stacked) == d
+        c = trailing_zeros(k)  # = 2
+        for j in 0:(d - 1)
+            l = j & (k - 1)
+            h = j >> c
+            actual_pos0 = stacked[j + 1] & ((UInt64(1) << M) - 1)
+            @test Int(actual_pos0) == tbl_data[h * k + l + 1]  # σ_l(0) == l ⇒ f(j)
+        end
+    end
+    _log("EXIT _stacked_permuted_table")
+end
+
+@testset "qrom_lookup_xor_cleanancilla! (vbz Stage A)" begin
+    _log("ENTER qrom_lookup_xor_cleanancilla!")
+
+    @testset "basis-state: position 0 of scratch_full = tbl[addr]" begin
+        # (Win, M, k) — keep peak qubits manageable. Bennett's compiled
+        # qrom_lookup_xor! over a kM-bit output table allocates O(kM) live
+        # qubits; cases with large kM AND large d_hi push past the 30-qubit
+        # cap (Win=4 M=2 k=4 hit 28 qubits, ~4 GiB).
+        for (Win, M, k) in [
+            (2, 2, 2),   # kM=4
+            (3, 1, 2),   # kM=2
+            (3, 2, 2),   # kM=4
+            (3, 2, 4),   # kM=8, n_h=2 (1-bit hi address)
+            (4, 1, 2),   # kM=2
+        ]
+            _log("  ENTER Win=$Win M=$M k=$k  [peak ≤ ~14]")
+            d = 1 << Win
+            kM = k * M
+            tbl_data = [(3 * x + 1) & ((1 << M) - 1) for x in 0:(d - 1)]
+            for addr_val in 0:(d - 1)
+                @context EagerContext() begin
+                    addr = QInt{Win}(addr_val)
+                    scratch_full = QInt{kM}(0)
+                    tbl = QROMTable{Win, M}(tbl_data)
+                    qrom_lookup_xor_cleanancilla!(scratch_full, addr, tbl; k=k)
+                    pos0 = Sturm.QInt{M}(
+                        ntuple(j -> scratch_full.wires[j], Val(M)),
+                        addr.ctx, false)
+                    @test Int(pos0) == tbl_data[addr_val + 1]
+                    @test Int(addr) == addr_val
+                end
+            end
+            _log("  EXIT Win=$Win M=$M k=$k")
+        end
+    end
+
+    @testset "preconditions fail loudly" begin
+        @context EagerContext() begin
+            scratch_full = QInt{4}(0)
+            addr = QInt{3}(0)
+            tbl = QROMTable{3, 2}([0, 1, 2, 3, 4, 5, 6, 7])
+            # k not power of 2
+            @test_throws ErrorException qrom_lookup_xor_cleanancilla!(
+                scratch_full, addr, tbl; k=3)
+            # k = 1 (must be > 1)
+            @test_throws ErrorException qrom_lookup_xor_cleanancilla!(
+                scratch_full, addr, tbl; k=1)
+            # k ≥ 2^Win = 8
+            @test_throws ErrorException qrom_lookup_xor_cleanancilla!(
+                scratch_full, addr, tbl; k=8)
+            # scratch_full size mismatch (k=4, M=2 ⇒ N must be 8, here N=4)
+            @test_throws ErrorException qrom_lookup_xor_cleanancilla!(
+                scratch_full, addr, tbl; k=4)
+            ptrace!(scratch_full); ptrace!(addr)
+        end
+    end
+
+    _log("EXIT qrom_lookup_xor_cleanancilla!")
+end
+
+@testset "qrom_lookup_uncompute_meas_cleanancilla! (vbz Stage A)" begin
+    _log("ENTER qrom_lookup_uncompute_meas_cleanancilla!")
+
+    @testset "basis-state roundtrip: forward + reverse preserves Int(addr)" begin
+        for (Win, M, k) in [
+            (2, 2, 2), (3, 1, 2), (3, 2, 2), (3, 2, 4), (4, 1, 2),
+        ]
+            _log("  ENTER Win=$Win M=$M k=$k")
+            d = 1 << Win
+            kM = k * M
+            tbl_data = [(3 * x + 1) & ((1 << M) - 1) for x in 0:(d - 1)]
+            for addr_val in 0:(d - 1)
+                @context EagerContext() begin
+                    addr = QInt{Win}(addr_val)
+                    scratch_full = QInt{kM}(0)
+                    tbl = QROMTable{Win, M}(tbl_data)
+                    qrom_lookup_xor_cleanancilla!(scratch_full, addr, tbl; k=k)
+                    qrom_lookup_uncompute_meas_cleanancilla!(scratch_full, addr, tbl; k=k)
+                    @test Int(addr) == addr_val
+                end
+            end
+            _log("  EXIT Win=$Win M=$M k=$k")
+        end
+    end
+
+    @testset "superposition: addr marginal preserved up to global phase" begin
+        # Use the phase-invariant ratio assertion idiom.
+        _log("  ENTER superposition [Win=2, M=2, k=2]")
+        Win, M, k = 2, 2, 2
+        d = 1 << Win
+        kM = k * M
+        tbl_data = [1, 2, 3, 1]
+        angles = (π/7, π/11)
+        n_shots = 4
+        for _ in 1:n_shots
+            @context EagerContext() begin
+                addr = QInt{Win}(0)
+                q0 = QBool(addr.wires[1], addr.ctx, false); q0.θ += 2 * angles[1]
+                q1 = QBool(addr.wires[2], addr.ctx, false); q1.θ += 2 * angles[2]
+
+                pre = ntuple(x -> _amp(addr.ctx, x - 1), Val(d))
+
+                scratch_full = QInt{kM}(0)
+                tbl = QROMTable{Win, M}(tbl_data)
+                qrom_lookup_xor_cleanancilla!(scratch_full, addr, tbl; k=k)
+                qrom_lookup_uncompute_meas_cleanancilla!(scratch_full, addr, tbl; k=k)
+
+                post = ntuple(x -> _amp(addr.ctx, x - 1), Val(d))
+                for x in 1:d
+                    @test abs(abs(post[x]) - abs(pre[x])) < 1e-12
+                end
+                r = post[1] / pre[1]
+                for x in 2:d
+                    @test abs(post[x] / pre[x] - r) < 1e-10
+                end
+                _ = Int(addr)
+            end
+        end
+        _log("  EXIT superposition")
+    end
+
+    _log("EXIT qrom_lookup_uncompute_meas_cleanancilla!")
+end
+
+@testset "plus_equal_product_mod! mbu_compute kwarg (vbz Stage B)" begin
+    _log("ENTER plus_equal_product_mod! mbu_compute")
+
+    @testset "mbu_compute=true (N=3, window=2) — matches mbu=true on Int output" begin
+        for k in (1, 2), y0 in 0:1
+            @context EagerContext() begin
+                b = QCoset{2, 1}(0, 3)
+                y = QInt{2}(y0)
+                plus_equal_product_mod!(b, k, y; window=2, mbu=true, mbu_compute=true)
+                @test decode!(b) == mod(y0 * k, 3)
+                _ = Int(y)
+            end
+        end
+    end
+
+    @testset "_shor_mulmod_E_controlled! mbu_compute=true at N=3, ctrl=|1⟩" begin
+        @context EagerContext() begin
+            target = QCoset{2, 1}(1, 3)
+            ctrl = QBool(1.0)
+            _shor_mulmod_E_controlled!(target, 2, ctrl;
+                                          c_mul=2, mbu=true, mbu_compute=true)
+            @test decode!(target) == 2
+            _ = Bool(ctrl)
+        end
+    end
+
+    _log("EXIT plus_equal_product_mod! mbu_compute")
 end
 
 @testset "plus_equal_product! (non-modular)" begin

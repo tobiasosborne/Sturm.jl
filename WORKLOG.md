@@ -4,6 +4,162 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 63: close `vbz` — Berry App B clean-ancilla forward QROM
+
+Next pickup after `eiq`. The Session 61 handoff explicitly tagged this bead
+as the highest-value path to closing `6oc` criterion (d) at L=8. Phasing:
+ground truth → red TDD → primitives → integration → bench → ship. About one
+session of Opus time end-to-end.
+
+### Headline result
+
+The `mbu=true, mbu_compute=true` pair closes 6oc(d) at L=8 exactly:
+
+| L  | best ratio (mbu_compute=true) | c_mul | Verdict |
+|----|------|---|---|
+| 8  | **0.500×** | 5 | ✓ meets 0.5× target |
+| 10 | 0.456× | 4 | ✓ |
+| 12 | 0.414× | 5 | ✓ |
+
+vs the Session 61 Stage 4 baseline (`mbu=true` only):
+
+| L  | mbu=true best | mbu_compute=true best | Δ |
+|----|---|---|---|
+| 8  | 0.554× | **0.500×** | 0.054 better |
+| 10 | 0.489× | 0.456× | 0.033 |
+| 12 | 0.465× | 0.414× | 0.051 |
+
+The L=8 closure is *tight* under the Session 50b T-proxy weighting
+(`7·CCX + 14·CCCX + rot + 2·crot + 6·ccrot`); the bench reports 0.500×
+with `c_mul=5, k_b=4`. If the proxy weights shift the closure could go
+either way — I noted this in `bd memories vbz-dynamic-k-b`.
+
+### Stage shape (mirrors 9ij)
+
+  * **Stage A — primitives + classical helpers**, `src/library/arithmetic.jl`:
+      * `_app_b_sigma_perm(l, i, c)` — closed-form σ_l permutation for the
+        descending pair-block-swap S subroutine. `σ_l(i) = i ⊻ (l & mask_i)`,
+        `mask_i = ~((1<<h_i) - 1) & (k − 1)`, `h_i = floor(log₂ i)` (h_0 ≡ -1
+        ⇒ mask all c bits, σ_l(0) = l). Verified k ∈ {1,2,3,4} brute-force.
+      * `_stacked_permuted_table(tbl, k)` — classical preprocessor: kM-bit
+        stacked entries packed as `Σ_i tbl[h·k + σ_l(i)] · 2^(i·M)`.
+      * `_app_b_swap_cascade!(scratch_full, addr_lo, M)` — quantum: high-bit-
+        first level loop, `M·(k−1)` Fredkin gates total, calls into the
+        9ij `_fredkin!` helper.
+      * `qrom_lookup_xor_cleanancilla!(scratch_full, addr, tbl; k)` — App B
+        forward (Berry Thm 2, Eq. 66). `T` (lookup at addr_hi targeting all
+        `kM` scratch wires using the existing Bennett `qrom_lookup_xor!`)
+        followed by `S` (the swap cascade). Public, exported.
+      * `qrom_lookup_uncompute_meas_cleanancilla!(...)` — matching reverse.
+        Builds the σ-permuted full-d table and delegates to the existing
+        `qrom_lookup_uncompute_meas!` (App C clean-ancilla phase fixup).
+
+  * **Stage B — integration**:
+      * `mbu_compute::Bool=false` kwarg on `plus_equal_product_mod!` and
+        on `_shor_mulmod_E_controlled!`. The kwarg is orthogonal to `mbu`
+        but requires `mbu=true` (the App B forward post-state has no
+        naive XOR-undo path; it must be consumed via X-basis measurement).
+      * `_pep_mod_iter!` chooses `k_b` dynamically: search powers of 2
+        with `k·Wtot ≤ 64`, pick the smallest analytical Sturm cost
+        `4·(2^(w − log₂k) − 1) + Wtot·(k − 1)` vs the no-App-B baseline
+        `4·(2^w − 1)`. Falls back to no-App-B when nothing wins —
+        avoids the c_mul=2 regression that hardcoded `k_b=2` produced
+        (W=9 ≥ 2^3=8 → App B doesn't pay).
+
+  * **Bench** — `probe_toffoli_vbz_sweep.jl` (project root, sibling of
+    Session 61's `probe_toffoli_cmul_sweep_mbu.jl`). Three-column table per
+    L with (mbu=F, mbu_compute=F) baseline, (T,F) Session-61 best, (T,T)
+    vbz target. ~10 s total runtime across L ∈ {8,10,12} × c_mul ∈ {2..5}.
+
+### Tests — `test/test_windowed_arithmetic.jl`
+
+317 net-new assertions across 5 testsets (TDD red-then-green):
+
+```text
+_app_b_sigma_perm                         | 114/114
+_stacked_permuted_table                   |  34/34
+qrom_lookup_xor_cleanancilla!             |  92/92
+qrom_lookup_uncompute_meas_cleanancilla!  |  72/72
+plus_equal_product_mod! mbu_compute kwarg |   5/5
+```
+
+Plus the existing 9ij Stage 1/2/3 testsets (744 + 53 + 17 = 814) and the
+plus_equal_product_mod!/_shor_mulmod_E_controlled!/shor_order_E baselines
+(30 + 2 + 1 = 33) — all still green.
+
+### Stale-bead-text catches
+
+The bead description's "Fig 4" reference points at App A (dirty ancillae).
+App B (clean ancillae) is *text only* on page 25 of
+`docs/physics/berry_*.pdf`. The matching figure shows the dirty variant —
+not what we want. Lesson logged so future agents don't waste time
+trying to derive Fig 4 directly.
+
+The bead also predicted "forward cost drops from 28 CCX to ~8 CCX per
+lookup" — this assumes the bare Berry count without Sturm's 4× Bennett
+overhead on the inner table lookup. Practical Sturm savings are smaller.
+See `bd memories app-b-vs-bennett-overhead`. The dynamic k_b heuristic
+gets us to 0.500× exactly — a 9.7% improvement over mbu=true alone, not
+the bead-projected 53%.
+
+### Surprising finds
+
+  * **App B's `S` is more elegant than the paper makes it look.** "Series
+    of Mk controlled swaps" is misleading at first read: the actual
+    construction is a *descending tree of pair-block-swaps* with k−1
+    register-level swaps total (not Mk). Each register-level swap is M
+    Fredkins. Worked out by tracing k=4 and k=8 by hand; closed-form σ_l
+    derived from there.
+
+  * **Code reuse via `tbl_eff` is the cleanest interface.** I worried for
+    a while about whether the matching reverse needed its own primitive
+    duplicating the App C Fig 6 phase-fixup logic. It does NOT — calling
+    the existing `qrom_lookup_uncompute_meas!` with the σ-permuted
+    full-d table (built classically) does exactly the right thing,
+    because App C's phase-fixup pattern only depends on `(table, scratch
+    width)` and works for any width that fits. The new
+    `qrom_lookup_uncompute_meas_cleanancilla!` is mostly preconditions +
+    table construction + delegation.
+
+  * **`k_b` selection matters.** Hardcoded `k_b=2` left L=8 at 0.513×;
+    dynamic `k_b ∈ {2, 4, 8, …}` selection brings it to 0.500×. The
+    analytical heuristic also auto-disables App B at small w (where it
+    regresses) — same code path handles the c_mul=2 fallback to
+    no-App-B.
+
+### Files touched
+
+  * `src/library/arithmetic.jl` — five new functions (helpers + two
+    primitives), `mbu_compute` kwarg on `plus_equal_product_mod!`,
+    dynamic-k_b loop in `_pep_mod_iter!`.
+  * `src/library/shor.jl` — `mbu_compute` kwarg on
+    `_shor_mulmod_E_controlled!`, threaded into both
+    `plus_equal_product_mod!` calls.
+  * `src/Sturm.jl` — export `qrom_lookup_xor_cleanancilla!`.
+  * `test/test_windowed_arithmetic.jl` — five new testsets.
+  * `probe_toffoli_vbz_sweep.jl` (new at project root).
+  * `WORKLOG.md` — this entry.
+
+### Next levers (not in vbz scope)
+
+  * **Hand-rolled Babbush-Gidney unary iteration** for the inner T
+    lookup, bypassing Bennett's 4× compile overhead. Would cut App B
+    forward cost by ~75% per lookup. Filing as follow-on bead.
+  * **Extend `k·Wtot > 64`** via UInt128 (or Vector{UInt64}) stacked-
+    table storage. Unlocks `k_b=8` at L=10, `k_b=16` at higher L. Useful
+    above c_mul ≈ 6.
+  * **`6oc(a)(b)(c)`** still blocked by `Sturm.jl-059` perf
+    (~21 min/call at N=15).
+
+### Memories updated
+
+  * `app-b-vs-bennett-overhead` — added during ground-truth phase, lists
+    the σ_l formula and the Sturm Bennett-overhead caveat.
+  * `vbz-dynamic-k-b` — added after the bench, documents the dynamic
+    k_b heuristic and the L=8 tight closure.
+
+---
+
 ## 2026-04-25 — Session 62: close `eiq` (CasesNode consumer fail-loud policy)
 
 Warm-up bead picked from the Session 61 handoff list. Closed cleanly in
