@@ -98,6 +98,7 @@ end
 
 # Context
 export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @context, current_context
+export compact_state!
 
 # Types
 export QBool, QInt, QMod, WireID, ptrace!, discard!, Quantum

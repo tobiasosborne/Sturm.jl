@@ -16,6 +16,7 @@ mutable struct EagerContext <: AbstractContext
     control_stack::Vector{WireID}      # active `when` controls
     capacity::Int                      # pre-allocated Orkan qubit count
     free_slots::Vector{Int}            # recycled qubit indices available for reuse
+    _compact_count::Int                # bead 059: number of compact_state! commits
 
     function EagerContext(; capacity::Int=8)
         capacity > MAX_QUBITS && error(
@@ -24,7 +25,7 @@ mutable struct EagerContext <: AbstractContext
         )
         orkan = OrkanState(ORKAN_PURE, capacity)
         orkan[0] = 1.0 + 0.0im
-        new(orkan, 0, Dict{WireID, Int}(), Set{WireID}(), WireID[], capacity, Int[])
+        new(orkan, 0, Dict{WireID, Int}(), Set{WireID}(), WireID[], capacity, Int[], 0)
     end
 end
 
@@ -104,12 +105,332 @@ function _grow_state!(ctx::EagerContext)
     ctx.capacity = new_cap
 end
 
-"""Deallocate a wire: measure it (discarding result) and recycle the slot."""
+# ── State compaction (bead Sturm.jl-059) ──────────────────────────────────────
+#
+# `n_qubits` and the Orkan state grow monotonically: once the high-water-mark
+# is reached, every gate operates on `2^n_qubits` amplitudes regardless of
+# how many wires are actually live. After a burst of `_blessed_measure!`-
+# driven `deallocate!` calls (e.g. the Bennett ancilla cleanup at the end
+# of `apply_reversible!`), `free_slots` accumulates and `n_qubits` stays
+# stuck at its peak. `compact_state!` reclaims the wasted dimension.
+#
+# Soundness: A0 (probe_compact_precond.jl) empirically verified that every
+# slot in `free_slots` is deterministically |0⟩ — `_blessed_measure!`
+# resets the slot via amplitude swap before adding it to the free list
+# (see `measure!` at lines ~267-275). This means the live tensor factor
+# can be extracted exactly by projecting onto the |0⟩ branch of the
+# freed bits. Verification of this precondition runs by default; any
+# violation `error()`s loud (CLAUDE.md rule 1).
+#
+# Architecture: compute-then-commit. Phase 1 reads `ctx` only; Phase 2
+# verifies the residual norm; Phase 3 builds the new Orkan state on the
+# side; Phase 4 commits via a sequence of infallible field writes. At
+# every line of `compact_state!`, `ctx` is either fully old or fully new
+# — never half. Synthesised from Proposer A (data-flow) + Proposer B
+# (invariant-first) ceremony per CLAUDE.md rule 2.
+
+"""
+Plan struct returned by `_compact_plan(ctx)`. Computed read-only on `ctx`;
+the rest of `compact_state!` reads only this. Returning `nothing` from
+`_compact_plan` means the fast-path no-op fired.
+"""
+struct CompactPlan
+    old_n::Int
+    new_n::Int
+    new_capacity::Int
+    live_wires::Vector{WireID}     # sorted by WireID.id (stable across calls)
+    old_slots::Vector{Int}         # sorted ascending; old_slots[k] = wire_to_qubit[live_wires[k]]
+    freed_mask::UInt64             # OR of (1 << s) for s in free_slots; max old_n=30 fits
+end
+
+"""
+    _compact_plan(ctx::EagerContext) -> Union{Nothing, CompactPlan}
+
+Validate `ctx` invariants and return a plan. Returns `nothing` if
+`free_slots` is empty (fast-path no-op for `compact_state!`). Errors loud
+on any invariant violation — every check has a precise message.
+"""
+function _compact_plan(ctx::EagerContext)::Union{Nothing, CompactPlan}
+    isempty(ctx.free_slots) && return nothing
+
+    # Invariant: capacity ≥ n_qubits (otherwise allocate would have grown).
+    ctx.capacity >= ctx.n_qubits ||
+        error("compact_state!: invariant violation — capacity ($(ctx.capacity)) < n_qubits ($(ctx.n_qubits))")
+
+    # Invariant: every free_slot index is in [0, n_qubits).
+    for s in ctx.free_slots
+        (0 <= s < ctx.n_qubits) ||
+            error("compact_state!: free_slots contains out-of-range index $s (n_qubits=$(ctx.n_qubits))")
+    end
+
+    # Invariant: free_slots has no duplicates.
+    if length(unique(ctx.free_slots)) != length(ctx.free_slots)
+        error("compact_state!: free_slots contains duplicates: $(ctx.free_slots)")
+    end
+
+    # Invariant: free_slots and live-slot set are disjoint.
+    free_set = Set(ctx.free_slots)
+    live_slot_vals = collect(values(ctx.wire_to_qubit))
+    for s in live_slot_vals
+        s in free_set &&
+            error("compact_state!: slot $s appears in BOTH free_slots and wire_to_qubit values — corruption")
+    end
+
+    # Invariant: wire_to_qubit has no duplicate slot values (no two wires share a slot).
+    if length(unique(live_slot_vals)) != length(live_slot_vals)
+        error("compact_state!: wire_to_qubit has duplicate slot indices — two wires share a slot")
+    end
+
+    # Invariant: every live wire is NOT in `consumed`.
+    for w in keys(ctx.wire_to_qubit)
+        w in ctx.consumed &&
+            error("compact_state!: wire $(w) is in BOTH wire_to_qubit and consumed — corruption")
+    end
+
+    # Invariant: live + freed slot count fits in n_qubits.
+    if length(ctx.wire_to_qubit) + length(ctx.free_slots) > ctx.n_qubits
+        error("compact_state!: live ($(length(ctx.wire_to_qubit))) + freed ($(length(ctx.free_slots))) " *
+              "exceeds n_qubits ($(ctx.n_qubits))")
+    end
+
+    # Build the plan. Order live wires by their *old slot index* ascending,
+    # NOT by WireID.id. The invariant is: `old_slots[k] == wire_to_qubit[live_wires[k]]`.
+    # This lets `_compact_scatter!` use a monotonic bit-mask scatter
+    # (cache-friendly) AND keeps the new `wire_to_qubit` consistent with
+    # the scatter (wire at old slot `old_slots[k]` ends up at new slot k-1).
+    # Sorting by WireID.id and then re-sorting old_slots was a bug — it broke
+    # the slot↔wire correspondence and silently permuted amplitudes within
+    # the live set (regressed test_shor.jl statistical tests until fixed).
+    live_wires = sort!(collect(keys(ctx.wire_to_qubit)), by = w -> ctx.wire_to_qubit[w])
+    old_slots = Int[ctx.wire_to_qubit[w] for w in live_wires]   # ascending by construction
+    new_n = length(live_wires)
+
+    # Capacity hysteresis. Three constraints:
+    #   (a) keep GROW_STEP headroom so a Bennett K-ancilla burst (typical
+    #       K up to ~15) right after the compact does not immediately re-grow;
+    #   (b) bound shrink delta to 2*GROW_STEP per compact. This caps the
+    #       compact-then-grow oscillation: if we shrink from capacity 28 to
+    #       20 (delta 8) and then grow back, the grow trajectory is
+    #       20→24→28, with the largest transient at the 24→28 step
+    #       (4 GiB) — within the half-RAM check in `_grow_state!`. Without
+    #       this cap, the trajectory could be 17→21→25→29, hitting
+    #       29 (8 GiB transient > available/2 on a 10-GiB-free machine);
+    #   (c) clamp to MAX_QUBITS to stay within the Orkan limit.
+    floor_cap = max(new_n + GROW_STEP, ctx.capacity - 2 * GROW_STEP)
+    new_capacity = min(floor_cap, MAX_QUBITS)
+    new_capacity >= new_n ||
+        error("compact_state!: hysteresis clamp produced new_capacity=$new_capacity < new_n=$new_n")
+
+    # Build the freed-bit mask (UInt64, plenty for n_qubits ≤ 30).
+    freed_mask = UInt64(0)
+    for s in ctx.free_slots
+        freed_mask |= UInt64(1) << s
+    end
+
+    return CompactPlan(ctx.n_qubits, new_n, new_capacity, live_wires, old_slots, freed_mask)
+end
+
+"""
+    _compact_verify_freed_zero(ctx::EagerContext, plan::CompactPlan) -> nothing
+
+Verify the soundness precondition: every slot in `free_slots` is in |0⟩.
+Computed as the residual norm² over basis indices where any freed bit is
+set. Errors loud if above tolerance. CLAUDE.md rule 1.
+
+Tolerance: `1e-10 * max(1, length(free_slots))`. Floating-point noise from
+gate sequences accumulates at `eps() · O(2^n)`; a single failed reset
+(the bug case) leaves residual ≥ ~0.5, six orders of magnitude above the
+tolerance — the gap is huge.
+"""
+function _compact_verify_freed_zero(ctx::EagerContext, plan::CompactPlan)
+    old_dim = 1 << plan.old_n
+    old_amps = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, old_dim)
+    residual = 0.0
+    @inbounds for i in 0:old_dim - 1
+        if (UInt64(i) & plan.freed_mask) != 0
+            residual += abs2(old_amps[i + 1])
+        end
+    end
+    n_freed = count_ones(plan.freed_mask)
+    tol = 1e-10 * max(1.0, Float64(n_freed))
+    if residual > tol
+        error("compact_state!: precondition violated — freed slots are not |0⟩.\n" *
+              "  residual norm² = $(residual) (tolerance = $(tol))\n" *
+              "  free_slots     = $(ctx.free_slots)\n" *
+              "  n_qubits       = $(plan.old_n), old_dim = $(old_dim)\n" *
+              "A slot was returned to free_slots without being reset to |0⟩. The\n" *
+              "deallocate path MUST go through _blessed_measure!. See bead Sturm.jl-059.")
+    end
+    return nothing
+end
+
+"""
+    _compact_scatter!(new_orkan, old_orkan, plan) -> nothing
+
+Project the old amplitude buffer onto the |0⟩ branch of the freed slots
+and copy into the new (smaller) buffer in compact layout. Outer loop is
+over the new (small) index space j; for each j we decode its bits and
+re-encode them at the corresponding *old* slot positions in `old_index`.
+Freed slots default to bit=0 in `old_index` — the |0⟩ branch.
+
+Auditable, no clever bit tricks. Cost: O(2^new_n · new_n).
+"""
+function _compact_scatter!(new_orkan::OrkanState, old_orkan::OrkanState, plan::CompactPlan)
+    old_dim = 1 << plan.old_n
+    new_dim = 1 << plan.new_n
+    old_amps = unsafe_wrap(Array{ComplexF64,1}, old_orkan.raw.data, old_dim)
+    new_amps = unsafe_wrap(Array{ComplexF64,1}, new_orkan.raw.data, new_dim)
+    live_slots = plan.old_slots
+    new_n = plan.new_n
+    @inbounds for j in 0:new_dim - 1
+        old_index = 0
+        for k in 0:new_n - 1
+            bit = (j >> k) & 1
+            old_slot = live_slots[k + 1]
+            old_index |= bit << old_slot
+        end
+        new_amps[j + 1] = old_amps[old_index + 1]
+    end
+    return nothing
+end
+
+"""
+    compact_state!(ctx::EagerContext) -> ctx
+
+Compact the Orkan PURE statevector by remapping every live wire to a slot
+in `0..k-1` (where `k = length(live_wires(ctx))`) and shrinking the
+amplitude buffer from `2^n_qubits` to `2^k`. Returns `ctx` (chain-friendly).
+
+# Why
+After a burst of `_blessed_measure!`-driven `deallocate!` calls, slots are
+returned to `ctx.free_slots` but `ctx.n_qubits` and the Orkan state stay
+at the high-water-mark. Every subsequent gate then runs on `2^n_qubits`
+amplitudes — even when most slots are recycled. `compact_state!`
+projects onto the live tensor factor and rebuilds a contiguous layout,
+restoring `O(2^k)` per-gate cost.
+
+See bead Sturm.jl-059 for the empirical motivation (N=15 c_mul=1 Shor
+mulmod takes 6.3 minutes wall-clock with a 7-live / 26-allocated state).
+
+# Precondition (CLAUDE.md rule 1: FAIL FAST, FAIL LOUD)
+Every slot in `ctx.free_slots` MUST be in |0⟩. This is guaranteed by
+`_blessed_measure!`, which performs an amplitude-swap reset before
+returning the slot to the free list (eager.jl `measure!`, the
+post-collapse swap). `compact_state!` verifies this precondition by
+computing the residual norm² over freed bits and `error()`s with a
+diagnostic if violated. Verification is mandatory in v0.1; the
+`STURM_COMPACT_VERIFY` env-gate is reserved for stage A8 of the bead.
+
+# Postcondition
+- `ctx.wire_to_qubit[w]` ∈ `0..k-1` for every live `w`. Wire identity is
+  preserved; only the slot index changes.
+- `ctx.n_qubits == k`, `ctx.capacity == min(k + GROW_STEP, MAX_QUBITS)`.
+- `ctx.free_slots == []`.
+- `ctx.consumed`, `ctx.control_stack` unchanged (they store WireIDs, not
+  slots, so the remap is transparent to them).
+- The new Orkan state's amplitudes are exactly the |0⟩-branch projection
+  of the old buffer, permuted into compact layout.
+
+# Atomicity
+Compute-then-commit. If any phase throws (input validation, residual
+check, OOM during new state allocation, OOB during scatter), `ctx` is
+left in its pre-call state. The commit phase is a sequence of infallible
+field writes with no intervening fallible calls.
+
+# Idempotence
+Calling `compact_state!` when `free_slots` is empty is a fast-path no-op
+(returns `ctx` immediately, no allocation, no scatter, no counter bump).
+
+# Complexity
+Time `O(2^k · k + 2^old_n)` (the `2^old_n` term is the precondition
+scan; can be folded into the scatter in a future optimisation but is
+kept separate here for auditability). Memory: one new `OrkanState` of
+size `2^k`; the old state is GC'd via finalizer.
+
+# Trigger
+`deallocate!` calls `compact_state!` automatically when
+`length(free_slots) >= 2 * GROW_STEP`, calibrated against Bennett's
+K-ancilla burst pattern (K up to ~7 per `apply_reversible!` should not
+fire mid-burst; compaction triggers only across wider library
+boundaries). Manual invocation is supported and idempotent.
+
+# Worked example
+`n_qubits=4`, `free_slots=[1,3]`, live wires at slots `[0,2]`. Old
+amplitudes (precondition: bits 1 and 3 must be 0):
+    amps[0b0000] = α    amps[0b0100] = β    (others ≈ 0)
+After compact, live_wires gets new slots `[0, 1]`. For each new index j:
+    j = 0b00 → bit 0 = 0 → old_index = 0       → new_amps[1] = α
+    j = 0b01 → bit 0 = 1 at old_slot 0 → old_index = 1   → new_amps[2] = old_amps[2]  (≈ 0)
+    j = 0b10 → bit 1 = 1 at old_slot 2 → old_index = 4   → new_amps[3] = β
+    j = 0b11 → bits at old slots 0,2   → old_index = 5   → new_amps[4] = old_amps[6] (≈ 0)
+
+# See also
+Bead Sturm.jl-059 (root cause + design history). The `AbstractContext`
+default is a no-op (see `src/context/abstract.jl`).
+"""
+function compact_state!(ctx::EagerContext)
+    # Phase 1+2 — read-only validation + precondition verification.
+    plan = _compact_plan(ctx)
+    plan === nothing && return ctx     # fast-path no-op
+    _compact_verify_freed_zero(ctx, plan)
+
+    # Phase 3 — build new state. May throw on OOM; if so, ctx is unchanged
+    # and `new_orkan` is dropped (finalizer reclaims the C buffer).
+    new_orkan = OrkanState(ORKAN_PURE, plan.new_capacity)
+    _compact_scatter!(new_orkan, ctx.orkan, plan)
+
+    # Pre-build the new wire_to_qubit so Phase 4 has only infallible writes.
+    new_w2q = Dict{WireID, Int}()
+    for (k, w) in enumerate(plan.live_wires)
+        new_w2q[w] = k - 1
+    end
+
+    # Snapshot pre-commit capacity so we can decide afterwards whether the
+    # released old Orkan buffer is large enough to be worth a GC pass.
+    old_capacity = ctx.capacity
+
+    # Phase 4 — atomic commit. No fallible calls between assignments;
+    # Julia field assignment on a mutable struct cannot throw.
+    ctx.orkan = new_orkan
+    ctx.capacity = plan.new_capacity
+    ctx.n_qubits = plan.new_n
+    ctx.wire_to_qubit = new_w2q
+    empty!(ctx.free_slots)
+    ctx._compact_count += 1
+
+    # If the released buffer was big (≥256 MiB at 24 qubits) force an
+    # incremental GC pass so its finalizer runs and the C heap is freed
+    # before the next `_grow_state!`. Otherwise transient memory peak
+    # would be (old big buffer) + (new grown buffer) at the next grow.
+    # For small states the GC pass is more expensive than the saved
+    # memory and slows tight loops; skip it.
+    if old_capacity >= 24
+        GC.gc(false)
+    end
+    return ctx
+end
+
+"""Deallocate a wire: measure it (discarding result) and recycle the slot.
+
+After the slot lands in `free_slots`, fire `compact_state!` if enough slots
+have accumulated to make compaction worthwhile (bead Sturm.jl-059). The
+threshold `2 * GROW_STEP` (= 8 with GROW_STEP=4) is calibrated against
+typical alloc/dealloc patterns: small enough to fire on a `ptrace!(q::QInt)`
+that releases ~5+ wires (capturing the per-iter cleanup in
+`_pep_mod_iter!`), while the cap-delta hysteresis in `compact_state!`
+bounds the resulting capacity-shrink-then-grow cycle to two GROW_STEPs at a
+time, keeping transient memory pressure within the half-RAM check in
+`_grow_state!` even on memory-constrained machines (~10 GiB free).
+"""
 function deallocate!(ctx::EagerContext, wire::WireID)
     wire in ctx.consumed && error("Wire $wire already consumed")
     # Partial trace = measure-and-discard. measure! handles collapse + recycle.
     # Blessed: this is the P2-blessed partial-trace path used by ptrace!(q).
     _blessed_measure!(ctx, wire)
+    if length(ctx.free_slots) >= 2 * GROW_STEP
+        compact_state!(ctx)
+    end
+    return nothing
 end
 
 live_wires(ctx::EagerContext) = collect(keys(ctx.wire_to_qubit))

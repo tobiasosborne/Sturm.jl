@@ -169,6 +169,24 @@ function _default_cleanup!(ctx::AbstractContext)
     return nothing
 end
 
+# ── State compaction (bead Sturm.jl-059) ──────────────────────────────────────
+
+"""
+    compact_state!(ctx::AbstractContext) -> ctx
+
+Compact the backend state to the live tensor factor, recovering memory
+and per-gate cost when many qubits have been recycled. The default is a
+no-op, returning `ctx` unchanged. Backends that own a state vector
+(`EagerContext`, `DensityMatrixContext`) override this with a real
+implementation.
+
+`TracingContext` and `HardwareContext` have no client-side amplitude
+buffer to shrink, so the no-op default is correct for them.
+
+See `compact_state!(::EagerContext)` for the concrete contract.
+"""
+compact_state!(ctx::AbstractContext) = ctx
+
 # ── Context propagation via task-local storage ────────────────────────────────
 
 """
