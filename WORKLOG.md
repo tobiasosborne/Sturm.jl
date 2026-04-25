@@ -4,6 +4,139 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 62: close `eiq` (CasesNode consumer fail-loud policy)
+
+Warm-up bead picked from the Session 61 handoff list. Closed cleanly in
+one pass. Touch points: 4 source files, 1 new test file (15 assertions),
+0 physics changes (this is IR plumbing, no Hamiltonian on file).
+
+### What I changed
+
+| File | Change |
+|------|--------|
+| `src/channel/channel.jl:20-32` | `Channel{In,Out}(::Vector{DAGNode}, ...)` compat ctor errors loudly on any non-`HotNode` (was: silent strip). Migration message points at `optimise(ch, :deferred)` and the raw-DAG `to_openqasm`. |
+| `src/passes/gate_cancel.jl:33-49` | `gate_cancel(::Vector{DAGNode})` compat overload errors loudly on any non-`HotNode` (was: silent strip). Same migration message. |
+| `src/channel/draw.jl:310-326` | `_draw_node!(::CasesNode, …)` adds `@warn maxlog=1 _id=(:sturm_cases_render_ascii, file, line)`, reusing the `_first_user_frame` helper from `f23`. Placeholder glyph preserved. |
+| `src/channel/pixels.jl:415-426` | `_paint_node_px!(::CasesNode, …)` same warn idiom, `_id=:sturm_cases_render_pixels`. Magenta stripe preserved. |
+| `test/test_cases_consumer_policy.jl` (new, 15 tests) | Pins all four behaviours plus a sanity test for the openqasm dynamic-circuit path that bead criterion (a) wanted erroring (see "Stale bead criterion" below). |
+| `test/runtests.jl:58` | Wires the new test file in after `test_openqasm_cases.jl`. |
+
+### Stale bead criterion (a) — openqasm.jl
+
+The bead description from 2026-04-17 said openqasm.jl "silently emits
+nothing (line ~112)" for CasesNode and asked for it to error. That is
+**stale** — a later session (the `tak` bead, see
+`src/channel/openqasm.jl:148-172`) added OpenQASM 3 dynamic-circuit
+emission so a raw-DAG `to_openqasm` now emits
+`if (c[i] == 1) { ... } else { ... }` for IBM/Quantinuum hardware. The
+docstring at line 9-13 explicitly documents this as the design.
+
+If I had implemented criterion (a) as written I would have regressed the
+hardware-export path. **Lesson: when picking up an old bead, always
+diff the bead description against the current source before scoping**.
+The other three criteria (b)(c)(d) were all live; (a) was obsolete.
+
+The `to_openqasm raw-DAG form emits dynamic-circuit if for CasesNode`
+test inside the new test file is a sanity pin so a future "fail-loud
+sweep" doesn't accidentally re-regress it.
+
+### Bead criterion (b) — gate_cancel "already correct"
+
+The bead text says `(b) gate_cancel leaves CasesNode untouched (already
+correct)`. The bead writer was thinking of the main per-wire pass —
+which **does** treat CasesNode as a barrier via
+`_barrier_wires(n::CasesNode)` at `src/passes/gate_cancel.jl:216-221`.
+What they missed was the `gate_cancel(::Vector{DAGNode})` compat
+overload at line 34-36 which silently filtered non-HotNode nodes out
+*before* they reached the pass internals. Same footgun shape as the
+Channel compat ctor at `channel.jl:20-22`.
+
+I treated "(b) already correct" as describing-the-spec, not
+describing-the-implementation: the spec says "leave CasesNode
+untouched", and the right way to satisfy that without silent data loss
+is to error. Existing test_passes.jl tests that pass `Vector{DAGNode}`
+with HotNode-only contents (the standard idiom) still work — the check
+fires only when a non-HotNode is actually present.
+
+### Pattern reuse: warn-once-per-source-location
+
+Both renderer warnings use the same `_first_user_frame` +
+`maxlog=1 _id=(:..., file, line)` pattern that f23 (P2 implicit-cast
+warning) introduced. The dedup id keys on the user's source location, so
+loop iterations at one site share one warning, two distinct sites each
+warn once. `_first_user_frame` walks the stacktrace and returns the
+first frame outside the Sturm source tree.
+
+If a future bead adds more "this is a v1 placeholder, beware" warnings,
+keep using this idiom and add a fresh `_id` symbol per warning class
+(`:sturm_cases_render_ascii`, `:sturm_cases_render_pixels` here).
+
+### Surprising find: the renderer CasesNode methods are currently dead code
+
+`Channel.dag` is typed `Vector{HotNode}` (`channel.jl:11`), and
+`to_ascii(::Channel)` / `to_png(::Channel)` are the only public renderer
+entries. Trace-emitted Channels never carry CasesNode (the constructor
+now errors if anyone tries to insert one). So the `_draw_node!(::CasesNode, …)`
+placeholder at `draw.jl:310` and `_paint_node_px!(::CasesNode, …)` at
+`pixels.jl:415` are unreachable from the public API today.
+
+Why did I add the warning anyway? (a) cheap insurance — if a future
+raw-DAG renderer entry ships, the warning lights up automatically;
+(b) the bead spec explicitly asked for it; (c) the dead-code sites also
+lack `_draw_touches(::CasesNode)` / `_glyph_width(::CasesNode)` methods,
+so any plumbing that bypasses the Channel ctor would `MethodError`
+before the warning fired — which is itself fail-loud. Defence in
+depth.
+
+To exercise the warning anyway, the new test file calls
+`_draw_node!` and `_paint_node_px!` directly with a hand-rolled
+`CasesNode`. This also serves as the API contract: the warning fires on
+the dispatched method, not on a wrapper.
+
+### Verification
+
+```text
+test_cases_consumer_policy.jl   15/15  (new)
+test_passes.jl                  49/49
+test_cases.jl                   36/36
+test_openqasm_cases.jl          17/17
+test_channel.jl                 44/44
+test_draw.jl                    53/53
+test_pixels.jl                  74/74
+```
+
+288 assertions across the affected consumer surface, no regressions.
+Per memory `sturm-jl-test-suite-slow` the full suite was not run; the
+six existing files cover every consumer site I touched.
+
+### Other lessons
+
+- **`@test_logs (:warn, regex) begin … end` is the right idiom** for
+  warn-once tests. First draft used `Test.TestLogger` directly with two
+  back-to-back calls — verbose, and `@test_logs` already gives the
+  right matcher. Reference: `test/test_implicit_cast.jl:40-46`.
+- **`Sturm._resolve_scheme(:birren_dark)` is the public-internal scheme
+  accessor**, not `_pixel_scheme` (which I guessed at first). Pixel
+  scheme fields: `bg`, `q_wire`, `c_wire`, `control`, `target`, `gate`,
+  `prep`, `measurement`, `discard`, `connector`, `shadow`. See
+  `src/channel/pixels.jl:79-88` for the struct.
+- **`_first_user_frame` is in `src/types/quantum.jl:68` and exported
+  module-internally** — callable from anywhere in `src/` as the
+  unqualified `_first_user_frame`. Two existing call sites
+  (`_warn_implicit_cast`, `_warn_direct_measure`) plus the two new
+  renderer warnings. If a third class of warning shows up, this is the
+  hook.
+
+### Files touched
+
+- `src/channel/channel.jl`, `src/passes/gate_cancel.jl`,
+  `src/channel/draw.jl`, `src/channel/pixels.jl`
+- `test/test_cases_consumer_policy.jl` (new),
+  `test/runtests.jl` (include line)
+- `WORKLOG.md` (this entry)
+
+---
+
 ## 2026-04-24 — Session end: handoff for next agent
 
 Orient yourself before touching anything:
