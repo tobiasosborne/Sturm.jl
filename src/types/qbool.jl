@@ -196,3 +196,43 @@ end
 Prepare a qubit using the current context (from task-local storage).
 """
 QBool(p::Real) = QBool(current_context(), p)
+
+"""
+    QBool(f::Function, ctx::AbstractContext, p::Real)
+    QBool(f::Function, p::Real)
+
+Do-block constructor (bead Sturm.jl-cbl). Mirrors Julia's `open(f, path)
+do stream … end` pattern: allocate a qubit with `P(|1⟩) = p`, run `f(q)`
+with `q` in scope, and partial-trace `q` at block exit — regardless of
+normal return OR exception.
+
+```julia
+@context EagerContext() begin
+    outcome = QBool(0.5) do q
+        H!(q)
+        Bool(q)         # consumes q; do-block returns the measurement
+    end
+end
+```
+
+If the body consumes `q` (via `Bool(q)` or an explicit `ptrace!(q)`), the
+finally clause skips the partial-trace — no double-consume. The body's
+return value is propagated.
+
+Useful for one-shot qubits where `@context` auto-cleanup feels too coarse
+(e.g., a scratch ancilla that should die mid-scope to free a slot for
+re-allocation on a capacity-bounded device). Composes cleanly with
+`@context`.
+"""
+function QBool(f::Function, ctx::AbstractContext, p::Real)
+    q = QBool(ctx, p)
+    try
+        return f(q)
+    finally
+        if !q.consumed
+            ptrace!(q)
+        end
+    end
+end
+
+QBool(f::Function, p::Real) = QBool(f, current_context(), p)

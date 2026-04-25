@@ -342,7 +342,7 @@ The channel-theoretic name for the explicit primitive is **`ptrace!(q)`** (parti
 
 **Why not `discard!`?** The old spelling `discard!(q)` is unidiomatic on four axes: (a) it speaks C-style resource-management vocabulary in user-facing code (P5 violation in spirit — Sturm shouldn't expose wire/resource concepts to users); (b) the bang-convention is wrong, since the qubit is **destroyed**, not mutated; (c) the name is silent on the physics — the operation IS partial trace and should be named for that; (d) requiring users to call it explicitly was the footgun behind bead `Sturm.jl-hlk` (forgotten `discard!` leaks slots until `MAX_QUBITS` errors). `discard!` remains as a zero-overhead `const` alias for backcompat; prefer `ptrace!`.
 
-**Current shipped state**: `@context` auto-partial-traces unconsumed resources at block exit (bead `Sturm.jl-sv3` ✓). `ptrace!` is the canonical explicit primitive (bead `Sturm.jl-diy` ✓); `discard!` aliases to it. `QBool(p) do q … end` do-block allocation is not yet implemented (bead `Sturm.jl-cbl`, independent ergonomics).
+**Current shipped state**: `@context` auto-partial-traces unconsumed resources at block exit (bead `Sturm.jl-sv3` ✓). `ptrace!` is the canonical explicit primitive (bead `Sturm.jl-diy` ✓); `discard!` aliases to it. `QBool(p) do q … end` and `QInt{W}(value) do reg … end` do-block allocation are now supported (bead `Sturm.jl-cbl` ✓) — partial-trace fires at block exit on either normal return or exception, and is suppressed if the body explicitly consumes the resource via `Bool(q)` / `Int(reg)` / `ptrace!`.
 
 The overall design target: **users don't write resource-cleanup primitives.** Quantum mechanics doesn't change the Julia resource-management story; partial trace is what GC means for qubits.
 

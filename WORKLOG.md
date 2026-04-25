@@ -4,6 +4,67 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-25 — Session 68: bead `Sturm.jl-cbl` closed, do-block allocation lands
+
+Headline: `QBool(p) do q … end` and `QInt{W}(value) do reg … end` now
+work. README's "not yet implemented" disclaimer drops. Mirrors Julia's
+`open(f, path) do stream … end` pattern: scoped lifetime, automatic
+partial-trace on block exit (normal return or exception), suppressed
+if the body explicitly consumes the resource.
+
+### What landed
+
+  * `src/types/qbool.jl` — new methods `QBool(f::Function, ctx, p::Real)`
+    and `QBool(f::Function, p::Real)`. Allocates a QBool, runs `f(q)`
+    in a try/finally, ptraces `q` on exit only if `!q.consumed`.
+  * `src/types/qint.jl` — same shape: `QInt{W}(f::Function, ctx, value)`
+    and `QInt{W}(f::Function, value)`.
+  * `test/test_do_block_alloc.jl` (new) — 44 assertions across 12
+    testsets covering: basic flow, return-value propagation, cleanup
+    on exception, no double-ptrace when body consumes, nested
+    composition, explicit-context form, mid-scope ancilla pattern.
+    Wired into runtests.jl.
+  * `README.md` — replaces the "not yet implemented" disclaimer with
+    a description of the new behaviour.
+
+### Why the body's-consumed check is mandatory
+
+Without `if !q.consumed; ptrace!(q); end` in the finally, a body that
+calls `Bool(q)` (which consumes via `_blessed_measure!`) followed by
+the implicit do-block exit would attempt to ptrace an already-consumed
+QBool. `consume!(q)` errors loud on already-consumed wires (linear
+resource discipline, P5 in spirit). The conditional is what lets the
+common case "consume q via Bool(q) and propagate" work without the
+caller writing extra ptrace boilerplate.
+
+### Test prediction got tripped by `n_qubits` semantics
+
+The "interop: QBool inside @context, mid-scope" testset initially
+asserted `ctx.n_qubits == 1` after a one-shot scratch ancilla was
+ptraced. n_qubits is sticky upward by design — only `compact_state!`
+shrinks it, and the ptrace fired sub-threshold (1 < 8). The right
+invariant is **live count**: `length(ctx.wire_to_qubit) == 1`. Same
+trap I caught last session in test_compact_state_dm.jl. **Lesson:
+default to `length(ctx.wire_to_qubit)` when asserting "this many
+wires are live"; reach for `ctx.n_qubits` only when actually pinning
+the slot bookkeeping invariant.**
+
+### Verification
+
+  - test_do_block_alloc.jl: 44/44 ✓
+  - test_qint.jl: 562/562 ✓ (the constructor file I edited)
+  - smoke test on existing QBool/QInt constructor paths: ✓
+
+### Open follow-ons
+
+  - **`Sturm.jl-hlk`** (deferred from this session) — QBool/QInt
+    finalizer for the case where users DON'T use either `@context`
+    auto-cleanup or a do-block. The do-block constructor lands first
+    because it's idiomatic and ergonomic; the finalizer is a safety
+    net for non-idiomatic code. Both can coexist.
+
+---
+
 ## 2026-04-25 — Session 67: bead `Sturm.jl-179` closed, STURM_COMPACT_VERIFY env-gate
 
 Headline: ships the env-gate as design-on (default-enabled), not an
