@@ -92,6 +92,40 @@ Prepare QInt{W} in the current context.
 """
 QInt{W}(value::Integer) where {W} = QInt{W}(current_context(), value)
 
+"""
+    QInt{W}(f::Function, ctx::AbstractContext, value::Integer)
+    QInt{W}(f::Function, value::Integer)
+
+Do-block constructor (bead Sturm.jl-cbl). Allocates a `QInt{W}` register
+holding `value`, runs `f(reg)` with `reg` in scope, and partial-traces
+`reg` at block exit — regardless of normal return OR exception. Mirrors
+Julia's `open(f, path) do stream … end` pattern.
+
+```julia
+@context EagerContext() begin
+    result = QInt{8}(42) do reg
+        Int(reg)        # consumes reg; do-block returns the measurement
+    end
+end
+```
+
+If the body consumes `reg` (via `Int(reg)` or an explicit `ptrace!(reg)`),
+the finally clause skips the partial-trace — no double-consume. The
+body's return value is propagated.
+"""
+function QInt{W}(f::Function, ctx::AbstractContext, value::Integer) where {W}
+    q = QInt{W}(ctx, value)
+    try
+        return f(q)
+    finally
+        if !q.consumed
+            ptrace!(q)
+        end
+    end
+end
+
+QInt{W}(f::Function, value::Integer) where {W} = QInt{W}(f, current_context(), value)
+
 # ── Type boundary: measurement ───────────────────────────────────────────────
 #
 # P2: `Int(q)` is the EXPLICIT cast (silent). `convert(Int, q)` — which Julia
