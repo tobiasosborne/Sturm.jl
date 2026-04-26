@@ -303,3 +303,29 @@ function _wire_set(wire::WireID, controls)
     for c in controls; push!(s, c); end
     s
 end
+
+
+# ── AbstractPass wrapper (Sturm.jl-7ab) ─────────────────────────────────────
+#
+# Barrier-aware: gate_cancel treats ObserveNode/DiscardNode as hard barriers
+# via _barrier_wires (above), and errors loudly on CasesNode (the
+# Vector{DAGNode} overload). Either way, no silent corruption, so
+# handles_non_unitary = true.
+
+"""
+    GateCancelPass <: AbstractPass
+
+Commutation-aware rotation merging + self-inverse cancellation. Wraps
+[`gate_cancel`](@ref). Barrier-aware: treats ObserveNode/DiscardNode as
+hard barriers, errors on CasesNode.
+"""
+struct GateCancelPass <: AbstractPass end
+
+pass_name(::Type{GateCancelPass}) = :cancel
+handles_non_unitary(::Type{GateCancelPass}) = true
+
+run_pass(::GateCancelPass, dag::Vector{DAGNode}) =
+    DAGNode[n for n in gate_cancel(dag)]
+
+register_pass!(:cancel, GateCancelPass())
+register_pass!(:cancel_adjacent, GateCancelPass())

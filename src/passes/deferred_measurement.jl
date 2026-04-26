@@ -121,3 +121,31 @@ end
 function _add_control(node::DAGNode, ctrl::WireID)
     error("Cannot add control to $(typeof(node))")
 end
+
+# ── AbstractPass wrapper (Sturm.jl-7ab) ─────────────────────────────────────
+#
+# Channel-aware: defer_measurements is the canonical lowering for
+# ObserveNode + CasesNode → controlled gates (Nielsen-Chuang §4.4).
+# handles_non_unitary = true.
+
+"""
+    DeferMeasurementsPass(strict::Bool = false) <: AbstractPass
+
+Lower `ObserveNode + CasesNode` pairs to controlled-gate sequences per
+Nielsen-Chuang §4.4 (deferred measurement). Wraps [`defer_measurements`](@ref).
+
+  * `strict = true`: error on un-lowerable patterns (used by `trace()`).
+  * `strict = false` (default): leave un-lowerable patterns intact.
+"""
+Base.@kwdef struct DeferMeasurementsPass <: AbstractPass
+    strict::Bool = false
+end
+
+pass_name(::Type{DeferMeasurementsPass}) = :deferred
+handles_non_unitary(::Type{DeferMeasurementsPass}) = true
+
+run_pass(p::DeferMeasurementsPass, dag::Vector{DAGNode}) =
+    defer_measurements(dag; strict = p.strict)
+
+register_pass!(:deferred, DeferMeasurementsPass())
+register_pass!(:defer_measurements, DeferMeasurementsPass())

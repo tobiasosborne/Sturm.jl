@@ -4,6 +4,117 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-26 — Session 73: bead `Sturm.jl-7ab` closed (AbstractPass + registry)
+
+Headline: Pillar 3 ("extensibility") realised at the pass layer.
+`AbstractPass` + `handles_non_unitary` trait + symbol/instance-keyed
+registry land. Existing `gate_cancel` and `defer_measurements` wrap into
+`GateCancelPass` and `DeferMeasurementsPass`. `optimise(ch, :symbol)`
+backward-compat preserved byte-identical. New 34-test
+`test_passes_registry.jl` testset passes; existing 49-test
+`test_passes.jl` still passes.
+
+### Design (3+1 — two Opus proposers, synthesis review, single implementer)
+
+Two Opus proposers ran independently with the same brief (read recon
+agents' output, no awareness of each other). Both arrived at ~90% the
+same shape: `abstract type AbstractPass`, `run_pass(p, ::Vector{DAGNode})
+-> Vector{DAGNode}`, runtime gate via `handles_non_unitary`, default
+`false` (conservative — assumes unsafe). Differences synthesised:
+
+  * **Trait dispatches on `Type{<:AbstractPass}`, not on instance** (A's
+    pick). The channel-safety property belongs to the algorithm, not to
+    a configured instance — `MyPass(strict=true)` and `MyPass(strict=false)`
+    can't sensibly disagree.
+  * **`Dict{Symbol, AbstractPass}` registry storing instances** (B's pick).
+    Direct symbol back-compat path; `registered_passes()` returns
+    instances ready for `Sturm.jl-7kg` enumeration.
+  * **`Base.@kwdef` for `DeferMeasurementsPass`** (B's pick). Ergonomic
+    `DeferMeasurementsPass(strict=true)`.
+  * **Explicit `register_pass!` calls at module scope** (A's pick).
+    Explicit > `__init__` magic per CLAUDE.md.
+  * **Full remediation guidance in the gate's error message** (B's pick).
+    "Lower measurements first / mark channel-aware / partition" — three
+    concrete paths.
+
+### handles_non_unitary semantics (crucial)
+
+`true` means EITHER (a) channel-aware (operates correctly across
+non-unitary nodes — `DeferMeasurementsPass`) OR (b) barrier-aware
+(treats them as hard barriers, optimises only within unitary subblocks
+— `GateCancelPass`'s existing `_barrier_wires` machinery). Both are
+safe; both opt in. `false` (default) means "naive about barriers" — a
+ZX simp / phase-poly extraction that doesn't know about measurement and
+would silently corrupt. The runtime gate fires on `false` × any
+non-unitary node.
+
+This semantics preserves backward compat: `optimise(ch_with_measurement,
+:cancel)` STILL works because `GateCancelPass` is barrier-aware (true).
+
+### Files touched
+
+  * `src/passes/abstract.jl` — NEW. AbstractPass, traits, registry, helpers.
+  * `src/passes/gate_cancel.jl` — appended `GateCancelPass` wrapper +
+    `register_pass!(:cancel, ...)` + `register_pass!(:cancel_adjacent, ...)`.
+  * `src/passes/deferred_measurement.jl` — appended `DeferMeasurementsPass`
+    (`Base.@kwdef`) + `register_pass!(:deferred, ...)` +
+    `register_pass!(:defer_measurements, ...)`.
+  * `src/passes/optimise.jl` — REPLACED. Now hosts the three `optimise`
+    method dispatches (`Vector{<:AbstractPass}`, single `AbstractPass`,
+    `Symbol`). Symbol path delegates to `get_pass(name)` with `:all`
+    special-cased to `[get_pass(:deferred), get_pass(:cancel)]`.
+  * `src/Sturm.jl` — included `passes/abstract.jl` BEFORE the existing
+    pass files. Exported `AbstractPass`, `run_pass`, `pass_name`,
+    `handles_non_unitary`, `GateCancelPass`, `DeferMeasurementsPass`,
+    `register_pass!`, `registered_passes`, `get_pass`.
+  * `test/test_passes_registry.jl` — NEW. 34 tests; 10 testsets covering
+    built-in registration, `:bogus` error formatting, trait declarations,
+    Vector + single-pass + Pipeline composition, runtime gate firing AND
+    bypass via override, user-side `register_pass!` + Symbol dispatch,
+    `DeferMeasurementsPass(strict=true)` propagation.
+  * `test/runtests.jl` — added `include("test_passes_registry.jl")`
+    after the existing `test_passes.jl` line.
+
+### Gotchas hit and recorded for next agent
+
+  * **Defining a struct inside `@testset` triggers a Julia world-age
+    issue when methods on it are then called from the same expansion.**
+    First test run errored: "Got exception outside of a @test" inside the
+    testset that did `struct MyNaivePass <: AbstractPass end` then
+    immediately `optimise(ch, MyNaivePass())`. Fix: hoist all
+    fixture-pass struct definitions and method overrides to module-top
+    (above the `@testset` block). The testset only references them.
+  * **`ptrace!(q)` returns `Vector{WireID}`, not `nothing`.** The `trace`
+    function only accepts `QBool`, `Tuple`, or `nothing` as the do-block
+    return value. A naive `trace(1) do q; q.θ += π/4; ptrace!(q); end`
+    errors with "trace: unexpected return type Vector{WireID}". Fix:
+    explicit `nothing` (or `;`) on the next line.
+  * **`Bool(q)` inside `trace()` is forbidden by P4 axiom** — produces
+    a loud error with remediation pointing at `cases(q, () -> nothing)`
+    or `ptrace!(q)`. Initial test attempt used `Bool(q)` to construct an
+    `ObserveNode`; correct path is `ptrace!(q)` for a `DiscardNode`
+    (which trips the same `_is_non_unitary` gate). The error is exactly
+    the kind P4 was designed to surface.
+
+### Out of scope (separate beads — NOT done here)
+
+  * Sim-equivalence harness — `Sturm.jl-7kg` (sibling, open). Now
+    unblocked: `registered_passes()` returns instances ready for the
+    diamond-norm property tests.
+  * Pass cost / effect reporting — not in 7ab description.
+  * Barrier partitioner — `Sturm.jl-vmd`, defunct unless `Sturm.jl-d99`
+    (Choi phase polynomials on channels) fails as a research direction.
+  * Pass lookup by string name (Dict-of-strings) — Symbol keys cover
+    every current use case.
+
+### Beads state
+
+  * Closed: `Sturm.jl-7ab`.
+  * Now actionable: `Sturm.jl-7kg` (sim-equivalence harness — direct
+    consumer of `registered_passes()`).
+
+---
+
 ## 2026-04-26 — Session 72: bead `Sturm.jl-6oc` closed, perf bead `Sturm.jl-2qp` filed
 
 Headline: `shor_order_E` registered tests added at N=5; `_shor_mulmod_E_controlled!`
