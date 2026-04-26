@@ -40,6 +40,7 @@ include("bennett/bridge.jl")
 include("gates.jl")
 
 # Optimisation passes
+include("passes/abstract.jl")
 include("passes/gate_cancel.jl")
 include("passes/deferred_measurement.jl")
 include("passes/optimise.jl")
@@ -148,6 +149,9 @@ export ClassicalRef
 
 # Optimisation passes
 export gate_cancel, defer_measurements, optimise
+export AbstractPass, run_pass, pass_name, handles_non_unitary
+export GateCancelPass, DeferMeasurementsPass
+export register_pass!, registered_passes, get_pass
 
 # Noise
 export depolarise!, dephase!, amplitude_damp!, classicalise
