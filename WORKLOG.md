@@ -113,6 +113,102 @@ This semantics preserves backward compat: `optimise(ch_with_measurement,
   * Now actionable: `Sturm.jl-7kg` (sim-equivalence harness — direct
     consumer of `registered_passes()`).
 
+### Handoff — concrete next steps
+
+Three priority candidates, in descending leverage. Pick ONE, claim with
+`bd update <id> --claim`, and use the entry points below as the cold
+start.
+
+#### A. `Sturm.jl-2qp` (P1 BUG — 750× per-gate slowdown in shor_order_E)
+
+This is the only P1. Unblocks N=15 statistical acceptance for the closed
+6oc bead; would let `probe_shor_E_N15.jl` finish in <hour rather than
+~6 hours; gates user-scale windowed-arithmetic work generally.
+
+  1. **Reproduce**:
+     `OMP_NUM_THREADS=16 LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so julia --project probe_mulmod_E_bench.jl`
+     Expect ~74 s/mulmod at N=15 c_mul=1, ~186 s at c_mul=2. D-semi at
+     N=15 t=3 is ~250 ms/mulmod (factor 750× per-gate).
+  2. **Read first**: `src/library/shor.jl:902-961` (`_shor_mulmod_E_controlled!`),
+     then `src/library/arithmetic.jl:582-1265` (`plus_equal_product_mod!`,
+     `qrom_lookup_xor!`, `_binary_to_unary!`, `_fredkin!`,
+     `qrom_lookup_xor_cleanancilla!`). Top-down trace.
+  3. **Investigate hypotheses in priority order** (per bead 2qp):
+       (i)   `qrom_lookup_xor!` fan-out — wrap
+             `apply_cx!`/`apply_ry!`/`apply_rz!` in `src/context/eager.jl`
+             with a `Ref{Int}` counter at the top of the file; run one
+             `_shor_mulmod_E_controlled!` and one `mulmod_beauregard!` at
+             N=15 with the counter; compare primitive ccall counts to the
+             DAG node count from `probe_toffoli_DE.jl`. If E's ratio
+             (ccalls / DAG nodes) is much higher than D's, the fan-out
+             hypothesis is confirmed.
+       (ii)  If fan-out is the cause, profile inside `qrom_lookup_xor!`
+             (`src/bennett/bridge.jl:523`) and `plus_equal_product_mod!`
+             internals to find which abstract DAG node is exploding.
+       (iii) If counts are comparable, use `Profile.@profile` /
+             `using ProfileView` for stack-frame-level hot-spot.
+  4. **Closure**: identify root cause, file fix bead (likely a perf-fix
+     bead with concrete code change), re-run probe_mulmod_E_bench.jl,
+     verify ≥10× speedup.
+
+#### B. `Sturm.jl-7kg` (P2 FEATURE — pass sim-equivalence harness)
+
+Sibling unblocked by today's 7ab work. The new `registered_passes()`
+enumeration is the harness's foundation.
+
+  1. **Read first**: `CLAUDE.md` lines 71-95 (Channel IR vs Unitary
+     Methods); `test/test_passes.jl` for the existing structural-test
+     pattern; `KNOWN_ISSUES.md:24` for the gap statement.
+  2. **Design**: harness lives in `test/test_pass_equivalence.jl`. For
+     each `pass in registered_passes()`:
+       * generate random small channels (W ≤ 4 wires, ≤ 20 nodes)
+       * if `handles_non_unitary(pass) == false`: only unitary
+         channels; statevector compare via `EagerContext`
+       * if `true`: include channels with `ObserveNode`/`DiscardNode`;
+         compare measurement statistics via N-shot sampling, OR
+         compare Choi matrices via partial-trace construction
+  3. **Property assertion**: `‖simulate(pass(ch)) − simulate(ch)‖ ≤ ε`
+     (operator-1 norm on statevector / diamond-norm on channels;
+     statevector L1 is fine for v0.1).
+  4. **Closure**: harness asserts existing GateCancelPass + DeferMeasurementsPass
+     are CPTP-equivalent on the random suite; ε = 1e-10 for
+     deterministic passes.
+
+#### C. `Sturm.jl-dxk` (P2 BUG — Parker-Plenio iQFT D-semi/E twin)
+
+Quick-win extraction. Probably one session.
+
+  1. **Read** `src/library/shor.jl:1163-1235` (`shor_order_D_semi`) and
+     `1313-1386` (`shor_order_E`). The two semi-classical iQFT loops are
+     byte-for-byte identical except for the mulmod call (line 1206 vs
+     1361) — verify with `diff <(sed -n 1163,1235p src/library/shor.jl)
+     <(sed -n 1313,1386p src/library/shor.jl)`.
+  2. **Extract** `_parker_plenio_iqft!(target, mulmod_fn, ::Val{t}, N::Int) -> y_tilde::Int`
+     into a new section of `src/library/shor.jl` (or `src/library/patterns.jl`
+     if it's general enough — the construction is from Parker & Plenio
+     2000 arXiv:quant-ph/0002014, not Shor-specific).
+  3. **`mulmod_fn`** is a closure: `(target, a_j, ctrl) -> ...`. For
+     D-semi: `(t, a, c) -> mulmod_beauregard!(t, a, N, c)`. For E:
+     `(t, a, c) -> _shor_mulmod_E_controlled!(t, a, c; c_mul=c_mul)`.
+  4. **Tests**: existing `test_shor.jl` Impl D-semi + Impl E testsets
+     must keep passing. Run via:
+     `OMP_NUM_THREADS=16 LIBORKAN_PATH=... julia --project -e 'using Sturm, Test; include("test/test_shor.jl")'`
+     (~15 minutes total).
+  5. **Closure**: bead dxk closes; future Mosca-Ekert variant (`npd`)
+     becomes a 5-line wrapper around the same helper.
+
+### Environment reminders for next agent
+
+  * `OMP_NUM_THREADS=16` — confirmed working on this device (64 HW
+    threads); Sturm respects pre-set value, won't downcap.
+  * `LIBORKAN_PATH=/home/tobiasosborne/Projects/orkan/cmake-build-release/src/liborkan.so`
+  * Julia processes MUST be strictly serial on this device (per saved
+    feedback memory) — never run two `julia --project` concurrently.
+  * Verbose output: `println + flush(stdout)` per stage, ENTER/EXIT
+    tags, wall-clock per shot. Blank-screen-waiting is a fail.
+  * Slow-test discipline: `probe_*.jl` for benches, `test_*.jl` for
+    registered. Never put a >10-min test in the registered suite.
+
 ---
 
 ## 2026-04-26 — Session 72: bead `Sturm.jl-6oc` closed, perf bead `Sturm.jl-2qp` filed
