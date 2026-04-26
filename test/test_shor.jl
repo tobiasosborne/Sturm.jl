@@ -358,6 +358,59 @@ using Sturm
         end
     end
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # Implementation E — Gidney-Ekerå 2021 windowed arithmetic mulmod
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # Same Parker-Plenio semi-classical cascade as Impl D-semi, but the
+    # mulmod uses Gidney-Ekerå 2021 §2.5 / Fig 2 windowed arithmetic on a
+    # coset-encoded target (Gidney 1905.08488). Each c_mul-qubit window of
+    # additions is fused into one QROM lookup-add via
+    # `_shor_mulmod_E_controlled!`.
+    #
+    # Registered tests use N=5, c_mul=1 — small enough for a session-length
+    # statistical sweep (~9-11s/shot on this device, measured via
+    # `probe_mulmod_E_bench.jl`). N=15 currently runs ~75s/mulmod at c_mul=1
+    # and ~190s/mulmod at c_mul=2, so the bead's canonical N=15 acceptance
+    # criteria — Sturm.jl-6oc (a) 50 shots ≥30% on (7,15;t=3),
+    # (c) shor_factor_E(15) ≥50% — live in `probe_shor_E_N15.jl`. The
+    # Toffoli-count comparison vs Impl D (criterion (d)) lives in
+    # `probe_toffoli_DE.jl`. The N=15 perf gap is tracked separately.
+    #
+    # N=5 ground truth (5 prime, all of {2,3,4} coprime):
+    #   a=2 mod 5 → r=4
+    #   a=3 mod 5 → r=4
+    #   a=4 mod 5 → r=2
+    # Ideal distribution at t=3 for r=4: ỹ ∈ {0,2,4,6} uniform, decoder
+    # returns r ∈ {1,4,2,4} → ~50% r=4. cpad=1 perturbs slightly.
+    @testset "Impl E: Gidney-Ekerå 2021 windowed arithmetic mulmod" begin
+
+        @testset "order_E(2, 5; t=3) ≈ 4 with probability ≥ 0.30" begin
+            @context EagerContext() begin
+                N_shots = 30
+                hits = 0
+                for _ in 1:N_shots
+                    if shor_order_E(2, 5, Val(3); cpad=1, c_mul=1) == 4; hits += 1; end
+                end
+                @test hits / N_shots >= 0.30
+            end
+        end
+
+        @testset "order_E on all 3 N=5 coprime bases" begin
+            for (a, r_exp) in [(2, 4), (3, 4), (4, 2)]
+                @context EagerContext() begin
+                    N_shots = 10
+                    hits = 0
+                    for _ in 1:N_shots
+                        if shor_order_E(a, 5, Val(3); cpad=1, c_mul=1) == r_exp; hits += 1; end
+                    end
+                    @test hits / N_shots >= 0.20
+                end
+            end
+        end
+
+    end
+
     # ─── Old impl-C testsets preserved for reference ONLY (do not execute) ───
     # Re-enable if/when someone lands a permutation-synthesis mulmod that
     # keeps HWM at impl-A's envelope (~18 qubits) on Orkan.

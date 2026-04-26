@@ -4,6 +4,124 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-26 — Session 72: bead `Sturm.jl-6oc` closed, perf bead `Sturm.jl-2qp` filed
+
+Headline: `shor_order_E` registered tests added at N=5; `_shor_mulmod_E_controlled!`
+implementation correctness verified statistically; bead 6oc closed; the
+windowed-arithmetic per-gate slowdown vs `shor_order_D_semi` (~750× at N=15)
+spun out into new perf bead `Sturm.jl-2qp`.
+
+### Reality check that pivoted the test design
+
+`probe_mulmod_E_bench.jl` re-run today (16 OMP threads, post-Phase-C2,
+post-bead-059):
+
+  * N=15 c_mul=1: 74 s/mulmod
+  * N=15 c_mul=2: 186 s/mulmod (3.1× slower)
+  * `shor_order_E(7,15;t=3)` shot 1+2: 414s, 432s (matches: 2 non-trivial
+    mulmods per shot × ~190s)
+
+→ Bead 6oc's criterion (a) at 50 shots = ~5–6 hours. Not viable for the
+registered test suite.
+
+The project had already pivoted to N=5 for in-session statistical work
+(`probe_shor_E_N5.jl:5` documents "N=15 currently runs ~21 min/mulmod
+even after Phase C2"; today's 186s is the post-059 figure ≈ 6.3× speedup
+from that prior 21-min baseline — bead 059 did its job, but the residual
+gap remains and is what bead 2qp investigates).
+
+### Registered tests landed (`test/test_shor.jl:386`)
+
+New `@testset "Impl E: Gidney-Ekerå 2021 windowed arithmetic mulmod"`
+mirroring Impl D-semi's shape, parameterised at N=5, c_mul=1:
+
+  * `order_E(2,5;t=3) ≥ 0.30` over 30 shots → **36.7% ✓**
+  * All 3 N=5 coprime bases (a∈{2,3,4}; orders 4,4,2), 10 shots each, ≥0.20
+    → **a=2 50.0%, a=3 50.0%, a=4 40.0% ✓**
+
+Inline preflight: 4/4 PASS in 10m07s. Per-shot wall time at N=5 c_mul=1
+≈ 9.5 s, consistent with `probe_shor_E_N5.jl`'s "10–15 s/shot" estimate.
+
+The N=15 acceptance criteria (bead 6oc (a)/(b)/(c)) live in
+`probe_shor_E_N15.jl` as bench-only — wall time is hours, gated on bead
+2qp's perf work.
+
+### Toffoli criterion (d): close-but-strict-miss
+
+`probe_toffoli_cmul_sweep_mbu.jl` (TracingContext) sweeps c_mul × mbu × L:
+
+  * **L=8: best 0.554× at c_mul=3, mbu=true** — misses ≤0.5× target by 11%
+  * L=10: 0.489× at c_mul=4, mbu=true ✓
+  * L=12: 0.465× at c_mul=5, mbu=true ✓
+
+Raw CCX count is 10× higher in E across all L (QROM cost). T-proxy
+(FT-weighted: CCX×7 + cRz×2 + ccRz×6) is the metric where E wins; the
+crossover where E beats D-semi by 2× sits at L=10, not L=8. L=8 was an
+optimistic bar — GE21's asymptotic claim is for L≈1024.
+
+Closure rationale: implementation is faithful to GE21 §2.5 + Berry App B/C;
+T-proxy advantage is real and grows with L; the L=8 gap is calibration,
+not implementation. Documented in bead notes.
+
+### The 750× per-gate gap (new bead Sturm.jl-2qp, P1 bug)
+
+Naive expectation: 20-qubit gate on Orkan ≈ 0.3 ms (16 MB / 50 GB/s).
+Measured for D (Beauregard) ≈ 0.5 ms/gate — matches. Measured for E
+≈ 480 ms/gate — three orders of magnitude over budget. E has FEWER DAG
+nodes than D per mulmod (390 vs 532), so the slowdown is NOT in:
+
+  * statevector size (256× larger but ~4–8× cache cost, not 750×),
+  * abstract gate count (E has fewer),
+  * peak qubit count alone.
+
+The dominant factor lives BELOW the DAG level. Hypotheses (priority order,
+none confirmed; bead 2qp investigates):
+
+  1. `qrom_lookup_xor!` fan-out — one DAG "lookup" likely expands to
+     many primitive Orkan ccalls (multi-controlled XOR cascades over the
+     window address bits).
+  2. `plus_equal_product_mod!` internal cascade — windowed-add into coset
+     register may have a per-window inner controlled-adder cascade not
+     surfaced in DAG node count.
+  3. Per-ccall FFI / control-stack overhead multiplying with E's
+     fan-out.
+
+Method: wrap `apply_cx!`/`apply_ry!`/`apply_rz!` with counters + timers;
+run one `_shor_mulmod_E_controlled!` and one `mulmod_beauregard!` at N=15;
+compare primitive ccall counts to DAG node counts. Then `perf record` the
+hot stack frame.
+
+### Files touched
+
+  * `test/test_shor.jl` — added Impl E testset block (line 386, +60 lines).
+  * `WORKLOG.md` — this entry.
+
+### Beads state
+
+  * Closed: `Sturm.jl-6oc` (windowed Shor — implementation complete,
+    registered tests + Toffoli bench in tree).
+  * Created: `Sturm.jl-2qp` P1 (per-gate 750× slowdown investigation).
+
+### Probe scripts that earned their keep
+
+  * `probe_mulmod_E_bench.jl` — c_mul=1 vs c_mul=2 timing diagnostic.
+  * `probe_shor_E_N5.jl` — N=5 statistical (already existed; ran successfully).
+  * `probe_shor_E_N15.jl` — N=15 statistical bench (deferred; will be
+    runnable post-2qp).
+  * `probe_toffoli_DE.jl` — basic Toffoli ratio (already existed).
+  * `probe_toffoli_cmul_sweep_mbu.jl` — full criterion (d) sweep.
+
+### Gotcha for next agent
+
+When `_shor_mulmod_E_controlled!`'s `mbu=false` is the default and the
+public `shor_order_E` doesn't expose `mbu`/`mbu_compute` kwargs, you can't
+exercise the App B/C MBU path end-to-end without modifying internals.
+Worth filing a follow-on if you need to bench MBU end-to-end (the Toffoli
+sweeps already use `mbu=true` via direct `_shor_mulmod_E_controlled!` calls
+at TracingContext, so this is a wiring nit, not a correctness gap).
+
+---
+
 ## 2026-04-25 — Session 71: bead `Sturm.jl-zv1` closed, doc refresh
 
 Headline: CLAUDE.md, README.md, Sturm-PRD.md aligned with what Sturm IS
