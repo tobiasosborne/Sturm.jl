@@ -125,6 +125,40 @@ using Sturm: ProtocolOp, ProtocolError, PROTOCOL_VERSION,
         @test_throws ProtocolError json_decode("1 2")  # trailing data
     end
 
+    @testset "Parser raises ProtocolError, not AssertionError, on untrusted bytes — bead Sturm.jl-mx3g" begin
+        # Pre-fix _parse_object! / _parse_array! / _parse_string! used
+        # `@assert _peek(p) == UInt8('X')` on raw network bytes. An
+        # AssertionError propagates past `catch e isa ProtocolError` in
+        # _handle_connection and kills the connection task. Each parser
+        # entry point must surface ProtocolError instead.
+        # All three error types are reachable through the public
+        # json_decode entry point with malformed input that confuses
+        # _parse_value!'s dispatch — but the internal parsers must also
+        # be defensive. Fuzz a battery of malformed payloads and assert
+        # NO AssertionError ever escapes; only ProtocolError.
+        for payload in (
+            "",                        # empty
+            "{",                       # unterminated object
+            "[",                       # unterminated array
+            "\"",                      # unterminated string
+            "{\"k\"",                  # missing colon
+            "{\"k\":}",                # missing value
+            "[1,2",                    # missing close
+            "{\"k\":1,",               # trailing comma + EOF
+            "abc",                     # bare garbage
+            "\\xff",                   # high-byte garbage
+            "\x00\x01\x02",            # raw bytes
+            ":",                       # leading punct
+            "}",                       # bare close
+            "]",
+            "\"\\u",                   # broken unicode escape
+        )
+            err = try; json_decode(payload); catch e; e; end
+            @test err isa ProtocolError
+            @test !(err isa AssertionError)
+        end
+    end
+
     @testset "Message envelopes carry version + op" begin
         req = open_session_request()
         @test req["v"] == PROTOCOL_VERSION

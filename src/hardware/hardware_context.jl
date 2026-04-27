@@ -61,7 +61,13 @@ function _finalize_hardware_context(ctx::HardwareContext)
     ctx.closed && return
     Threads.@spawn try
         close(ctx)
-    catch
+    catch e
+        # Bead Sturm.jl-mx3g: bare catch swallowed every signal a finalizer
+        # could surface (transport drop, server-side close failure, OOM in
+        # serialisation). Log the error AND its stack so a leaked session
+        # leaves a trail. Don't rethrow — finalizer Tasks have no
+        # supervisor and a thrown error from here is dropped by the runtime.
+        @error "HardwareContext finalizer failed during close()" exception = (e, catch_backtrace())
     end
 end
 
