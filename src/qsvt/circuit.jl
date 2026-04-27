@@ -545,18 +545,26 @@ function _lift_combined_to_be(be::BlockEncoding{N, A},
     return BlockEncoding{N, new_a}(lifted_oracle!, lifted_oracle_adj!, 2.0)
 end
 
-const _OAA_PHASES_CACHE = Ref{Union{Nothing, Vector{Float64}}}(nothing)
+const _OAA_PHASES_DEG3_CACHE = Ref{Union{Nothing, Vector{Float64}}}(nothing)
 
 """
-    _oaa_phases_half() -> Vector{Float64}
+    _oaa_phases_half_deg3() -> Vector{Float64}
 
-Compute Z-constrained QSVT phases for -T_3(x). Cached.
+Z-constrained QSVT phases for -T₃(x) = 3x - 4x³ (degree-3 only). Cached.
 
-Ref: GSLW (2019), arXiv:1806.01838, Corollary 28.
+**Degree-3-only lock-down.** Pre-rename this function was named
+`_oaa_phases_half`, which left it ambiguous whether it generalised to
+higher degrees. It does NOT — the returned 3-element vector is correct
+ONLY for the degree-3 Chebyshev polynomial used by GSLW Corollary 28.
+Calling sites that need a higher OAA degree must derive the phases from
+BCKS / GSLW19 themselves; silently using these for any other degree
+produces the wrong reflection. Bead Sturm.jl-ifvt.
+
+Ref: GSLW (2019), arXiv:1806.01838, Corollary 8, Corollary 28.
 """
-function _oaa_phases_half()
-    if _OAA_PHASES_CACHE[] !== nothing
-        return _OAA_PHASES_CACHE[]
+function _oaa_phases_half_deg3()
+    if _OAA_PHASES_DEG3_CACHE[] !== nothing
+        return _OAA_PHASES_DEG3_CACHE[]
     end
     # Direct Chebyshev-convention QSVT phases for -T₃(x) = 3x - 4x³.
     # 3 phases for 3 oracle calls (degree-3 polynomial).
@@ -566,10 +574,8 @@ function _oaa_phases_half()
     # precision at 11 points in [0,1]. The BS+NLFT pipeline cannot produce
     # these because its Chebyshev→analytic degree doubling collapses for
     # Chebyshev basis vectors.
-    #
-    # Ref: GSLW (2019), arXiv:1806.01838, Corollary 8, Corollary 28.
     phases = [-π, -π/2, π/2]
-    _OAA_PHASES_CACHE[] = phases
+    _OAA_PHASES_DEG3_CACHE[] = phases
     return phases
 end
 
@@ -669,7 +675,7 @@ function oaa_amplify!(system::Vector{QBool}, be::BlockEncoding,
                        phi_even::Vector{Float64},
                        phi_odd::Vector{Float64})
     lifted = _lift_combined_to_be(be, phi_even, phi_odd)
-    oaa_phases = _oaa_phases_half()
+    oaa_phases = _oaa_phases_half_deg3()
     n = length(oaa_phases)
     ctx = system[1].ctx
 

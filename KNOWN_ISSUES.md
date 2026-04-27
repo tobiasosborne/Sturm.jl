@@ -17,7 +17,7 @@ Terse register of smells and constraints that don't warrant a bead yet. Keep ent
 ## Pedagogical / expectation mismatches
 
 - **`H!^2 = -I`**, not `I`. Global phase; the 4 primitives generate SU(2), not U(2). This is correct physics. Inside `when()`, apparent global phases become observable relative phases — use `_cz!()` from `library/patterns.jl` for true CZ.
-- **`_oaa_phases_half` in `src/qsvt/circuit.jl` is hardcoded** `[-pi, -pi/2, pi/2]` because the NLFT pipeline cannot self-generate OAA phases (Chebyshev-basis degree doubling collapses for Chebyshev basis vectors). Documented inline.
+- **`_oaa_phases_half_deg3` in `src/qsvt/circuit.jl` is hardcoded** `[-pi, -pi/2, pi/2]` because the NLFT pipeline cannot self-generate OAA phases (Chebyshev-basis degree doubling collapses for Chebyshev basis vectors). Renamed in bead Sturm.jl-ifvt so the degree-3-only constraint is visible at every call site. Documented inline.
 
 ## Known test gaps (no dedicated bead)
 
