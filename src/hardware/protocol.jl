@@ -274,7 +274,13 @@ function _parse_value!(p::_Parser)
 end
 
 function _parse_object!(p::_Parser)::Dict{String,Any}
-    @assert _peek(p) == UInt8('{')
+    # Bead Sturm.jl-mx3g: never @assert on untrusted network input —
+    # AssertionError propagates past `catch e isa ProtocolError` in
+    # _handle_connection and kills the connection task. _parse_value!
+    # routes here only on '{', so this is defence-in-depth, but a
+    # mis-route from any future caller must surface as ProtocolError.
+    _peek(p) == UInt8('{') ||
+        throw(ProtocolError("expected '{' at pos $(p.pos), got '$(Char(_peek(p)))'"))
     p.pos += 1
     d = Dict{String,Any}()
     _skip_ws!(p)
@@ -308,7 +314,8 @@ function _parse_object!(p::_Parser)::Dict{String,Any}
 end
 
 function _parse_array!(p::_Parser)::Vector{Any}
-    @assert _peek(p) == UInt8('[')
+    _peek(p) == UInt8('[') ||
+        throw(ProtocolError("expected '[' at pos $(p.pos), got '$(Char(_peek(p)))'"))
     p.pos += 1
     v = Any[]
     _skip_ws!(p)
@@ -333,7 +340,8 @@ function _parse_array!(p::_Parser)::Vector{Any}
 end
 
 function _parse_string!(p::_Parser)::String
-    @assert _peek(p) == UInt8('"')
+    _peek(p) == UInt8('"') ||
+        throw(ProtocolError("expected '\"' at pos $(p.pos), got '$(Char(_peek(p)))'"))
     p.pos += 1
     io = IOBuffer()
     while true
