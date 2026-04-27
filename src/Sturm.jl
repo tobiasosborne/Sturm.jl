@@ -119,6 +119,7 @@ export current_controls, with_controls, with_empty_controls
 
 # Gates (standard library, not primitives)
 export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
+export not!  # idiomatic boolean-vocabulary alias for X!
 
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate

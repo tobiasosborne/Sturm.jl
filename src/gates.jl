@@ -2,14 +2,28 @@
 # These are NOT part of the language spec — they are standard library.
 
 """
-X gate (bit flip). X = Rz(π) · Ry(π) up to global phase.
+    not!(q::QBool) -> QBool
 
-Ry(π)·Rz(π) = (-iY)·(-iZ) = -YZ = -iX, so the channel is ρ ↦ XρX.
-A single Ry(π) alone has channel Y, NOT X — the Rz(π) factor is essential.
-Bug history: bead Sturm.jl-3yz (session 42). Previously this was one
-primitive `q.θ += π`, which silently implemented the Y channel.
+Flip a quantum bit. The boolean-vocabulary name for the X channel:
+`q::QBool` is a quantum bit, and the natural mutating operation on a
+boolean is `not!`. Equivalent to `q.φ += π; q.θ += π` (= `Rz(π)·Ry(π)`),
+which is the X channel `ρ ↦ XρX`.
+
+`X!` is provided as an alias for textbook quantum-vocabulary readers but
+the idiomatic Sturm spelling is `not!`. Inside `when(c) do not!(q) end`
+the channel is the controlled bit-flip — the channel everyone else
+calls CNOT.
+
+Bug history: bead Sturm.jl-3yz (session 42). The fix was to use BOTH
+primitives — a single `q.θ += π` is `Ry(π) = -iY`, channel `ρ ↦ YρY`,
+NOT X. The `Rz(π)` factor is essential; under `when(c)` its global
+phase becomes a relative phase between the c=|0⟩ and c=|1⟩ branches.
 """
-X!(q::QBool) = (q.φ += π; q.θ += π; q)
+not!(q::QBool) = (q.φ += π; q.θ += π; q)
+
+"""X gate alias for `not!`. Provided for textbook quantum-vocabulary
+users; idiomatic Sturm uses `not!`."""
+const X! = not!
 
 """Z gate (phase flip). Equivalent to q.φ += π."""
 Z!(q::QBool) = (q.φ += π; q)
