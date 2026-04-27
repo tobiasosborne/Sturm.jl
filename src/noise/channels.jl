@@ -68,6 +68,10 @@ Ref: Nielsen & Chuang, Eq. (8.102).
 """
 function depolarise!(q::QBool, p::Real)
     check_live!(q)
+    # Bounds-check before touching state. p > 4/3 makes √(1−3p/4) imaginary
+    # in a Real context, propagating NaN through the entire density matrix.
+    # Bead Sturm.jl-hn8t.
+    (0 <= p <= 1) || error("depolarise!: probability must be in [0, 1], got $p")
     _require_density_matrix(q.ctx)
     ctx = q.ctx::DensityMatrixContext
     qubit = _resolve(ctx, q.wire)
@@ -103,6 +107,8 @@ Ref: Nielsen & Chuang, Eq. (8.96).
 """
 function dephase!(q::QBool, p::Real)
     check_live!(q)
+    # Same Real-sqrt NaN class as depolarise! — bead Sturm.jl-hn8t.
+    (0 <= p <= 1) || error("dephase!: probability must be in [0, 1], got $p")
     _require_density_matrix(q.ctx)
     ctx = q.ctx::DensityMatrixContext
     qubit = _resolve(ctx, q.wire)
@@ -130,6 +136,8 @@ Ref: Nielsen & Chuang, Eq. (8.91).
 """
 function amplitude_damp!(q::QBool, γ::Real)
     check_live!(q)
+    # Same Real-sqrt NaN class as depolarise! — bead Sturm.jl-hn8t.
+    (0 <= γ <= 1) || error("amplitude_damp!: γ must be in [0, 1], got $γ")
     _require_density_matrix(q.ctx)
     ctx = q.ctx::DensityMatrixContext
     qubit = _resolve(ctx, q.wire)
