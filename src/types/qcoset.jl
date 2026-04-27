@@ -49,7 +49,7 @@ mutable struct QCoset{W, Cpad, Wtot} <: Quantum
     consumed::Bool
 end
 
-classical_type(::Type{<:QCoset}) = Int8
+classical_type(::Type{<:QCoset{W}}) where {W} = _bennett_arg_type(W; signed=true)
 classical_compile_kwargs(::Type{<:QCoset{W}}) where {W} = (bit_width = W,)
 
 # ── Linearity checks ─────────────────────────────────────────────────────────
