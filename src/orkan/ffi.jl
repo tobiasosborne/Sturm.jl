@@ -17,6 +17,20 @@ end
 
 # ── Library path ──────────────────────────────────────────────────────────────
 
+# Probe whether `path` resolves via the dynamic loader. Returns true on
+# success, false on any non-Interrupt failure. InterruptException
+# (Ctrl+C during library load) MUST propagate so the user can abort —
+# bare `catch` swallowed it before bead Sturm.jl-011f.
+function _try_dlopen(path::AbstractString)
+    try
+        dlopen(path)
+        return true
+    catch e
+        e isa InterruptException && rethrow()
+        return false
+    end
+end
+
 const _LIBORKAN_PATH = let
     # Search order: env var, sibling repo build, installed system lib
     candidates = [
@@ -32,11 +46,9 @@ const _LIBORKAN_PATH = let
             break
         end
         # Try dlopen for system-installed libs
-        try
-            dlopen(c)
+        if _try_dlopen(c)
             found = c
             break
-        catch
         end
     end
     isempty(found) && error("""

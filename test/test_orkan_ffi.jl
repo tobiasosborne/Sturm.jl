@@ -151,6 +151,21 @@ using Sturm: OrkanStateRaw, OrkanKrausRaw, OrkanSuperopRaw,
         orkan_superop_free!(sop)
     end
 
+    @testset "_try_dlopen returns false on bad path, rethrows InterruptException — bead Sturm.jl-011f" begin
+        # Behavioural: a non-existent library path is swallowed (returns false).
+        # Pre-fix the bare `catch` block did the same — but it ALSO swallowed
+        # InterruptException, which means Ctrl+C during library load became a
+        # silent no-op. The fix adds `e isa InterruptException && rethrow()`.
+        @test Sturm._try_dlopen("/definitely-not-a-library-path-zzz.so") == false
+
+        # Source-level assertion: the rethrow guard is present. The bug class
+        # (catch swallowing InterruptException) is impossible to trigger from
+        # a unit test without SIGINT-ing the process, so this lint is the
+        # regression check that the fix isn't accidentally reverted.
+        ffi_src = read(joinpath(@__DIR__, "..", "src", "orkan", "ffi.jl"), String)
+        @test occursin(r"e\s+isa\s+InterruptException\s+&&\s+rethrow\(\)", ffi_src)
+    end
+
     @testset "channel_1q OOB qubit raises ErrorException, not SIGABRT — bead Sturm.jl-1oy" begin
         # Build a 2-qubit MIXED state and a valid identity-channel superop, then
         # try to apply with qubit=100. Without the _check_qubit guard the ccall
