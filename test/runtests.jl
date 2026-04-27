@@ -4,6 +4,7 @@ using Sturm
 @testset "Sturm.jl" begin
     include("test_orkan_ffi.jl")
     include("test_rule11_lint.jl")
+    include("test_docs_physics_lint.jl")
     include("test_primitives.jl")
     include("test_bell.jl")
     include("test_teleportation.jl")
@@ -65,4 +66,22 @@ using Sturm
     include("test_oracle_cache_lru.jl")
     include("test_ptrace.jl")
     include("test_bench_shor_scaling.jl")
+
+    # ── Bead Sturm.jl-4gom: previously orphaned test files. ─────────────────
+    # These exercise live src/ that had ZERO default CI coverage. All gated
+    # behind STURM_FULL_TEST=1 for now — the Shor and windowed-arithmetic
+    # files are known slow and the rest haven't been timed against a
+    # default-CI budget. Promote individual files out of the gate as they
+    # demonstrate sub-30s wall on a clean precache.
+    if get(ENV, "STURM_FULL_TEST", "0") == "1"
+        include("test_q84_types.jl")
+        include("test_b3l_runway.jl")
+        include("test_qrunway_mid.jl")
+        include("test_p1z_add_qft_quantum.jl")
+        include("test_bennett_compact.jl")
+        include("test_6xi_coset.jl")
+        include("test_shor.jl")
+        include("test_6bn_ekera_hastad.jl")
+        include("test_windowed_arithmetic.jl")
+    end
 end

@@ -20,7 +20,10 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 3. **GROUND = PHYSICS.** Every quantum operation, every gate decomposition, every channel identity must be grounded in physics. Not pinned numbers. Not "it works on the test case." The physics must be right. If you derive a gate from the four primitives, prove it on paper first.
 
-4. **PHYSICS = LOCAL PDF + EQUATION.** "Grounded in physics" means: a local PDF copy of the paper lives in `docs/physics/`, and the implementation references an explicit equation from that paper. No "based on Nielsen & Chuang" without the actual equation number.
+4. **PHYSICS = LOCAL PDF + EQUATION (two-tier policy).** "Grounded in physics" means a local source for every cited paper plus an explicit equation reference. Two tiers, both committed:
+    - `docs/physics/` is the canonical project-side citation directory. It holds (a) the original PDFs of each paper Sturm depends on, AND (b) short Markdown distillations (`docs/physics/<author>_<topic>.md`) that summarise the relevant theorems / equations / page numbers. Source docstrings cite the `.md` distillation; the `.md` file is the contract that "the citation still resolves" even if the PDF moves.
+    - `docs/literature/` is gitignored — a working scratch space for personal annotations, alternative copies, draft Latex, pre-publication PDFs, anything not suitable for the public repo. Source docstrings MAY reference `docs/literature/...` paths AS WELL, but a `docs/physics/...md` distillation MUST also exist for the same paper (and the docstring should reference that as the primary).
+    Lint: a runtests boot pass greps `src/` for `docs/physics/...\.md` references and asserts each path resolves; this catches the failure mode where a docstring cites a distillation that was never written.
 
 5. **LITERATE CODING.** Every non-trivial function has a docstring explaining WHAT it does, WHY it exists, and WHICH equation/paper it implements. Comments explain intent, not mechanics. Julia docstrings use `"""..."""` above the function.
 

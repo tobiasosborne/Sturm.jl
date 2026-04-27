@@ -497,7 +497,10 @@ julia> ] add https://github.com/tobiasosborne/Sturm.jl
 
 ```bash
 julia --project -e 'using Pkg; Pkg.test()'
-# 10800+ tests (108 Bennett integration, 74 pixel renderer, 53 ASCII drawer)
+# ~7000 runtime tests across the default suite (≈2100 static @test sites,
+# expanded by `for`-loop / shot-count multipliers in statistical tests).
+# Set STURM_FULL_TEST=1 to additionally include the slower Shor /
+# windowed-arithmetic / Ekera-Hastad files (bead Sturm.jl-4gom).
 ```
 
 ## Project Status
