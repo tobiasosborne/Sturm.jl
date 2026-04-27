@@ -197,4 +197,25 @@ using ColorTypes: RGB, N0f8
         @test img[3, 1] == custom.q_wire  # q1 wire (row 3 with gaps) uses custom palette
     end
 
+    @testset "_draw_schedule_compact lives in channel/schedule.jl — bead Sturm.jl-gxpx" begin
+        # Pre-fix the helper was defined in pixels.jl but called from
+        # draw.jl, an inverted include-order dependency that worked only
+        # because Julia's late-bound dispatch papered over it. The fix
+        # extracts to channel/schedule.jl, included after draw.jl (where
+        # _draw_touches lives) and before pixels.jl.
+        src_dir = joinpath(@__DIR__, "..", "src", "channel")
+        @test isfile(joinpath(src_dir, "schedule.jl"))
+        schedule_src = read(joinpath(src_dir, "schedule.jl"), String)
+        @test occursin("function _draw_schedule_compact", schedule_src)
+        pixels_src = read(joinpath(src_dir, "pixels.jl"), String)
+        @test !occursin("function _draw_schedule_compact", pixels_src)
+        # Sturm.jl loads schedule.jl between draw.jl and pixels.jl.
+        sturm_src = read(joinpath(@__DIR__, "..", "src", "Sturm.jl"), String)
+        idx_draw = findfirst(r"include\(\"channel/draw\.jl\"\)", sturm_src)
+        idx_sched = findfirst(r"include\(\"channel/schedule\.jl\"\)", sturm_src)
+        idx_pix = findfirst(r"include\(\"channel/pixels\.jl\"\)", sturm_src)
+        @test idx_draw !== nothing && idx_sched !== nothing && idx_pix !== nothing
+        @test first(idx_draw) < first(idx_sched) < first(idx_pix)
+    end
+
 end
