@@ -4,6 +4,90 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-27 — Session 75: code-review pass + idiom corrections
+
+Headline: full-codebase review by 4 parallel Sonnet subagents (each ~2k LOC slice, all 5 focuses), reports saved to `.claude/reviews/2026-04-27/`. 118 findings total: 16 P0, 41 P1, 48 P2, 13 P3. 31 beads filed. Two direct fixes landed mid-pass on idiom violations Tobias spotted that no agent flagged.
+
+### Review structure
+
+Four parallel agents (Sonnet, capped at 4 active per orchestrator instruction) covered non-overlapping slices:
+
+| Area | Slice | Findings |
+|---|---|---|
+| 1 | core types, context, control, gates | 3 P0 / 11 P1 / 18 P2 / 5 P3 = 37 |
+| 2 | IR / passes / Bennett bridge / noise | 4 P0 / 9 P1 / 14 P2 / 4 P3 = 31 |
+| 3 | library / simulation / QSVT / QECC / hardware | 5 P0 / 7 P1 / 8 P2 / 0 P3 = 20 |
+| 4 | tests / repo / top-level docs | 4 P0 / 14 P1 / 8 P2 / 4 P3 = 30 |
+
+The four agents could NOT Write reports to disk (bypass-permissions does not propagate inside subagents). Reports were salvaged from the inline summaries the agents returned. Areas 1 and 4 returned 5-bullet highlights only — their full P2/P3 lists were not extracted before agent termination. Tracked under per-area sweep beads.
+
+### Headline P0s (verified by orchestrator via direct grep before filing beads)
+
+1. **Bennett `NOTGate → apply_ry!(ctx, t, π)`** at `src/bennett/bridge.jl:81`. `Ry(π) = -iY`, NOT X. Inside `when(ctrl)` becomes controlled-Ry(π), wrong relative phase between branches. Same Y-vs-X confusion at `src/passes/deferred_measurement.jl:51,55` (false-branch X via `RyNode(wire,π)`). Bead Sturm.jl-3yz documented this exact bug class in session 42; the fix went in for the X! library function but NOT for the Bennett-bridge or deferred_measurement emit sites. Filed as a single bead (the fix lands at both sites).
+
+2. **`pointer(data)` without `GC.@preserve`** in `src/noise/channels.jl` `_apply_kraus!`. Zero `GC.@preserve` calls in the entire codebase (verified). Possible dangling-pointer race between Julia GC and Orkan ccall.
+
+3. **`orkan_channel_1q!` missing `_check_qubit`** at `src/orkan/ffi.jl:247`. Every other gate wrapper guards; this one doesn't. OOB index SIGABRTs Julia.
+
+4. **`classical_type(::Type{<:QInt}) = Int8`** for all widths at `src/types/qint.jl:20`. Bead `q93` (closed) fixed the bridge.jl direct path via `_bennett_arg_type(W)` but `classical_type` itself is still wrong — silent truncation for any caller that uses it.
+
+5. **`measure!` MIXED_PACKED upper-triangle write** in `src/context/density.jl` plus per-element FFI O(4^n) loop (same root cause as bead 059, fixed for Eager but not for DM).
+
+6. **`_cases_dispatch(::TracingContext)` lacks try/finally** in `src/control/cases.jl`. Exception during branch leaves `ctx.dag` partial; permanent corruption.
+
+7. **Rule 11 violations**: 4 library sites reach `apply_*!`/`apply_cx!` directly with bare WireID (coset.jl, patterns.jl, shor.jl).
+
+8. **Rule 4 docs/literature/ vs docs/physics/ policy undocumented**: 15 src files cite `docs/literature/...` paths gitignored by `.gitignore`. The two-tier policy works in practice but isn't described in CLAUDE.md or README. Plus 2 missing `docs/physics/.md` distillations (N&C §5.2, Vedral 1996).
+
+9. **9 orphaned test files** excluded from `runtests.jl` with no env-gate. Shor impls E/EH, QCoset, QRunway, windowed arithmetic, and the session-74 gate-counter contract have ZERO default-CI coverage.
+
+10. **`test_bennett_integration.jl` 3 known-failing tests not `@test_broken`** — silent CI red.
+
+11. **README "10800+ tests" claim** vs actual count ~1948 (6× overstated).
+
+### Direct fixes Tobias flagged (no agent caught these)
+
+**README Bell example used `b xor= a` as primitive #4 of the four-primitive table.** Tobias' point: `xor=` IS primitive #4 in CLAUDE.md, but in the README's *first example* — the entry point that sets every reader's mental model — using a CNOT-shaped operator imports Qiskit-style mental models. The pedagogical right form is `when(a) do not!(b) end` — channel composition via lexical control + unconditional flip. Replaced in Bell, Teleportation, resource-lifetime, tracing, and visualisation examples. Primitive table at line 65 unchanged.
+
+**`X!(q::QBool)` is gate-vocabulary in a no-gates language.** Tobias: `q::QBool` IS a quantum bit, and the natural mutating operation on a boolean is `not!`. `X!` is now an alias for `not!`; `not!` is the primary spelling. README updated. Verified `not!` works end-to-end via a one-shot Bell-pair probe.
+
+### Beads filed
+
+| Severity | Count |
+|---|---|
+| P0 | 11 |
+| P1 | 16 |
+| P2 | 4 (sweep beads, one per area) |
+| **Total** | **31** |
+
+P0 IDs: Bennett-NOT (TBD), `twv` (GC.@preserve), `1oy` (orkan_channel_1q!), `a4l` (classical_type), `e30b` (DM measure!), `jhl7` (cases dispatch), `la55` (Rule 11), `oddg` (docs policy), `4gom` (orphaned tests), `7se8` (silent-red), `35ka` (README count).
+
+P1 IDs: `rqus` (QROM cache LRU), `r9fb` (QSVT silent OAA), `ifvt` (OAA degree-3), `6s5t` (wire counter atomic), `pwuy` (rotation tree assert), `hn8t` (depolarise NaN), `4dd6` (registered_passes order), `5jlo` (compose collision), `nemp` (openqasm KeyError), `5z3r` (sample alloc), `011f` (dlopen Interrupt), `gxpx` (pixels file), `mx3g` (hardware errors/timeout/parser), `x3xn` (hardware threading), `m0p9` (composite samples), `d0co` (rhw upgrade), `498m` (bs_algorithm), `7jt3` (Steane coherent test).
+
+Sweep beads: `8v92` (area 1), `ks0t` (area 2), `71ao` (area 3), `an0y` (area 4).
+
+### Lessons for future agents
+
+- **Subagents cannot Write to disk in this harness configuration** — bypass-permissions does NOT propagate. If you spawn review agents, brief them to return findings INLINE in a structured format the orchestrator can re-emit. Length budget per agent: ~600 lines of inline findings (otherwise context blast).
+
+- **The user catches more idiom issues than any reviewer agent.** Two of the most consequential idiom violations (`xor=` in pedagogical examples, `X!` for QBool) were spotted by Tobias in real-time, not by any of the four agents — even though all four agents were briefed on PRD axioms and given idiom-checklists. Multi-agent review is good for breadth and code-smell detection but does not replace the principal designer's voice.
+
+- **The Y-vs-X bug class is recurring.** Bead `3yz` (session 42) fixed `X!` itself but didn't audit other emit sites. The same conceptual error exists at the Bennett bridge AND in the deferred_measurement pass. Whenever `Ry(π)` is treated as "X gate" — wrong. Should add a project-wide CI lint that flags `apply_ry!(\\.\\.\\., π)` standalone (without an accompanying `apply_rz!(\\.\\.\\., π)`).
+
+### Files touched this session
+
+- `README.md` — Bell, Teleportation, resource-lifetime, tracing, viz examples switched to `when(c) do not!(q) end`. One prose line about the `+` operator's composition.
+- `src/gates.jl` — `not!(q::QBool)` added with extensive docstring; `X!` aliased via `const`.
+- `src/Sturm.jl` — `not!` added to exports.
+- `WORKLOG.md` — this entry.
+- `.claude/reviews/2026-04-27/` — 5 markdown files (one per area + SUMMARY.md).
+
+### Beads state at end of session
+
+Total: ~80 (all priorities). Open: ~50 (this session's 31 newly filed + ~19 pre-existing). Closed: `2qp` from session 74. The review-derived backlog is the largest single batch of beads filed in one session in the project's history.
+
+---
+
 ## 2026-04-27 — Session 74: bead `Sturm.jl-2qp` diagnosed (n_qubits ratchet at peak)
 
 Investigation bead. Goal: explain the ~750× per-DAG-gate slowdown of
