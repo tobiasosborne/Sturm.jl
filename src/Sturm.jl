@@ -104,6 +104,8 @@ end
 # Context
 export AbstractContext, EagerContext, DensityMatrixContext, TracingContext, @context, current_context
 export compact_state!
+# bead Sturm.jl-2qp: diagnostic primitive ccall counters
+export reset_gate_counts!, gate_counts
 
 # Types
 export QBool, QInt, QMod, WireID, ptrace!, discard!, Quantum
