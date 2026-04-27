@@ -5,7 +5,7 @@
 # to 1. Result: e^{-iHt/alpha} (full unitary, no subnormalization).
 #
 # Pipeline: Jacobi-Anger cos+sin -> qsvt_phases -> block_encode_lcu
-#           -> _lift_combined_to_be -> _oaa_phases_half -> qsvt_reflect!
+#           -> _lift_combined_to_be -> _oaa_phases_half_deg3 -> qsvt_reflect!
 #
 # Ref: GSLW (2019), arXiv:1806.01838, Corollary 28 (robust OAA),
 #      Theorem 56 (combined QSVT), Theorem 58 (optimal Hamiltonian sim).
@@ -15,7 +15,7 @@ using Sturm: jacobi_anger_cos_coeffs, jacobi_anger_sin_coeffs,
              qsvt_phases, qsvt_reflect!, qsvt_combined_reflect!, QSVT,
              block_encode_lcu, ising, lambda, nqubits,
              _qsvt_combined_naked!, _qsvt_combined_naked_adj!,
-             _lift_combined_to_be, _oaa_phases_half, oaa_amplify!
+             _lift_combined_to_be, _oaa_phases_half_deg3, oaa_amplify!
 using LinearAlgebra: eigen, Diagonal, kron, norm
 
 # ── Helpers ──
@@ -48,17 +48,24 @@ end
     # Test 1: OAA phases are well-formed
     # ─────────────────────────────────────────────────────────────────────
 
-    @testset "OAA phases: _oaa_phases_half returns well-formed phases" begin
-        phi = _oaa_phases_half()
+    @testset "OAA phases: _oaa_phases_half_deg3 returns well-formed phases — bead Sturm.jl-ifvt" begin
+        phi = _oaa_phases_half_deg3()
 
         # BS+NLFT: Chebyshev degree 3 -> analytic degree 6 -> 7 GQSP phases (odd).
         @test length(phi) == 3
+
+        # Pre-rename the function was named `_oaa_phases_half`, leaving
+        # ambiguous whether it generalised to higher degrees. The vector
+        # is correct ONLY for -T₃ (degree 3); the rename + docstring
+        # lock-down prevents accidental misuse. Pin the exact values so
+        # any drift fires immediately.
+        @test phi == [-π, -π/2, π/2]
 
         # Phases should be finite
         @test all(isfinite.(phi))
 
         # Calling again should return the same (cached)
-        phi2 = _oaa_phases_half()
+        phi2 = _oaa_phases_half_deg3()
         @test phi === phi2
     end
 
