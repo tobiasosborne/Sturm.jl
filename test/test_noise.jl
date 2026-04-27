@@ -100,6 +100,31 @@ using Sturm
             discard!(q)
         end
     end
+
+    @testset "Noise channels reject out-of-range parameters — bead Sturm.jl-hn8t" begin
+        # Pre-fix: depolarise!(q, 1.5) silently produced NaN density matrix
+        # because √(1 − 3·1.5/4) = √(−0.125) = NaN under Real arithmetic,
+        # propagating through every Kraus operator. Same root cause for
+        # dephase! (√(1−p)) and amplitude_damp! (√(1−γ)) when arg > 1.
+        @context DensityMatrixContext() begin
+            q = QBool(0)
+            @test_throws ErrorException depolarise!(q, 1.5)
+            @test_throws ErrorException depolarise!(q, -0.1)
+            @test_throws ErrorException depolarise!(q, 4/3)  # exact NaN boundary
+            @test_throws ErrorException dephase!(q, 1.5)
+            @test_throws ErrorException dephase!(q, -0.1)
+            @test_throws ErrorException amplitude_damp!(q, 1.5)
+            @test_throws ErrorException amplitude_damp!(q, -0.1)
+            # Endpoints still accepted.
+            depolarise!(q, 0.0)
+            depolarise!(q, 1.0)
+            dephase!(q, 0.0)
+            dephase!(q, 1.0)
+            amplitude_damp!(q, 0.0)
+            amplitude_damp!(q, 1.0)
+            discard!(q)
+        end
+    end
 end
 
 @testset "Classicalise" begin
