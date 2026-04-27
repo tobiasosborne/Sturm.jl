@@ -1,9 +1,14 @@
 # Bennett.jl integration: execute reversible circuits on Sturm contexts.
 #
 # Gate mapping (exact, lossless):
-#   NOTGate(t)            → apply_ry!(ctx, t, π)     [X gate]
+#   NOTGate(t)            → apply_rz!(ctx, t, π); apply_ry!(ctx, t, π)   [X gate, det=-1]
 #   CNOTGate(c, t)        → apply_cx!(ctx, c, t)
 #   ToffoliGate(c1, c2, t) → apply_ccx!(ctx, c1, c2, t)
+#
+# Bead Sturm.jl-ls8 / Sturm.jl-3yz: NOTGate must emit BOTH primitives.
+# A single apply_ry!(_, π) is Ry(π) = -iY (det=+1, channel ρ↦YρY), NOT X.
+# Inside when(ctrl) the missing Rz(π) factor manifests as a wrong relative
+# phase between the ctrl=|0⟩ and ctrl=|1⟩ branches. Mirrors `not!` in gates.jl.
 #
 # If called inside when(), all gates are automatically controlled
 # via the existing control stack — no need for Bennett's controlled().
@@ -78,7 +83,9 @@ end
 
 @inline function _apply_bennett_gate!(ctx::AbstractContext, g::NOTGate,
                                        wm::Dict{WireIndex, WireID})
-    apply_ry!(ctx, wm[g.target], π)
+    t = wm[g.target]
+    apply_rz!(ctx, t, π)
+    apply_ry!(ctx, t, π)
 end
 
 @inline function _apply_bennett_gate!(ctx::AbstractContext, g::CNOTGate,

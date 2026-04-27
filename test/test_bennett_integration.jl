@@ -229,6 +229,54 @@ end
         end
     end
 
+    @testset "NOTGate channel matches Sturm not! — bead Sturm.jl-ls8" begin
+        # Bennett-NOT must produce the same channel as `not!` (= Rz(π)·Ry(π) = iX,
+        # det=-1). A single Ry(π) is -iY (det=+1, channel ρ↦YρY) — wrong gate.
+        #
+        # X|+⟩ = |+⟩ (eigenstate, +1 eigenvalue) so iX|+⟩ = i|+⟩, and H|+⟩=|0⟩.
+        # Y|+⟩ = -i|-⟩ so (-iY)|+⟩ = -|-⟩, and H|-⟩=|1⟩.
+        # Single-shot deterministic distinguisher: prep |+⟩, apply NOT, H, measure.
+        # Correct X → 0; -iY bug → 1.
+        @context EagerContext() begin
+            ctx = current_context()
+            q = QBool(0.5)              # |+⟩
+            circuit = ReversibleCircuit(
+                1, ReversibleGate[NOTGate(1)],
+                WireIndex[1], WireIndex[1], WireIndex[], [1], [1])
+            Sturm.apply_reversible!(ctx, circuit, Dict{WireIndex,WireID}(1 => q.wire))
+            H!(q)
+            @test Bool(q) == false
+        end
+    end
+
+    @testset "NOTGate equivalence with Sturm not! at |+⟩, |-⟩, |+i⟩" begin
+        # Same physical state preparations subjected to (a) Bennett-NOT and (b)
+        # Sturm `not!` should produce the same X-basis / Y-basis measurement
+        # outcome. Tests three non-computational basis states; the Y-basis case
+        # (|+i⟩) cleanly separates iX (correct) from -iY (bug).
+        circuit = ReversibleCircuit(
+            1, ReversibleGate[NOTGate(1)],
+            WireIndex[1], WireIndex[1], WireIndex[], [1], [1])
+
+        # |+⟩ → not! → i|+⟩;  H → i|0⟩;   measure → 0.
+        @context EagerContext() begin
+            q = QBool(0.5)
+            Sturm.apply_reversible!(current_context(), circuit,
+                Dict{WireIndex,WireID}(1 => q.wire))
+            H!(q)
+            @test Bool(q) == false
+        end
+
+        # |-⟩ → not! → -i|-⟩; H → -i|1⟩;  measure → 1.
+        @context EagerContext() begin
+            q = QBool(0.5); q.φ += π     # |-⟩
+            Sturm.apply_reversible!(current_context(), circuit,
+                Dict{WireIndex,WireID}(1 => q.wire))
+            H!(q)
+            @test Bool(q) == true
+        end
+    end
+
     @testset "circuit with ancillae" begin
         @context EagerContext() begin
             ctx = current_context()
