@@ -360,11 +360,15 @@ function _shor_mulmod_a!(y_reg::QInt{L},
 
     # Step C: half-swap y_reg ↔ z (source known-zero, 2L CNOTs).
     #   y ⊻= z  ⇒  y = f(y);   z ⊻= y  ⇒  z = 0.
+    # Bead Sturm.jl-la55: DSL primitive (a ⊻= b: b controls, a target), not
+    # raw apply_cx! ccall.
     for i in 1:L
-        apply_cx!(ctx, z_wires[i], y_wires[i])
+        qz = QBool(z_wires[i], ctx, false); qy = QBool(y_wires[i], ctx, false)
+        qy ⊻= qz
     end
     for i in 1:L
-        apply_cx!(ctx, y_wires[i], z_wires[i])
+        qz = QBool(z_wires[i], ctx, false); qy = QBool(y_wires[i], ctx, false)
+        qz ⊻= qy
     end
 
     # Step D: deallocate z (guaranteed |0⟩)
@@ -658,11 +662,14 @@ function _shor_mulmod_controlled!(ctx::AbstractContext, ctrl_wire::WireID,
         LOG("exit  QROM_g, live=$(_live_qubits(ctx))")
 
         LOG("half-swap via 2L=$(2L) CNOTs")
+        # Bead Sturm.jl-la55: DSL primitive (a ⊻= b: b controls, a target).
         for i in 1:L
-            apply_cx!(ctx, z_wires[i], y_wires[i])
+            qz = QBool(z_wires[i], ctx, false); qy = QBool(y_wires[i], ctx, false)
+            qy ⊻= qz
         end
         for i in 1:L
-            apply_cx!(ctx, y_wires[i], z_wires[i])
+            qz = QBool(z_wires[i], ctx, false); qy = QBool(y_wires[i], ctx, false)
+            qz ⊻= qy
         end
     end
 
