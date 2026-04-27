@@ -97,4 +97,35 @@ using Sturm
             end
         end
     end
+
+    @testset "measure! at n_qubits=4 GHZ-like leaves correct projection (bead e30b)" begin
+        # Build 1/√2(|0000⟩ + |1111⟩) as a density matrix, measure qubit 0,
+        # verify (1) outcome statistics match Born rule (50/50) and (2) the
+        # post-measurement diagonal matches the projection. The pre-bead-e30b
+        # implementation used per-element FFI in O(4^n) loops AND wrote to the
+        # upper triangle of MIXED_PACKED — both are eliminated by switching to
+        # an unsafe_wrap lower-triangle pass.
+        N = 1000
+        zero_count = 0
+        for _ in 1:N
+            @context DensityMatrixContext() begin
+                a = QBool(0.5)
+                b = QBool(0)
+                c = QBool(0)
+                d = QBool(0)
+                b ⊻= a
+                c ⊻= a
+                d ⊻= a
+                # State now: 1/√2(|0000⟩ + |1111⟩); measure a, all four should agree.
+                ma = Bool(a)
+                mb = Bool(b)
+                mc = Bool(c)
+                md = Bool(d)
+                @test ma == mb == mc == md
+                zero_count += !ma
+            end
+        end
+        # Born rule: each outcome ~50%. Tolerance 4σ on N=1000 binomial → ±63.
+        @test 437 <= zero_count <= 563
+    end
 end

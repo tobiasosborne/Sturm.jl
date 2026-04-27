@@ -482,61 +482,77 @@ Measure a single qubit from the density matrix:
 function measure!(ctx::DensityMatrixContext, wire::WireID)::Bool
     _warn_direct_measure()   # P2 antipattern warning, suppressed inside Bool/Int casts
     qubit = _resolve(ctx, wire)
-    dim = 1 << ctx.n_qubits
+    cap_dim = 1 << ctx.capacity
+    live_dim = 1 << ctx.n_qubits
     mask = 1 << qubit
 
-    # Compute P(|1⟩) from diagonal of ρ
+    # Bead Sturm.jl-e30b — mirror of bead 059 fix for EagerContext. The previous
+    # implementation used per-element `ctx.orkan[r,c]` FFI accessors in O(4^n)
+    # nested loops over ALL (r,c) including the upper triangle. Two problems:
+    # (a) at n_qubits ≥ 6 the per-call ccall overhead dominated; (b) writes to
+    # (r, c) with r < c violated MIXED_PACKED's lower-triangle-only contract
+    # documented at the top of this file. The unsafe_wrap pattern here pulls
+    # the packed buffer into pure-Julia territory and only ever touches the
+    # lower triangle (r ≥ c). One ccall pair per measure! instead of O(4^n).
+    buf = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, _dm_packed_len(cap_dim))
+
+    # P(|1⟩) — sum diagonal entries with the qubit's bit set.
     p1 = 0.0
-    for i in 0:dim-1
+    @inbounds for i in 0:live_dim - 1
         if (i & mask) != 0
-            p1 += real(ctx.orkan[i, i])
+            p1 += real(buf[_dm_pack_idx(cap_dim, i, i) + 1])
         end
     end
 
     outcome = rand() < p1
 
-    # Project: zero out rows/cols inconsistent with outcome, renormalize
-    for r in 0:dim-1
-        for c in 0:dim-1
+    # Project: zero entries (r, c) where r-bit OR c-bit disagrees with outcome.
+    # Lower triangle only: c ∈ [0, live_dim), r ∈ [c, live_dim).
+    @inbounds for c in 0:live_dim - 1
+        c_off = _dm_col_off(cap_dim, c)
+        c_bit = (c & mask) != 0
+        for r in c:live_dim - 1
             r_bit = (r & mask) != 0
-            c_bit = (c & mask) != 0
             if r_bit != outcome || c_bit != outcome
-                ctx.orkan[r, c] = 0.0 + 0.0im
+                buf[c_off + (r - c) + 1] = 0.0 + 0.0im
             end
         end
     end
 
-    # Renormalize trace to 1
+    # Renormalize trace.
     trace = 0.0
-    for i in 0:dim-1
-        trace += real(ctx.orkan[i, i])
+    @inbounds for i in 0:live_dim - 1
+        trace += real(buf[_dm_pack_idx(cap_dim, i, i) + 1])
     end
     if trace > 0
         factor = 1.0 / trace
-        for r in 0:dim-1
-            for c in 0:dim-1
-                val = ctx.orkan[r, c]
-                if abs2(val) > 0
-                    ctx.orkan[r, c] = val * factor
-                end
+        @inbounds for c in 0:live_dim - 1
+            c_off = _dm_col_off(cap_dim, c)
+            for r in c:live_dim - 1
+                buf[c_off + (r - c) + 1] *= factor
             end
         end
     end
 
-    # Reset qubit to |0⟩ if outcome was |1⟩
+    # If outcome=1, shift ρ from the |1⟩-subspace down to the |0⟩-subspace so
+    # the qubit is reset to |0⟩ before slot recycling. After projection only
+    # entries with r-bit=1 AND c-bit=1 are nonzero; each maps to (r&~mask,
+    # c&~mask). Order-preserving on the lower triangle (clearing the same bit
+    # from r and c preserves r ≥ c), and source/destination spaces are
+    # disjoint (bits-set vs bits-clear), so we can do it in-place.
     if outcome
-        for r in 0:dim-1
-            for c in 0:dim-1
-                if (r & mask) == 0
-                    j_r = r | mask
-                    j_c = c | mask
-                    ctx.orkan[r, c] = ctx.orkan[j_r, j_c]
-                    ctx.orkan[j_r, j_c] = 0.0 + 0.0im
-                    # Also handle the cross terms
-                    if (c & mask) == 0
-                        ctx.orkan[r, c | mask] = 0.0 + 0.0im
-                    end
-                end
+        @inbounds for c in 0:live_dim - 1
+            (c & mask) == 0 && continue
+            c_off_src = _dm_col_off(cap_dim, c)
+            c_dst = c & ~mask
+            c_off_dst = _dm_col_off(cap_dim, c_dst)
+            for r in c:live_dim - 1
+                (r & mask) == 0 && continue
+                r_dst = r & ~mask
+                src = c_off_src + (r - c) + 1
+                dst = c_off_dst + (r_dst - c_dst) + 1
+                buf[dst] = buf[src]
+                buf[src] = 0.0 + 0.0im
             end
         end
     end
