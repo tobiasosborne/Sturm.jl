@@ -4,6 +4,139 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-27 — Session 77: P1 cluster 1 (mechanical isolates) — 7 closed
+
+Headline: cleared the 7 mechanical P1 beads from session 75's code review
+in one strict-TDD pass. Each landed as a focused commit with a targeted
+test; full P1 backlog 19 → 12.
+
+### Closed beads (in fix order)
+
+1. **`011f` — `dlopen` swallowed `InterruptException`.** Bare `catch` in
+   the `_LIBORKAN_PATH` let block absorbed every exception, so Ctrl+C
+   during library load became a silent no-op (Julia kept running with no
+   library). Extracted the probe into a `_try_dlopen(path)` helper with
+   the explicit `e isa InterruptException && rethrow()` guard. RED was
+   unwritable for the same reason as bead `1oy` (SIGINT can't be issued
+   from a unit test); test combines a behavioural check (bad path → false)
+   with a source-level lint asserting the rethrow guard is present.
+
+2. **`hn8t` — `depolarise!` NaN on out-of-range `p`.** `√(1 − 3p/4)` goes
+   imaginary for `p > 4/3` under Real arithmetic ⇒ NaN propagates through
+   every Kraus operator. Added `0 ≤ p ≤ 1` precondition. The bead is
+   depolarise-specific but `dephase!` (`√(1−p)`) and `amplitude_damp!`
+   (`√(1−γ)`) share the same NaN class — fixed all three at the same
+   locus (in-scope by the same line of code; not scope creep).
+
+3. **`pwuy` — `_rotation_tree!` silent acos-of-negative.** Grover-Rudolph
+   2002 amplitude encoding requires non-negative weights; pre-fix the
+   downstream `clamp(p_right, 0, 1)` silently absorbed a negative weight
+   into `p_right=0`, producing wrong rotation angles with no diagnostic.
+   `_prepare!` constructs weights via `abs(coeff)` so the public path was
+   safe; the new assertion (mirrored in `_rotation_tree_adj!`) catches
+   direct callers.
+
+4. **`m0p9` — composite `samples_per_step` truncation AND inflation.**
+   Two bugs at the same line:
+   * Truncation: `qdrift_samples=10, steps=3 ⇒ 3·3 = 9` samples (lost 1).
+   * Inflation: `qdrift_samples=2, steps=10 ⇒ 10·1 = 10` samples (×5)
+     because of the `max(1, …)` floor that originally guarded against
+     `τ = dt/0`.
+   Extracted `_qdrift_schedule(total, steps) → Vector{Int}`: distributes
+   remainder so the first `total % steps` steps get `cld`, the rest get
+   `÷`; sum equals `total` exactly. The composite loop skips zero-sample
+   steps so the τ guard becomes unnecessary.
+
+5. **`nemp` — opaque `KeyError` on orphan `CasesNode`.** Bare
+   `map[node.condition_id]` lookup in `_emit_node!(CasesNode)` raised
+   `KeyError({0x000000ff, …})` with no context if the `CasesNode` had
+   no upstream `ObserveNode` producing that id. Same hazard at
+   `_emit_node!(ObserveNode)` `result_id` lookup. Both now `haskey`-guard
+   and error with a message naming the offending id and the constraint.
+
+6. **`4dd6` — `registered_passes()` non-deterministic order.** Pre-fix
+   returned `collect(values(_PASS_REGISTRY))`, whose iteration order
+   depends on Julia's hash randomisation ⇒ platform/run-variable. Any
+   caller hashing pass output across the registered list would lose
+   reproducibility. Fixed by sorting the keys on read; zero new
+   dependency (no `OrderedDict`).
+
+7. **`gxpx` — fragile cross-file `_draw_schedule_compact`.** The helper
+   was defined in `pixels.jl` but called from BOTH `pixels.jl` AND
+   `draw.jl`. `Sturm.jl` includes `draw.jl` BEFORE `pixels.jl`, so the
+   forward reference resolved only via Julia's late-binding — a
+   structural trap waiting for an include-order shuffle to misfire.
+   Extracted to a new `src/channel/schedule.jl`. Include order is now
+   `draw.jl` (defines `_draw_touches`) → `schedule.jl` (uses it, defines
+   the helper) → `pixels.jl` (consumes the schedule), making the
+   dependency direction explicit. Test pins file existence + definition
+   site + include-order constraint.
+
+### Lessons for future agents
+
+- **"Same line of code, same fix" is in scope, even if the bead names
+  one site.** The hn8t bead specified `depolarise!`; `dephase!` and
+  `amplitude_damp!` had the identical `√(1−x)` NaN class one function
+  away. Fixed in the same commit with explicit comment-pointers to the
+  bead. Splitting would have meant three commits for three identical
+  one-liners.
+
+- **Source-level lints catch reverts that behavioural tests can't.**
+  Beads `011f` (SIGINT during dlopen) and `gxpx` (file location +
+  include order) have no clean behavioural RED. The fix is to assert
+  on the *source*: `occursin(r"e isa InterruptException && rethrow\\(\\)", …)`,
+  `findfirst(r"include\\(\"channel/schedule\\.jl\"\\)", …)`. Not a
+  substitute for behavioural tests when those exist; complementary
+  when they don't.
+
+- **Refactor for testability is worth the small detour.** `m0p9`'s fix
+  could have been four inline lines in the loop; extracting
+  `_qdrift_schedule` made it directly testable as a pure function on
+  `(Int, Int) → Vector{Int}` with 10 contract sites. The 6 LOC of
+  helper paid for themselves immediately.
+
+- **External-julia interference still active.** "Bennett Being
+  precompiled by another process (pid: 3711662)" surfaced again on the
+  first per-bead test run. Same orphan-spawner pattern as session 76.
+  Did not investigate this session; flagged as carry-over.
+
+### Files touched this session
+
+- `src/orkan/ffi.jl`, `test/test_orkan_ffi.jl` — 011f
+- `src/noise/channels.jl`, `test/test_noise.jl` — hn8t
+- `src/block_encoding/prepare.jl`, `test/test_block_encoding.jl` — pwuy
+- `src/simulation/composite.jl`, `test/test_composite.jl` — m0p9
+- `src/channel/openqasm.jl`, `test/test_openqasm_cases.jl` — nemp
+- `src/passes/abstract.jl`, `test/test_passes_registry.jl` — 4dd6
+- `src/channel/schedule.jl` (NEW), `src/channel/pixels.jl`,
+  `src/Sturm.jl`, `test/test_pixels.jl` — gxpx
+
+### Commits
+
+```
+9665120 fix(p1): extract _draw_schedule_compact to channel/schedule.jl (gxpx)
+22a7116 fix(p1): registered_passes() returns sorted-by-name order (4dd6)
+c15e85c fix(p1): haskey guard on classical-bit map in CasesNode/ObserveNode emit (nemp)
+0cb5803 fix(p1): _qdrift_schedule preserves exact total samples (m0p9)
+1e5c5f7 fix(p1): _rotation_tree!/_rotation_tree_adj! reject negative weights (pwuy)
+2808940 fix(p1): bounds-check noise channel parameters (hn8t)
+5d3ef26 fix(p1): rethrow InterruptException in orkan/ffi dlopen probe (011f)
+```
+
+### Beads state at end of session
+
+P1 backlog 19 → 12. Cluster 1 (mechanical isolates) fully cleared.
+
+Next clusters per the four-cluster plan:
+- Cluster 2 (hardware): `mx3g` + `x3xn` — same files, batch together.
+- Cluster 3 (QSVT): `r9fb` + `ifvt` + `498m` + `d0co` — same module;
+  `r9fb` is the subtle one (silent ~28% wrong-state on OAA failure).
+- Cluster 4 (remaining + sweeps): `5z3r`, `6s5t`, `rqus`, `7jt3`,
+  `5jlo`, then re-read the four Area reports to file the unsifted
+  P2/P3 nits and close `8v92`/`ks0t`/`71ao`/`an0y`.
+
+---
+
 ## 2026-04-27 — Session 76: P0 grind — all 11 closed, pushed
 
 Headline: full sweep of the 11 P0 beads filed by session 75's code review.
