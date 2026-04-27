@@ -328,8 +328,9 @@ using Sturm
         ]
         opt = defer_measurements(dag)
         @test !any(n -> n isa Sturm.ObserveNode, opt)
-        # true branch: controlled Ry(π) on w1
-        # false branch: X on w1, controlled Rz(π/2), X on w1
-        @test length(opt) == 4  # Ry(π) + X + Rz(π/2) + X
+        # true branch:  controlled Ry(π) on w1                         (1 node)
+        # false branch: X = Rz(π)+Ry(π) on w1, controlled Rz(π/2), X    (5 nodes)
+        # X is two primitives — see bead Sturm.jl-ls8.
+        @test length(opt) == 6
     end
 end

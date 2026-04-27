@@ -48,11 +48,19 @@ function defer_measurements(dag::Vector{DAGNode}; strict::Bool=false)::Vector{DA
                         push!(result, _add_control(op, wire))
                     end
                     if !isempty(cases.false_branch)
-                        push!(result, RyNode(wire, π))  # X gate
+                        # X gate = Rz(π)·Ry(π); see bead Sturm.jl-ls8 / Sturm.jl-3yz.
+                        # A single Ry(π) is -iY, not X. Although the wrap is
+                        # symmetric in the global phase here (X·U·X and Y·U·Y
+                        # both yield -anti-CU), the canonical X representation
+                        # must match `not!` everywhere so that gate-cancel and
+                        # other passes see one form, not two.
+                        push!(result, RzNode(wire, π))
+                        push!(result, RyNode(wire, π))
                         for op in cases.false_branch
                             push!(result, _add_control(op, wire))
                         end
-                        push!(result, RyNode(wire, π))  # X gate (undo)
+                        push!(result, RzNode(wire, π))
+                        push!(result, RyNode(wire, π))
                     end
                     i += 2
                     continue
