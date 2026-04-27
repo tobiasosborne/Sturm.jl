@@ -506,11 +506,104 @@ end
 
 current_controls(ctx::EagerContext) = copy(ctx.control_stack)
 
+# ── Diagnostic gate counters (bead Sturm.jl-2qp) ─────────────────────────────
+#
+# Lightweight per-primitive counters. Bumped on every entry to apply_ry! /
+# apply_rz! / apply_cx! / apply_ccx! regardless of the nc=0/1/≥2 branch
+# taken — so a single user-facing `q.θ += d` inside a deeply-nested when()
+# may register one apply_ry! at the user-call layer plus many recursive
+# apply_cx!/apply_ccx! calls emitted by the cascade. The breakdown by
+# control-stack depth (`nc_buckets`) makes that fan-out visible.
+#
+# Cost: one Ref-increment (~3 ns) per primitive, negligible vs an Orkan ccall
+# (~µs–ms range at L≥4 qubits). Counters are diagnostic only; reset and read
+# via `reset_gate_counts!()` / `gate_counts()`.
+const _APPLY_COUNT_RY  = Ref{Int}(0)
+const _APPLY_COUNT_RZ  = Ref{Int}(0)
+const _APPLY_COUNT_CX  = Ref{Int}(0)
+const _APPLY_COUNT_CCX = Ref{Int}(0)
+# Buckets indexed by nc ∈ {0, 1, 2, 3, ≥4}. Captures depth distribution
+# without dynamic allocation.
+const _APPLY_NC_RY  = (Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0))
+const _APPLY_NC_RZ  = (Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0))
+const _APPLY_NC_CX  = (Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0))
+const _APPLY_NC_CCX = (Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0), Ref{Int}(0))
+# Per-gate sampling of ctx.n_qubits at apply_*! entry — tells us how big the
+# active statevector is at the moment each ccall actually runs (which is
+# what dominates wall time when ccalls are memory-bound). Compaction can
+# move ctx.n_qubits down between gates, so the per-gate distribution is
+# strictly more informative than ctx._n_qubits_hwm.
+const _APPLY_NQ_MAX = Ref{Int}(0)             # peak n_qubits seen at any gate
+const _APPLY_NQ_SUM_2 = Ref{Float64}(0.0)     # Σ 2^n_qubits — effective work
+# n_qubits histogram in 4-wide buckets covering [0, 32]: bucket i covers
+# n_qubits ∈ [4(i-1), 4i). Bucket 9 covers ≥ 32.
+const _APPLY_NQ_BUCKETS = ntuple(_ -> Ref{Int}(0), 9)
+
+@inline function _bump_nc!(buckets::NTuple{5, Ref{Int}}, nc::Int)
+    idx = nc < 4 ? nc + 1 : 5
+    @inbounds buckets[idx][] += 1
+    nothing
+end
+
+@inline function _sample_nq!(nq::Int)
+    if nq > _APPLY_NQ_MAX[]
+        _APPLY_NQ_MAX[] = nq
+    end
+    _APPLY_NQ_SUM_2[] += Float64(1) * (1 << nq)
+    idx = nq < 32 ? (nq >> 2) + 1 : 9
+    @inbounds _APPLY_NQ_BUCKETS[idx][] += 1
+    nothing
+end
+
+"""
+    reset_gate_counts!()
+
+Zero all `apply_*!` diagnostic counters. Call before a probe.
+"""
+function reset_gate_counts!()
+    _APPLY_COUNT_RY[] = 0; _APPLY_COUNT_RZ[] = 0
+    _APPLY_COUNT_CX[] = 0; _APPLY_COUNT_CCX[] = 0
+    for buckets in (_APPLY_NC_RY, _APPLY_NC_RZ, _APPLY_NC_CX, _APPLY_NC_CCX)
+        for r in buckets; r[] = 0; end
+    end
+    _APPLY_NQ_MAX[] = 0
+    _APPLY_NQ_SUM_2[] = 0.0
+    for r in _APPLY_NQ_BUCKETS; r[] = 0; end
+    nothing
+end
+
+"""
+    gate_counts() -> NamedTuple
+
+Read the diagnostic `apply_*!` counters. Returns total counts plus a
+breakdown by control-stack depth at entry (`nc_buckets[i]` = entries at
+nc = i-1, with bucket 5 covering nc ≥ 4).
+"""
+function gate_counts()
+    (
+        ry  = _APPLY_COUNT_RY[],
+        rz  = _APPLY_COUNT_RZ[],
+        cx  = _APPLY_COUNT_CX[],
+        ccx = _APPLY_COUNT_CCX[],
+        total = _APPLY_COUNT_RY[] + _APPLY_COUNT_RZ[] + _APPLY_COUNT_CX[] + _APPLY_COUNT_CCX[],
+        nc_ry  = ntuple(i -> _APPLY_NC_RY[i][],  5),
+        nc_rz  = ntuple(i -> _APPLY_NC_RZ[i][],  5),
+        nc_cx  = ntuple(i -> _APPLY_NC_CX[i][],  5),
+        nc_ccx = ntuple(i -> _APPLY_NC_CCX[i][], 5),
+        nq_max = _APPLY_NQ_MAX[],
+        nq_sum_2 = _APPLY_NQ_SUM_2[],
+        nq_buckets = ntuple(i -> _APPLY_NQ_BUCKETS[i][], 9),
+    )
+end
+
 # ── Gate application ──────────────────────────────────────────────────────────
 
 function apply_ry!(ctx::EagerContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
     nc = length(ctx.control_stack)
+    _APPLY_COUNT_RY[] += 1
+    _bump_nc!(_APPLY_NC_RY, nc)
+    _sample_nq!(ctx.n_qubits)
     if nc == 0
         orkan_ry!(ctx.orkan.raw, target, angle)
     elseif nc == 1
@@ -523,6 +616,9 @@ end
 function apply_rz!(ctx::EagerContext, wire::WireID, angle::Real)
     target = _resolve(ctx, wire)
     nc = length(ctx.control_stack)
+    _APPLY_COUNT_RZ[] += 1
+    _bump_nc!(_APPLY_NC_RZ, nc)
+    _sample_nq!(ctx.n_qubits)
     if nc == 0
         orkan_rz!(ctx.orkan.raw, target, angle)
     elseif nc == 1
@@ -536,6 +632,9 @@ function apply_cx!(ctx::EagerContext, control_wire::WireID, target_wire::WireID)
     ctrl = _resolve(ctx, control_wire)
     tgt = _resolve(ctx, target_wire)
     nc = length(ctx.control_stack)
+    _APPLY_COUNT_CX[] += 1
+    _bump_nc!(_APPLY_NC_CX, nc)
+    _sample_nq!(ctx.n_qubits)
     if nc == 0
         orkan_cx!(ctx.orkan.raw, ctrl, tgt)
     elseif nc == 1
@@ -553,6 +652,9 @@ function apply_ccx!(ctx::EagerContext, c1::WireID, c2::WireID, target::WireID)
     q2 = _resolve(ctx, c2)
     qt = _resolve(ctx, target)
     nc = length(ctx.control_stack)
+    _APPLY_COUNT_CCX[] += 1
+    _bump_nc!(_APPLY_NC_CCX, nc)
+    _sample_nq!(ctx.n_qubits)
     if nc == 0
         # Fast path: direct CCX, no control stack overhead
         orkan_ccx!(ctx.orkan.raw, q1, q2, qt)
