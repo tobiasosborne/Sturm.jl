@@ -108,25 +108,54 @@ function _apply_composite!(qubits, H::PauliHamiltonian{N}, t::Real,
     end
 
     # Composite: interleave Trotter steps on A with qDRIFT samples on B
-    samples_per_step = max(1, alg.qdrift_samples ÷ alg.steps)
+    schedule = _qdrift_schedule(alg.qdrift_samples, alg.steps)
     dist = _QDriftDist(B)
     λB = dist.λ
 
-    for _ in 1:alg.steps
+    for step_idx in 1:alg.steps
         # 1. One Trotter step on partition A
         _trotter_step_dispatch!(qubits, A, dt, alg.trotter_order)
 
-        # 2. qDRIFT samples on partition B
-        τ = dt / samples_per_step
-        λτ = λB * τ
-        for _ in 1:samples_per_step
-            j = _sample(dist, alg.rng)
-            term = @inbounds B.terms[j]
-            _pauli_exp!(qubits, term, λτ / abs(term.coeff))
+        # 2. qDRIFT samples on partition B (skip if zero this step)
+        samples_this = schedule[step_idx]
+        if samples_this > 0
+            τ = dt / samples_this
+            λτ = λB * τ
+            for _ in 1:samples_this
+                j = _sample(dist, alg.rng)
+                term = @inbounds B.terms[j]
+                _pauli_exp!(qubits, term, λτ / abs(term.coeff))
+            end
         end
     end
 
     return nothing
+end
+
+"""
+    _qdrift_schedule(total::Int, steps::Int) -> Vector{Int}
+
+Distribute `total` qDRIFT samples across `steps` composite steps so the
+sum is exactly `total` (not floored to `steps × (total÷steps)`).
+
+Pre-fix the schedule was `max(1, total ÷ steps)` per step, which silently
+truncated the remainder (qdrift_samples=10, steps=3 ⇒ 3·3 = 9 samples)
+AND inflated `total < steps` to `steps` samples via the `max(1, …)`
+floor. Bead Sturm.jl-m0p9.
+
+The first `total % steps` steps receive `cld(total, steps)`; the rest
+receive `total ÷ steps`. Sum = total.
+"""
+function _qdrift_schedule(total::Int, steps::Int)
+    steps >= 1 || error("_qdrift_schedule: steps must be >= 1, got $steps")
+    total >= 0 || error("_qdrift_schedule: total must be >= 0, got $total")
+    base = total ÷ steps
+    extra = total % steps
+    schedule = fill(base, steps)
+    for i in 1:extra
+        schedule[i] += 1
+    end
+    schedule
 end
 
 """Dispatch a single Trotter step by order."""
