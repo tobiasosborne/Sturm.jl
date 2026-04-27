@@ -1,5 +1,6 @@
 using Test
 using Sturm
+using Sockets: listen, accept, IPv4, getsockname
 
 # TCPTransport + standalone server — exercises the full NDJSON-over-TCP wire
 # protocol. Server runs in-process on a port chosen by the OS (port=0).
@@ -93,6 +94,37 @@ using Sturm
             end
         finally
             Sturm.stop_server!(sock)
+        end
+    end
+
+    @testset "TCPTransport connect timeout fires on unreachable host — bead Sturm.jl-mx3g" begin
+        # Pre-fix: connect() blocked indefinitely. Now bounded by the
+        # `timeout` kwarg (default 30s; tested at 0.5s for speed).
+        # 198.51.100.X is RFC5737 TEST-NET-2 — guaranteed not routable.
+        t0 = time()
+        @test_throws ErrorException Sturm.TCPTransport("198.51.100.1", 1; timeout=0.5)
+        elapsed = time() - t0
+        @test elapsed < 5.0   # must NOT block beyond a small overhead of 0.5s
+    end
+
+    @testset "TCPTransport request timeout fires on stalled server — bead Sturm.jl-mx3g" begin
+        # Spawn a TCP listener that accepts but never responds. The
+        # connect() succeeds (server accepts), but readline blocks forever
+        # without the timeout. With the timeout: an ErrorException after
+        # ~0.5s and the socket is closed.
+        srv = listen(IPv4("127.0.0.1"), 0)
+        port = Int(getsockname(srv)[2])
+        accept_task = @async try; accept(srv); catch; end
+        try
+            t = Sturm.TCPTransport("127.0.0.1", port; timeout=0.5)
+            t0 = time()
+            @test_throws ErrorException Sturm.request(t,
+                Dict("v" => 1, "op" => "open_session", "capacity" => 1))
+            elapsed = time() - t0
+            @test elapsed < 5.0
+            @test !isopen(t.sock)   # timer closed the socket
+        finally
+            close(srv)
         end
     end
 end
