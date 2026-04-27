@@ -104,10 +104,14 @@ end
 """
     registered_passes() -> Vector{AbstractPass}
 
-All currently registered passes, as instances. Used by the
-simulation-equivalence harness (`Sturm.jl-7kg`) to enumerate.
+All currently registered passes, as instances, in deterministic order
+(sorted by registration name). Used by the simulation-equivalence
+harness (`Sturm.jl-7kg`) to enumerate; also any reproducibility-sensitive
+caller that hashes pass output. Pre-fix this returned `values(Dict)`
+iteration order, which Julia's hash randomisation makes
+platform/run-dependent (bead Sturm.jl-4dd6).
 """
-registered_passes() = collect(values(_PASS_REGISTRY))
+registered_passes() = [_PASS_REGISTRY[k] for k in sort!(collect(keys(_PASS_REGISTRY)))]
 
 """
     get_pass(name::Symbol) -> AbstractPass

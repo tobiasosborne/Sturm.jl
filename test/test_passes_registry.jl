@@ -39,6 +39,19 @@ Sturm.run_pass(::MyTrivialPass, dag::Vector{Sturm.DAGNode}) = dag
         @test :deferred in names
     end
 
+    @testset "registered_passes() iteration order is deterministic — bead Sturm.jl-4dd6" begin
+        # Pre-fix: collect(values(Dict)) order depended on Julia's hash
+        # randomisation ⇒ platform/run-variable ⇒ broke any test that
+        # hashed pass output across the registered list. Fix sorts by
+        # registered Symbol name on read.
+        a = registered_passes()
+        b = registered_passes()
+        @test a == b   # call-to-call stability inside one Julia
+        # Ordering matches the sorted key list.
+        sorted_keys = sort!(collect(keys(Sturm._PASS_REGISTRY)))
+        @test [Sturm._PASS_REGISTRY[k] for k in sorted_keys] == a
+    end
+
     @testset "get_pass(:bogus) errors with registered list" begin
         err = try; get_pass(:nonexistent_pass); catch e; e; end
         @test err isa ErrorException
