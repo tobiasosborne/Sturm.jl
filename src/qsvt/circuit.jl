@@ -867,7 +867,8 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-    evolve!(qubits::Vector{QBool}, H::PauliHamiltonian, t::Real, alg::QSVT)
+    evolve!(qubits::Vector{QBool}, H::PauliHamiltonian, t::Real, alg::QSVT;
+             warn_on_failure::Bool=true) -> Bool
 
 Hamiltonian simulation via QSVT: apply e^{-iHt/alpha} to the system state,
 where alpha = lambda(H) is the block encoding normalization factor.
@@ -883,13 +884,21 @@ Uses the full GSLW Theorem 58 pipeline:
 Returns `true` if post-selection succeeded. The degree d must be ODD so
 that the sin polynomial has full degree d, giving n_odd = n_even + 1.
 
+**!! Probabilistic post-selection !!** OAA is NOT deterministic — about
+28% of calls fail post-selection on a typical Hamiltonian. **On failure
+the input qubits are left in an UNRECOVERABLE garbage state**; you must
+discard them and re-prepare to retry. Always check the return value.
+A `@warn` fires on failure (suppress with `warn_on_failure=false` inside
+batched shot loops). Bead Sturm.jl-r9fb.
+
 # Ref
 GSLW (2019), arXiv:1806.01838, Theorem 56-58, Lemma 57, Corollary 28.
 Laneve (2025), arXiv:2503.03026, S2.1, S4.3.
 Berntson, Sunderhauf (2025), CMP 406:161.
 """
 function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian,
-                  t::Real, alg::QSVT)
+                  t::Real, alg::QSVT;
+                  warn_on_failure::Bool=true)
     N = length(qubits)
     N == nqubits(H) || error(
         "evolve!(QSVT): Hamiltonian has $(nqubits(H)) qubits, got $N")
@@ -918,5 +927,12 @@ function evolve!(qubits::Vector{QBool}, H::PauliHamiltonian,
     be = block_encode_lcu(H)
 
     # ── Step 5: OAA (Theorem 56 + Corollary 28) ──
-    return oaa_amplify!(qubits, be, phi_even, phi_odd)
+    success = oaa_amplify!(qubits, be, phi_even, phi_odd)
+    if !success && warn_on_failure
+        # Pre-fix bead Sturm.jl-r9fb: failure was returned but unsignalled,
+        # so callers who didn't check the Bool got silent garbage state.
+        @warn "evolve!(QSVT): OAA post-selection failed — qubits hold an unrecoverable state. " *
+              "Discard and re-prepare to retry. Suppress this warning with warn_on_failure=false."
+    end
+    return success
 end

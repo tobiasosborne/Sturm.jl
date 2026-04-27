@@ -10,7 +10,7 @@
 # Ref: GSLW (2019), arXiv:1806.01838, Corollary 28 (robust OAA),
 #      Theorem 56 (combined QSVT), Theorem 58 (optimal Hamiltonian sim).
 
-using Test, Sturm, FFTW
+using Test, Sturm, FFTW, Logging
 using Sturm: jacobi_anger_cos_coeffs, jacobi_anger_sin_coeffs,
              qsvt_phases, qsvt_reflect!, qsvt_combined_reflect!, QSVT,
              block_encode_lcu, ising, lambda, nqubits,
@@ -276,7 +276,7 @@ end
             ctx = EagerContext()
             @context ctx begin
                 sys = [QBool(ctx, 0.0) for _ in 1:N_sys]
-                success = evolve!(sys, H, t, alg)
+                success = evolve!(sys, H, t, alg; warn_on_failure=false)
                 if success
                     n_success += 1
                     b1 = Bool(sys[1])
@@ -298,6 +298,48 @@ end
                 @test abs(probs_measured[i] - probs_exact[i]) < max(5 * sigma, 0.15)
             end
         end
+    end
+
+    @testset "evolve!(QSVT) warns on OAA failure by default — bead Sturm.jl-r9fb" begin
+        # Pre-fix: a failed OAA shot returned `false` but emitted no
+        # diagnostic. Newcomers calling `evolve!(...)` without checking
+        # the Bool got silent garbage state on ~28% of shots. Fix: a
+        # @warn fires on failure, suppressible via warn_on_failure=false
+        # for batched-shot loops where the caller already inspects the
+        # return value. Test.collect_test_logs returns (records, value).
+        H = ising(Val(2), J=1.0, h=0.5)
+        alg = QSVT(epsilon=1e-3, degree=7)
+        is_oaa_warn(r) = r.level == Logging.Warn &&
+                          occursin("OAA post-selection failed", r.message)
+
+        # Default: warning fires at least once across a 60-shot batch
+        # (~28% failure rate ⇒ probability of zero failures < 1e-9).
+        saw_warn = false
+        for _ in 1:60
+            ctx = EagerContext()
+            result = @context ctx begin
+                sys = [QBool(ctx, 0.0) for _ in 1:2]
+                Test.collect_test_logs() do
+                    evolve!(sys, H, 2.0, alg)
+                end
+            end
+            any(is_oaa_warn, result[1]) && (saw_warn = true; break)
+        end
+        @test saw_warn
+
+        # warn_on_failure=false: never warns even across many failed shots.
+        suppressed = true
+        for _ in 1:60
+            ctx = EagerContext()
+            result = @context ctx begin
+                sys = [QBool(ctx, 0.0) for _ in 1:2]
+                Test.collect_test_logs() do
+                    evolve!(sys, H, 2.0, alg; warn_on_failure=false)
+                end
+            end
+            any(is_oaa_warn, result[1]) && (suppressed = false; break)
+        end
+        @test suppressed
     end
 
 end
