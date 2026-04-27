@@ -168,6 +168,46 @@ using Sturm: cases, @cases
         end
     end
 
+    @testset "TracingContext: exception in cases body restores ctx.dag (bead jhl7)" begin
+        # Pre-fix, _cases_dispatch swapped ctx.dag in/out without try/finally;
+        # an exception inside `then()` would leave ctx.dag pointing at the
+        # partial branch vector, permanently corrupting the TracingContext.
+        # With the fix, ctx.dag is restored to its pre-cases value on
+        # exception; the orphan ObserveNode stays (well-formed for
+        # measurement-only tracing) and subsequent ops on the same ctx
+        # continue to land in the outer DAG.
+        ctx = Sturm.TracingContext()
+        outer_dag = ctx.dag
+        @context ctx begin
+            q = QBool(0)
+            try
+                cases(q, () -> error("boom inside then()"))
+            catch e
+                @test e isa ErrorException
+            end
+            # Post-exception sanity: ctx.dag is the OUTER dag (not the
+            # then-branch buffer), and emitting an op afterwards lands there.
+            @test ctx.dag === outer_dag
+            len_before = length(ctx.dag)
+            t = QBool(0); t.θ += π
+            @test length(ctx.dag) > len_before
+        end
+    end
+
+    @testset "TracingContext: exception in else_ body also restores ctx.dag" begin
+        ctx = Sturm.TracingContext()
+        outer_dag = ctx.dag
+        @context ctx begin
+            q = QBool(0)
+            try
+                cases(q, () -> nothing, () -> error("boom inside else_()"))
+            catch e
+                @test e isa ErrorException
+            end
+            @test ctx.dag === outer_dag
+        end
+    end
+
     # ── Failure modes for raw Bool(q) / Int(q) inside TracingContext ────────────
 
     @testset "Bool(q) inside TracingContext errors with migration message" begin

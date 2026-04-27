@@ -86,15 +86,31 @@ function _cases_dispatch(ctx::TracingContext, q::QBool,
     cond_id = _emit_observe!(ctx, q.wire)
     saved_dag = ctx.dag
 
-    ctx.dag = DAGNode[]
-    then()
-    then_branch = ctx.dag
+    # Bead Sturm.jl-jhl7: `then()` or `else_()` can throw mid-trace (a nested
+    # `Bool(q)` cast errors loudly via measure!(::TracingContext), an oracle
+    # may fail to compile, etc.). Without try/finally, ctx.dag would stay
+    # pointing at the partial branch vector, permanently corrupting the
+    # TracingContext. With the finally clauses below, the outer dag is always
+    # restored before propagating the exception; the orphan ObserveNode stays
+    # in saved_dag (no CasesNode follows it, which is well-formed for
+    # measurement-only-no-branch tracing).
 
-    ctx.dag = DAGNode[]
-    else_()
-    else_branch = ctx.dag
+    then_branch = DAGNode[]
+    ctx.dag = then_branch
+    try
+        then()
+    finally
+        ctx.dag = saved_dag
+    end
 
-    ctx.dag = saved_dag
+    else_branch = DAGNode[]
+    ctx.dag = else_branch
+    try
+        else_()
+    finally
+        ctx.dag = saved_dag
+    end
+
     push!(ctx.dag, CasesNode(cond_id, then_branch, else_branch))
     return nothing
 end
