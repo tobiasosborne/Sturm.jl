@@ -22,6 +22,13 @@
 
 using FFTW
 
+# Hard upper bound on the BS Algorithm 1 FFT sample count. Bead Sturm.jl-498m:
+# the heuristic N = max(8d, d/δ) blows up for extreme (d, δ); pre-fix it was
+# silently clamped to 2^20, returning reduced-accuracy phases with no
+# diagnostic. The cap is enforced by ERROR, not silent clamp — past this
+# point the FFT-based Π-multiplier cannot resolve the resolution accurately.
+const MAX_BS_SAMPLES = 1 << 20    # 1_048_576
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Step 0: Chebyshev ↔ analytic polynomial conversion
 # ═══════════════════════════════════════════════════════════════════════════
@@ -151,10 +158,20 @@ function _bs_algorithm1(P::Vector{ComplexF64}, delta::Float64, epsilon::Float64)
     # overflows for very small δ. Remark 1 (p.12) notes empirically
     # Algorithm 1 works with N = O(d/√ε) even for δ → 0.
     #
-    # Practical heuristic: N = max(8d, d/δ) capped at 2^20 (~1M).
-    # For d ≤ 100 and δ ≥ 1e-4, this gives N ≤ 2^20 comfortably.
+    # Practical heuristic: N = max(8d, d/δ). Bead Sturm.jl-498m: pre-fix
+    # the heuristic was silently clamped to 2^20 — extreme (d, δ)
+    # combinations got reduced-accuracy output with no diagnostic. Now
+    # we error past MAX_BS_SAMPLES so the caller makes the trade-off
+    # explicit (loosen δ, drop d, or accept degraded accuracy by raising
+    # the cap consciously).
     N_heuristic = max(8 * (d + 1), ceil(Int, (d + 1) / max(delta, 1e-6)))
-    N = nextpow(2, clamp(N_heuristic, 2 * (d + 1), 1 << 20))
+    N_heuristic <= MAX_BS_SAMPLES || error(
+        "_bs_algorithm1: heuristic sample count $N_heuristic exceeds the safe cap " *
+        "MAX_BS_SAMPLES=$(MAX_BS_SAMPLES) for (d=$d, δ=$delta). The implementation's " *
+        "FFT-based Π-multiplier cannot resolve this resolution accurately — increase δ, " *
+        "decrease d, or set MAX_BS_SAMPLES higher only if degraded accuracy is acceptable."
+    )
+    N = nextpow(2, max(N_heuristic, 2 * (d + 1)))
 
     # Step 1: Evaluate P at N-th roots of unity
     # P(ω^k) = Σ_{n=0}^{d} p_n ω^{nk} where ω = e^{2πi/N}
