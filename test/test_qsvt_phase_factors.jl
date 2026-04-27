@@ -5,7 +5,7 @@ using Sturm
 using Sturm: jacobi_anger_coeffs, chebyshev_eval,
              complementary_polynomial,
              chebyshev_to_analytic,
-             weiss, _weiss_schwarz,
+             weiss, _weiss_schwarz, _bs_algorithm1, MAX_BS_SAMPLES,
              rhw_factorize,
              extract_phases, QSVTPhases,
              qsvt_protocol!, apply_processing_op!,
@@ -698,6 +698,31 @@ using Sturm: jacobi_anger_coeffs, chebyshev_eval,
         @test occursin("OPENQASM", qasm)
         @test occursin("ry(", qasm) || occursin("rz(", qasm)
         @test length(qasm) > 50  # non-trivial output
+    end
+
+    @testset "_bs_algorithm1 errors when heuristic exceeds MAX_BS_SAMPLES — bead Sturm.jl-498m" begin
+        # Pre-fix: extreme (d, δ) silently clamped to N=2^20 with no
+        # diagnostic, returning reduced-accuracy phases. Now the heuristic
+        # past MAX_BS_SAMPLES errors loudly so the caller chooses
+        # explicitly.
+        @test MAX_BS_SAMPLES == 1 << 20
+
+        # A trivial polynomial of high degree with absurdly tight δ
+        # forces N_heuristic >> MAX_BS_SAMPLES.
+        d = 1000
+        P = zeros(ComplexF64, d + 1)
+        P[1] = 0.1            # |P(z)| < 1 (well-formed)
+        delta = 1e-12
+        eps = 1e-6
+        @test_throws ErrorException _bs_algorithm1(P, delta, eps)
+
+        # Sanity: a reasonable (d, δ) still works (no error).
+        d_ok = 8
+        P_ok = zeros(ComplexF64, d_ok + 1)
+        P_ok[1] = 0.5
+        Q = _bs_algorithm1(P_ok, 0.1, 1e-3)
+        @test length(Q) == d_ok + 1
+        @test all(isfinite, Q)
     end
 
 end
