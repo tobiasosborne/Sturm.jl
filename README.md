@@ -77,7 +77,7 @@ using Sturm
     a = QBool(1/2)              # |+>
     b = QBool(0)                # |0>
     when(a) do                  # Bell pair: (|00> + |11>)/sqrt(2)
-        X!(b)                   # b is flipped exactly when a is |1>
+        not!(b)                 # b is flipped exactly when a is |1>
     end
 
     ra = Bool(a)
@@ -86,7 +86,7 @@ using Sturm
 end
 ```
 
-There is no CNOT gate. There is a control structure (`when`) and a flip operation (`X!`). The same channel that a circuit diagram would label "CNOT" is composed at the language level from a *lexical scope* and an *unconditional flip*. CNOT is what you call this channel when you read it back as a diagram, not what you write to compose it.
+There is no CNOT gate. There is a control structure (`when`) and a flip operation (`not!`). The same channel a circuit diagram would label "CNOT" is composed at the language level from a *lexical scope* and an *unconditional flip*. `q::QBool` is a quantum bit, and the natural mutating operation on a boolean is `not!`, not "X gate". CNOT is what you call this channel when you read it back as a diagram, not what you write to compose it. (`X!` is provided as a textbook alias for `not!` if you prefer the gate vocabulary.)
 
 ### Teleportation
 
@@ -94,7 +94,7 @@ There is no CNOT gate. There is a control structure (`when`) and a flip operatio
 function teleport!(q::QBool)::QBool
     a = QBool(1/2)
     b = QBool(0)
-    when(a) do; X!(b); end       # create Bell pair
+    when(a) do; not!(b); end       # create Bell pair
 
     when(q) do; X!(a); end       # entangle input with Bell pair
     H!(q)                        # Hadamard (library gate, built from primitives)
@@ -102,7 +102,7 @@ function teleport!(q::QBool)::QBool
     rq = Bool(q)                 # type boundary = measurement
     ra = Bool(a)                 # type boundary = measurement
 
-    if ra; X!(b); end            # classical correction (post-measurement Bool)
+    if ra; not!(b); end          # classical correction (post-measurement Bool)
     if rq; Z!(b); end
     return b                     # teleported qubit
 end
@@ -329,7 +329,7 @@ Sturm follows Julia's resource-management idiom, not C's. Julia has two patterns
 # Idiomatic — qubits live for the @context block, no manual cleanup
 @context EagerContext() begin
     a = QBool(1/2); b = QBool(0)
-    when(a) do; X!(b); end
+    when(a) do; not!(b); end
     Bool(b)
     # a auto-partial-traced at `end`
 end
@@ -395,7 +395,7 @@ end
 ```julia
 ch = trace(2) do a, b
     H!(a)
-    when(a) do; X!(b); end
+    when(a) do; not!(b); end
     (a, b)
 end
 # ch is a Channel{2,2}: the Bell state circuit as data
@@ -431,7 +431,7 @@ Two complementary renderers are built in, both reading straight from the `Channe
 **Terminal (`to_ascii` / `Base.show`)** — Unicode box-drawing with opt-in ANSI colour. At the REPL just evaluate a `Channel`:
 
 ```julia
-julia> ch = trace(2) do a, b; H!(a); when(a) do; X!(b); end; (a, b); end
+julia> ch = trace(2) do a, b; H!(a); when(a) do; not!(b); end; (a, b); end
 q0: ─Z──Ry(π/2)──●─
                  │
 q1: ─────────────⊕─
