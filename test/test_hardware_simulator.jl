@@ -250,4 +250,29 @@ using Sturm: IdealisedSimulator, dispatch!, PROTOCOL_VERSION,
         ]))
         @test r["results"]["t"] === false
     end
+
+    @testset "concurrent open_session yields distinct ids — bead Sturm.jl-x3xn" begin
+        # Pre-fix: `sim.next_session_id += 1` was a non-atomic read-
+        # modify-write AND `sim.sessions[sid] = …` was a Dict mutation
+        # without a lock. Two @async tasks calling open_session in
+        # parallel could (a) observe the same counter value, emitting
+        # duplicate session ids, AND (b) trip Julia's Dict
+        # rehash-during-insert UB. Now Threads.atomic_add! handles the
+        # counter and a ReentrantLock guards every sessions-Dict access.
+        sim = IdealisedSimulator(; capacity=2)
+        N = 64
+        ids = String["unset" for _ in 1:N]
+        errs = String["" for _ in 1:N]
+        @sync for i in 1:N
+            Threads.@spawn try
+                resp = dispatch!(sim, open_session_request(; capacity=1))
+                ids[i] = String(resp["session_id"])
+            catch e
+                errs[i] = sprint(showerror, e)
+            end
+        end
+        @test all(isempty, errs)
+        @test length(unique(ids)) == N
+        @test all(startswith.(ids, "s_"))
+    end
 end

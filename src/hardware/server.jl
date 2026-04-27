@@ -44,7 +44,11 @@ function _accept_loop(server::TCPServer, sim::IdealisedSimulator)
         catch
             return  # listener closed
         end
-        @async _handle_connection(conn, sim)
+        # Threads.@spawn instead of @async so per-connection work runs on
+        # the threadpool, not cooperatively-scheduled on a single thread.
+        # CPU-intensive simulator sessions no longer starve the accept
+        # loop. Bead Sturm.jl-x3xn(b).
+        Threads.@spawn _handle_connection(conn, sim)
     end
 end
 
@@ -67,10 +71,14 @@ function _handle_connection(conn, sim::IdealisedSimulator)
             println(conn, json_encode(resp))
             flush(conn)
         end
-    catch
-        # Connection-level errors (broken pipe, etc.) → just close the
+    catch e
+        # Connection-level errors (broken pipe, etc.) → close the
         # connection. Per-message protocol errors are reported as err
-        # responses inside the loop above.
+        # responses inside the loop above. Pre-fix the bare catch left
+        # no trail for genuine bugs (e.g. a dispatch! crash that escaped
+        # the inner try). Now @debug logs at minimum so a developer
+        # running with JULIA_DEBUG=Sturm sees the trace. Bead x3xn(c).
+        @debug "hardware server: connection terminated by error" exception = (e, catch_backtrace())
     finally
         try
             close(conn)
