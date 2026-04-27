@@ -204,7 +204,7 @@ end
             c = EagerContext()
             @context c begin
                 sys = [QBool(c, 0.0) for _ in 1:N_sys]
-                success = evolve!(sys, H, t, alg)
+                success = evolve!(sys, H, t, alg; warn_on_failure=false)
                 if success
                     n_success += 1
                     b1 = Bool(sys[1])
