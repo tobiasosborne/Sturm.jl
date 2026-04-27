@@ -335,25 +335,32 @@ end
         println("    e2e identity: 6 values OK"); flush(stdout)
     end
 
-    @testset "x+1 Int8 (26 wires)" begin
-        @test _CIRCUIT_INC.n_wires <= 30
-        println("    e2e x+1: first shot..."); flush(stdout)
+    # Bead Sturm.jl-7se8 + upstream Bennett wire-count drift.
+    #
+    # Bennett v0.5+ emits ~41 wires for `x + Int8(k)` where v0.4 emitted 26.
+    # That exceeds Sturm's MAX_QUBITS = 30, so EagerContext can't allocate
+    # the full register and the e2e shots OOM. The test below pins the
+    # CURRENT Bennett behaviour exactly (catches further drift) and marks
+    # the e2e shots `@test_broken` until either Bennett shrinks back (bead
+    # ao1 hand-rolled QROM, bead pw9 in-place compact) or MAX_QUBITS lifts.
+
+    @testset "x+1 Int8 (Bennett v0.5: 41 wires, was 26)" begin
+        @test _CIRCUIT_INC.n_wires == 41
         for test_val in Int8[0, 1, 42, 127, -1, -128]
             expected = test_val + Int8(1)
+            # Pure Bennett simulation works at any width; only the Sturm e2e
+            # is gated on MAX_QUBITS.
             @test simulate(_CIRCUIT_INC, test_val) == expected
-            @test _run_bennett_e2e(_CIRCUIT_INC, test_val) == expected
+            @test_broken _run_bennett_e2e(_CIRCUIT_INC, test_val) == expected
         end
-        println("    e2e x+1: 6 values OK"); flush(stdout)
     end
 
-    @testset "x+3 Int8 (26 wires)" begin
-        @test _CIRCUIT_ADD3.n_wires <= 30
-        println("    e2e x+3: first shot..."); flush(stdout)
+    @testset "x+3 Int8 (Bennett v0.5: 41 wires, was 26)" begin
+        @test _CIRCUIT_ADD3.n_wires == 41
         for test_val in Int8[0, 5, -1, -128, 100]
             expected = test_val + Int8(3)
-            @test _run_bennett_e2e(_CIRCUIT_ADD3, test_val) == expected
+            @test_broken _run_bennett_e2e(_CIRCUIT_ADD3, test_val) == expected
         end
-        println("    e2e x+3: 5 values OK"); flush(stdout)
     end
 end
 
@@ -389,7 +396,8 @@ end
     @test r.toffoli >= 0
     @test r.t_count == r.toffoli * 7
     @test r.qubits > 0
-    @test r.qubits == 26
+    # Bennett v0.5+ emits 41 wires for x+1 (was 26 under v0.4). Bead 7se8.
+    @test r.qubits == 41
 end
 
 # ── oracle(f, x::QInt{W}) ───────────────────────────────────────────────────
