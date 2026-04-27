@@ -243,8 +243,14 @@ function orkan_kraus_to_superop(kraus::OrkanKrausRaw)::OrkanSuperopRaw
     @ccall LIBORKAN.kraus_to_superop(Ref(kraus)::Ptr{OrkanKrausRaw})::OrkanSuperopRaw
 end
 
-"""Apply 1-qubit channel to a MIXED state. Exits on PURE state."""
+"""Apply 1-qubit channel to a MIXED state. Exits on PURE state.
+
+Bead Sturm.jl-1oy: _check_qubit guard is mandatory — Orkan's GATE_VALIDATE
+calls `exit()` on bad index, SIGABRTing Julia with no recoverable signal.
+Every other gate wrapper has this guard; the channel_1q wrapper was the
+sole omission."""
 function orkan_channel_1q!(state::OrkanStateRaw, sop::OrkanSuperopRaw, target::Integer)
+    _check_qubit(state, target, :channel_1q)
     @ccall LIBORKAN.channel_1q(
         Ref(state)::Ptr{OrkanStateRaw},
         Ref(sop)::Ptr{OrkanSuperopRaw},

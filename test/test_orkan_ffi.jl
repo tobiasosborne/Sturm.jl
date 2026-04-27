@@ -7,7 +7,7 @@ using Sturm: OrkanStateRaw, OrkanKrausRaw, OrkanSuperopRaw,
              orkan_s!, orkan_sdg!, orkan_t!, orkan_tdg!,
              orkan_rx!, orkan_ry!, orkan_rz!, orkan_p!,
              orkan_cx!, orkan_cy!, orkan_cz!, orkan_swap!, orkan_ccx!,
-             orkan_kraus_to_superop, orkan_superop_free!,
+             orkan_kraus_to_superop, orkan_superop_free!, orkan_channel_1q!,
              OrkanState, n_qubits, state_length, probabilities, sample
 
 @testset "Orkan FFI" begin
@@ -149,6 +149,32 @@ using Sturm: OrkanStateRaw, OrkanKrausRaw, OrkanSuperopRaw,
         @test sop.data != C_NULL
         @test sop.n_qubits == 1
         orkan_superop_free!(sop)
+    end
+
+    @testset "channel_1q OOB qubit raises ErrorException, not SIGABRT — bead Sturm.jl-1oy" begin
+        # Build a 2-qubit MIXED state and a valid identity-channel superop, then
+        # try to apply with qubit=100. Without the _check_qubit guard the ccall
+        # would invoke Orkan's GATE_VALIDATE which calls exit(), SIGABRTing the
+        # entire Julia process. With the guard, a Julia ErrorException fires.
+        s = OrkanStateRaw(ORKAN_MIXED_PACKED)
+        orkan_state_init!(s, 2)
+        try
+            data = ComplexF64[1, 0, 0, 1]
+            GC.@preserve data begin
+                kraus = OrkanKrausRaw(UInt8(1), ntuple(_ -> UInt8(0), 7),
+                                       UInt64(1), pointer(data))
+                sop = orkan_kraus_to_superop(kraus)
+                try
+                    @test_throws ErrorException orkan_channel_1q!(s, sop, 100)
+                    # Sanity: a valid index does NOT throw.
+                    orkan_channel_1q!(s, sop, 0)
+                finally
+                    orkan_superop_free!(sop)
+                end
+            end
+        finally
+            orkan_state_free!(s)
+        end
     end
 
     @testset "OrkanState managed handle" begin
