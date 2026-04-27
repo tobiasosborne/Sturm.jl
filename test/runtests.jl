@@ -3,6 +3,7 @@ using Sturm
 
 @testset "Sturm.jl" begin
     include("test_orkan_ffi.jl")
+    include("test_rule11_lint.jl")
     include("test_primitives.jl")
     include("test_bell.jl")
     include("test_teleportation.jl")

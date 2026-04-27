@@ -70,8 +70,11 @@ function _coset_init!(ctx::AbstractContext, reg::QInt{Wtot},
     )
 
     # Phase 1: put each pad ancilla into |+⟩ via Ry(π/2)|0⟩ = |+⟩.
+    # Bead Sturm.jl-la55: route through the DSL primitive (q.θ += δ), not the
+    # raw apply_ry! ccall — Rule 11 hygiene.
     for p in 0:(Cpad - 1)
-        apply_ry!(ctx, pad_anc[p + 1], π / 2)
+        q = QBool(pad_anc[p + 1], ctx, false)
+        q.θ += π / 2
     end
 
     # Phase 2: QFT the value register so that add_qft! can operate in-basis.
@@ -121,8 +124,10 @@ function _runway_init!(ctx::AbstractContext, reg::QInt{Wtot},
     )
 
     # Ry(π/2)|0⟩ = cos(π/4)|0⟩ + sin(π/4)|1⟩ = |+⟩
+    # Bead Sturm.jl-la55: DSL primitive, not raw apply_ry! ccall.
     for p in 0:(Cpad - 1)
-        apply_ry!(ctx, reg.wires[W + p + 1], π / 2)
+        q = QBool(reg.wires[W + p + 1], ctx, false)
+        q.θ += π / 2
     end
 
     return reg

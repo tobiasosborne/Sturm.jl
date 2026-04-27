@@ -512,7 +512,10 @@ function find(f::Function, ::Type{T}, ::Val{W}; n_marked::Int=1) where {T, W}
         # Phase flip on the LSB of the output.
         # Rz(π) applies diag(-i, i): relative phase e^{iπ} = -1 between |0⟩ and |1⟩.
         # Global phase -i is unphysical; only the relative -1 matters.
-        apply_rz!(ctx, output_wires[1], π)
+        # Bead Sturm.jl-la55: DSL primitive (q.φ += δ), not raw apply_rz! ccall.
+        let q_lsb = QBool(output_wires[1], ctx, false)
+            q_lsb.φ += π
+        end
 
         # Uncompute: running the same circuit XORs f(x) back into output,
         # returning output to |0⟩. Bennett's compute-copy-uncompute structure
