@@ -4,6 +4,178 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-27 — Session 78: P1 clusters 2 + 3 (partial) — 5 more closed
+
+Headline: cleared cluster 2 (hardware: mx3g + x3xn) and 3 of 4 cluster 3
+beads (QSVT: r9fb + ifvt + 498m). d0co (Levinson-Durbin upgrade) deferred
+— it's a real algorithmic upgrade that needs literature work + correctness
+comparison, not a one-commit fix. P1 backlog 12 → 7.
+
+### Closed beads (in fix order)
+
+1. **`mx3g` — hardware finalizer + transport.** Three sub-fixes:
+   * (a) `_finalize_hardware_context`: bare `catch` swallowed every
+     finalizer error. Now `@error` logs the exception and stack — still
+     no rethrow because finalizer Tasks have no supervisor.
+   * (c) `_parse_object!` / `_parse_array!` / `_parse_string!` used
+     `@assert _peek(p) == 'X'` on raw network bytes. AssertionError
+     propagated past `catch e isa ProtocolError` in `_handle_connection`,
+     killing the connection task on any malformed input. Each now
+     `_peek(p) == UInt8('X') || throw(ProtocolError(...))`. Test fuzzes
+     15 malformed payloads (empty, unterminated object/array/string,
+     missing colon, raw bytes, broken unicode escape, etc.) and asserts
+     every error is `ProtocolError`, never `AssertionError` (30 contract
+     sites).
+   * (b) `TCPTransport` connect+recv timeout. `connect()` blocked
+     indefinitely on unreachable host; `readline()` blocked indefinitely
+     on a stalled server that accepted but never wrote. Now bounded by
+     a `timeout` kwarg (default 30s). `connect` uses
+     `Base.timedwait` on an `@async connect` task; `recv` uses a `Timer`
+     that closes the socket on expiry, unblocking `readline` (returns
+     empty) and surfacing a location-tagged `ErrorException`. Test
+     fires connect-timeout against RFC5737 TEST-NET-2 (unroutable) and
+     recv-timeout against an in-process listener that accepts but never
+     writes — both assert `elapsed < 5s` at a 0.5s budget.
+
+2. **`x3xn` — simulator + server thread-safety.** The bead listed
+   three sub-issues; a fourth surfaced under stress test and was fixed
+   under the same root-cause class (the bead title's "thread-safety
+   holes" is plural):
+   * (a) `sim.next_session_id += 1` was a non-atomic read-modify-write.
+     Two parallel `open_session` calls observed the same counter ⇒
+     duplicate session ids. `Threads.Atomic{Int}` + `atomic_add!`.
+   * (a-bonus) The N=8 → N=64 stress test revealed `sim.sessions[sid]
+     = …` was a Dict insert without a lock, racing Julia's Dict rehash
+     on growth. Added a `ReentrantLock` on every sessions-Dict access
+     (open / close / submit). Same line of code, same fix locus —
+     in-scope per the bead's plural title.
+   * (b) Server's `_accept_loop` spawned per-connection handlers via
+     `@async` (cooperative on one thread). CPU-intensive simulator
+     sessions starved the accept loop. Switched to `Threads.@spawn` so
+     handlers run on the threadpool.
+   * (c) `_handle_connection`'s bare `catch` now `@debug` logs the
+     exception and stack so genuine bugs leave a trail under
+     `JULIA_DEBUG=Sturm`.
+   Test: 64 `Threads.@spawn`'d concurrent `open_session` calls against
+   one sim → asserts zero exceptions + 64 distinct ids.
+
+3. **`r9fb` — `evolve!(QSVT)` silent OAA failure (~28%).** The function
+   already returned `Bool`, but newcomers ignoring the return got silent
+   garbage state on roughly 1-in-4 calls. Minimal-option fix per the
+   bead: `@warn` fires on failure with remediation, suppressible via
+   new `warn_on_failure::Bool=true` kwarg for batched-shot tests.
+   Docstring now leads with "!! Probabilistic post-selection !!" and
+   spells out that qubits are unrecoverable on failure. Existing batch
+   tests in `test_qsvt_reflect.jl` and `test_oaa.jl` opt into
+   `warn_on_failure=false`. New test asserts default-warn over a
+   60-shot batch (P(zero failures) < 1e-9 at 28% rate) and quiet-
+   suppression with the kwarg. The retry-loop and `(state, success)`
+   options from the bead are deferred — they're API design questions
+   that layer on top of this minimal correctness fix.
+
+4. **`ifvt` — `_oaa_phases_half` hardcoded for degree-3.** Pre-rename
+   the function returned `[-π, -π/2, π/2]`, correct ONLY for the
+   degree-3 Chebyshev polynomial. The unqualified name left ambiguous
+   whether the function generalised. Bead's "rename + lock-down" option
+   chosen over generalisation (BCKS / GSLW19 phase derivation is
+   research). Renamed function + cache; docstring now leads with
+   "Degree-3-only lock-down"; `KNOWN_ISSUES.md` updated. Test pins the
+   exact phase vector + cache-identity guarantee.
+
+5. **`498m` — `_bs_algorithm1` silent sample-count clamp.** Pre-fix:
+   heuristic `N = max(8(d+1), (d+1)/max(δ, 1e-6))` silently clamped to
+   `1<<20`. Extreme (d, δ) combinations passed through with reduced-
+   accuracy phases and no diagnostic. New: `const MAX_BS_SAMPLES = 1<<20`
+   hoisted to module scope; past it, `_bs_algorithm1` errors with a
+   message naming d, δ, and three remediation options. Lower-bound
+   clamp at `2(d+1)` preserved for FFT correctness. Test asserts the
+   cap value + error at d=1000/δ=1e-12 + sanity at d=8/δ=0.1.
+
+### Lessons for future agents
+
+- **`Test.collect_test_logs` returns `(logs, value)`, not the other
+  way round.** Burned 20 min on `logs[2]` not having `.level`. The
+  documented API is `collect_test_logs(f) → (records::Vector{LogRecord}, return_value)`.
+  Pinned in a comment in `test_oaa.jl`.
+
+- **The bead's "fix" line is one of several options; the right one is
+  context-sensitive.** `r9fb` listed three: warn / retry-loop / tuple-
+  return. Picked the first because it's non-breaking and the other two
+  are API design discussions. `ifvt` listed two: rename / generalise.
+  Picked rename because generalisation is research. Document the
+  decision in the commit so future agents can pick up the deferred
+  branch.
+
+- **A reasonable stress test surfaces a related bug class for free.**
+  `x3xn`'s bead body called out three thread-safety holes; the
+  64-task stress test (designed for the atomic-counter fix) revealed
+  the Dict-mutation race as a fourth. The fix went in under the same
+  bead because the title was plural ("holes") and the locus was
+  identical. Same-bead expansion is preferable to a follow-up bead
+  when the root cause is the same and the line of code is one
+  function away.
+
+- **`@async` vs `Threads.@spawn` is a v0.1 → v0.2 graduation.**
+  The bead noted a "thread-pool cap" concern for runaway connections.
+  Deferred — Julia's threadpool already provides scheduling fairness;
+  a hard cap would need its own bead (with semaphore around accept).
+  For typical usage Threads.@spawn is the right call.
+
+- **Hostile-input fuzzing pays off.** The 15-payload `json_decode`
+  fuzz battery for `mx3g(c)` is six lines of code and surfaces every
+  catch-the-wrong-thing failure mode at once. Generalisable pattern:
+  for any parser that handles untrusted bytes, add a fuzz testset
+  that asserts ONLY `ProtocolError` (or your domain's parse-error
+  type) ever escapes, never `AssertionError` / `BoundsError` /
+  `KeyError`.
+
+### Bennett.jl agent activity is expected (memory updated)
+
+The "Bennett Being precompiled by another process" warnings flagged
+in session 76 as "external-julia interference" turn out to be a
+running Bennett.jl agent doing real work — Tobias confirmed this
+session. Saved as `project_bennett_agent_activity.md` so future
+sessions don't pre-emptively kill processes on the warning alone.
+The strict-serial-Julia rule still applies *to my own* invocations.
+
+### Files touched this session
+
+- `src/hardware/hardware_context.jl` — mx3g(a)
+- `src/hardware/protocol.jl`, `test/test_hardware_protocol.jl` — mx3g(c)
+- `src/hardware/transport.jl`, `test/test_hardware_tcp.jl` — mx3g(b)
+- `src/hardware/simulator.jl`, `src/hardware/server.jl`,
+  `test/test_hardware_simulator.jl` — x3xn
+- `src/qsvt/circuit.jl`, `test/test_oaa.jl`,
+  `test/test_qsvt_reflect.jl` — r9fb
+- `src/qsvt/circuit.jl`, `test/test_oaa.jl`, `KNOWN_ISSUES.md` — ifvt
+- `src/qsvt/phase_factors.jl`,
+  `test/test_qsvt_phase_factors.jl` — 498m
+
+### Commits
+
+```
+a0e7372 fix(p1): _bs_algorithm1 errors past MAX_BS_SAMPLES instead of silent clamp (498m)
+977ec91 fix(p1): rename _oaa_phases_half → _oaa_phases_half_deg3 (ifvt)
+580e461 fix(p1): evolve!(QSVT) warns on OAA post-selection failure (r9fb)
+d029ff0 fix(p1): hardware simulator + server thread-safety (x3xn)
+5bf28f0 fix(p1): TCPTransport connect/recv timeout (mx3g)
+b58dd2c fix(p1): hardware finalizer logs + protocol asserts → ProtocolError (mx3g)
+```
+
+### Beads state at end of session
+
+P1 backlog 12 → 7. Cluster 2 fully cleared. Cluster 3 has one bead
+remaining (d0co Levinson-Durbin O(n³) → O(n log² n) upgrade), deferred
+because it's the only true algorithmic-engineering item in the cluster
+and deserves its own session with literature + correctness-comparison
+testing.
+
+Cluster 4 remaining: `5z3r`, `6s5t`, `rqus`, `7jt3`, `5jlo`, plus the
+sweep beads `8v92`/`ks0t`/`71ao`/`an0y` (re-read Area reports to file
+unsifted P2/P3 nits before closing).
+
+---
+
 ## 2026-04-27 — Session 77: P1 cluster 1 (mechanical isolates) — 7 closed
 
 Headline: cleared the 7 mechanical P1 beads from session 75's code review
