@@ -99,6 +99,17 @@ function _rotation_tree!(ancillas::Vector{QBool}, weights::Vector{Float64},
     half = span >> 1
     half >= 1 || return  # span too small to split
 
+    # Grover-Rudolph 2002 (Theorem 1) requires the weight measure to be
+    # non-negative on every basis element. A negative weight produces a
+    # negative p_right that the downstream clamp() silently absorbs to 0,
+    # so the rotation comes out wrong but no diagnostic fires. Assert
+    # loudly. Bead Sturm.jl-pwuy. _prepare! builds weights via abs(coeff)
+    # so the public API path is safe; this guard catches direct callers.
+    all(>=(0), @view weights[offset+1:offset+span]) || error(
+        "_rotation_tree!: requires non-negative coefficients " *
+        "(Grover-Rudolph 2002 invariant)"
+    )
+
     # Compute weight sums for left and right halves
     # Left half: indices offset..(offset+half-1)
     # Right half: indices (offset+half)..(offset+span-1)
@@ -183,6 +194,13 @@ function _rotation_tree_adj!(ancillas::Vector{QBool}, weights::Vector{Float64},
     level >= 1 || return
     half = span >> 1
     half >= 1 || return
+
+    # Same Grover-Rudolph non-negativity invariant as the forward pass.
+    # Bead Sturm.jl-pwuy.
+    all(>=(0), @view weights[offset+1:offset+span]) || error(
+        "_rotation_tree_adj!: requires non-negative coefficients " *
+        "(Grover-Rudolph 2002 invariant)"
+    )
 
     w_total = sum(@view weights[offset+1:offset+span])
     if w_total < 1e-30

@@ -439,6 +439,23 @@ end
     # 5b. Identity term with negative coefficient (C2 bug from review)
     # ─────────────────────────────────────────────────────────────────────
 
+    @testset "_rotation_tree! rejects negative coefficients — bead Sturm.jl-pwuy" begin
+        # Pre-fix the clamp(p_right, 0, 1) silently absorbed a negative
+        # weight into p_right=0, producing wrong rotation angles with no
+        # diagnostic. Direct invocation of the internal helper with a
+        # mixed-sign weight vector must error loudly.
+        @context EagerContext() begin
+            anc = [QBool(0), QBool(0)]
+            bad_weights = Float64[1.0, -2.0, 3.0, 0.5]   # negative entry
+            @test_throws ErrorException Sturm._rotation_tree!(anc, bad_weights, 2, 0, 4)
+            @test_throws ErrorException Sturm._rotation_tree_adj!(anc, bad_weights, 2, 0, 4)
+            # Sanity: non-negative weights still work.
+            ok_weights = Float64[1.0, 2.0, 3.0, 0.5]
+            Sturm._rotation_tree!(anc, ok_weights, 2, 0, 4)
+            for q in anc; discard!(q); end
+        end
+    end
+
     @testset "LCU: Hamiltonian with identity term errors loudly" begin
         # Identity terms are classical energy offsets — must be removed before
         # block encoding. SELECT cannot apply a uniform -i phase to identity.
