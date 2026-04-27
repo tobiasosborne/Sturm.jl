@@ -137,6 +137,10 @@ end
 
 function _emit_node!(lines::Vector{String}, node::ObserveNode, idx, map, indent::AbstractString)
     q = "q[$(idx[node.wire])]"
+    haskey(map, node.result_id) || error(
+        "openqasm: ObserveNode references result_id $(node.result_id) " *
+        "not in classical-bit map (wire-collection pass missed it)"
+    )
     bit = map[node.result_id]
     push!(lines, indent * "c[$bit] = measure $q;")
 end
@@ -154,6 +158,11 @@ function _emit_node!(lines::Vector{String}, node::CasesNode, idx, map, indent::A
     if !has_then && !has_else
         return
     end
+    haskey(map, node.condition_id) || error(
+        "openqasm: CasesNode references condition_id $(node.condition_id) " *
+        "not in classical-bit map — every CasesNode must follow an " *
+        "ObserveNode that produced this id (bead Sturm.jl-nemp)"
+    )
     bit = map[node.condition_id]
     push!(lines, indent * "if (c[$bit] == 1) {")
     inner = indent * "    "

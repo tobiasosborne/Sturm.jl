@@ -79,4 +79,19 @@ using Sturm: to_openqasm, ObserveNode, CasesNode, RyNode, RzNode, CXNode,
         @test occursin("c[0] = measure", qasm)
         @test !occursin("if (", qasm)   # empty cases suppressed
     end
+
+    @testset "Orphan CasesNode condition_id errors loudly — bead Sturm.jl-nemp" begin
+        # Pre-fix the bare `map[condition_id]` lookup raised an opaque
+        # KeyError({0x000000ff, …}) with no remediation. Now an
+        # ErrorException with a clear message naming condition_id and the
+        # constraint (every CasesNode must follow an ObserveNode that
+        # produced this id).
+        w1 = fresh_wire!()
+        w2 = fresh_wire!()
+        # CasesNode references condition_id 99 with no prior ObserveNode.
+        dag = DAGNode[
+            CasesNode(UInt32(99), DAGNode[RyNode(w2, π)], DAGNode[]),
+        ]
+        @test_throws ErrorException to_openqasm(dag, [w1, w2], WireID[])
+    end
 end
