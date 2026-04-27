@@ -25,7 +25,13 @@ mutable struct IdealisedSimulator
     gate_time_ms::Float64       # nominal time per unitary gate
     realtime::Bool              # if true, sleep duration_ms on each submit
     sessions::Dict{String,_SimSession}
-    next_session_id::Int
+    # Concurrency: x3xn-class fixes. The session counter is an atomic so
+    # two parallel open_session calls produce distinct ids. The Dict
+    # itself is also racy under concurrent insert/delete, so a lock
+    # guards every mutation AND every read that returns a session
+    # reference. Bead Sturm.jl-x3xn.
+    next_session_id::Threads.Atomic{Int}
+    sessions_lock::ReentrantLock
 
     function IdealisedSimulator(; capacity::Integer=16,
                                   gate_time_ms::Real=1.0,
@@ -33,7 +39,9 @@ mutable struct IdealisedSimulator
         capacity > 0 || throw(ArgumentError("capacity must be positive"))
         gate_time_ms >= 0 || throw(ArgumentError("gate_time_ms must be non-negative"))
         new(Int(capacity), Float64(gate_time_ms), realtime,
-            Dict{String,_SimSession}(), 1)
+            Dict{String,_SimSession}(),
+            Threads.Atomic{Int}(1),
+            ReentrantLock())
     end
 end
 
@@ -77,10 +85,14 @@ function _do_open_session(sim::IdealisedSimulator, msg::AbstractDict)::Dict{Stri
     if requested <= 0
         return err_response("invalid_capacity"; detail="must be positive")
     end
-    sid = string("s_", lpad(string(sim.next_session_id; base=16), 4, '0'))
-    sim.next_session_id += 1
+    # Atomically reserve the next id; two concurrent open_session calls
+    # are guaranteed distinct ids. Bead Sturm.jl-x3xn.
+    raw = Threads.atomic_add!(sim.next_session_id, 1)
+    sid = string("s_", lpad(string(raw; base=16), 4, '0'))
     eager = EagerContext(; capacity=requested)
-    sim.sessions[sid] = _SimSession(eager, Dict{Int,WireID}())
+    lock(sim.sessions_lock) do
+        sim.sessions[sid] = _SimSession(eager, Dict{Int,WireID}())
+    end
     resp = ok_response()
     resp["session_id"] = sid
     return resp
@@ -89,9 +101,11 @@ end
 function _do_close_session(sim::IdealisedSimulator, msg::AbstractDict)::Dict{String,Any}
     haskey(msg, "session_id") || return err_response("missing_session_id")
     sid = String(msg["session_id"])
-    haskey(sim.sessions, sid) || return err_response("unknown_session"; detail=sid)
-    delete!(sim.sessions, sid)
-    return ok_response()
+    lock(sim.sessions_lock) do
+        haskey(sim.sessions, sid) || return err_response("unknown_session"; detail=sid)
+        delete!(sim.sessions, sid)
+        return ok_response()
+    end
 end
 
 # ── Submit (the hot path) ─────────────────────────────────────────────────────
@@ -99,8 +113,10 @@ end
 function _do_submit(sim::IdealisedSimulator, msg::AbstractDict)::Dict{String,Any}
     haskey(msg, "session_id") || return err_response("missing_session_id")
     sid = String(msg["session_id"])
-    haskey(sim.sessions, sid) || return err_response("unknown_session"; detail=sid)
-    sess = sim.sessions[sid]
+    sess = lock(sim.sessions_lock) do
+        haskey(sim.sessions, sid) ? sim.sessions[sid] : nothing
+    end
+    sess === nothing && return err_response("unknown_session"; detail=sid)
 
     haskey(msg, "ops") || return err_response("missing_ops")
     ops_raw = msg["ops"]
