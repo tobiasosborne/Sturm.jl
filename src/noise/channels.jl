@@ -36,8 +36,17 @@ function _apply_kraus!(ctx::DensityMatrixContext, qubit::UInt8, matrices::Vector
         data[offset + 4] = M[2, 2]
     end
 
-    kraus = OrkanKrausRaw(UInt8(1), ntuple(_ -> UInt8(0), 7), UInt64(n_terms), pointer(data))
-    sop = orkan_kraus_to_superop(kraus)
+    # GC.@preserve must span pointer(data) AND the ccall that consumes it.
+    # The OrkanKrausRaw struct stores only the raw Ptr, so the GC has no way to
+    # see that `data` is still live during orkan_kraus_to_superop — without the
+    # anchor, a GC pass between pointer-take and ccall could move/free `data`.
+    # Bead Sturm.jl-twv. After kraus_to_superop returns, `sop` owns its own
+    # buffer and `data` is no longer needed.
+    local sop
+    GC.@preserve data begin
+        kraus = OrkanKrausRaw(UInt8(1), ntuple(_ -> UInt8(0), 7), UInt64(n_terms), pointer(data))
+        sop = orkan_kraus_to_superop(kraus)
+    end
     try
         orkan_channel_1q!(ctx.orkan.raw, sop, qubit)
     finally
