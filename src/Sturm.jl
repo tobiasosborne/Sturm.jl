@@ -27,6 +27,7 @@ include("channel/trace.jl")
 include("channel/compose.jl")
 include("channel/openqasm.jl")
 include("channel/draw.jl")
+include("channel/schedule.jl")    # _draw_schedule_compact — used by draw + pixels
 include("channel/pixels.jl")
 
 # Quantum control (must come before gates, passes, and library)
