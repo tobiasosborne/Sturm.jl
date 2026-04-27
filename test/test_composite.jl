@@ -1,7 +1,7 @@
 using Test
 using Random: MersenneTwister
 using Sturm
-using Sturm: nqubits, nterms, lambda, _partition
+using Sturm: nqubits, nterms, lambda, _partition, _qdrift_schedule
 using LinearAlgebra: eigen, Diagonal, kron
 
 # _amp, _probs, _infidelity, _state_error, _exact_evolve defined in earlier test files
@@ -21,6 +21,29 @@ using LinearAlgebra: eigen, Diagonal, kron
         @test_throws ErrorException Composite(steps=0)
         @test_throws ErrorException Composite(cutoff=0.0)
         @test_throws ErrorException Composite(cutoff=-1.0)
+    end
+
+    @testset "_qdrift_schedule preserves user total — bead Sturm.jl-m0p9" begin
+        # Pre-fix: samples_per_step = max(1, total ÷ steps) silently lost
+        # the remainder. qdrift_samples=10, steps=3 produced 3·3 = 9 samples
+        # instead of 10. The fix distributes the remainder across the first
+        # `total % steps` steps via cld, the rest via div.
+        @test sum(_qdrift_schedule(10, 3)) == 10
+        @test _qdrift_schedule(10, 3) == [4, 3, 3]
+        # Even division: no remainder.
+        @test sum(_qdrift_schedule(10, 5)) == 10
+        @test _qdrift_schedule(10, 5) == [2, 2, 2, 2, 2]
+        # total < steps: drop the silent floor that inflated total to steps.
+        @test sum(_qdrift_schedule(2, 10)) == 2
+        @test _qdrift_schedule(2, 10) == [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        # zero samples is fine.
+        @test sum(_qdrift_schedule(0, 5)) == 0
+        @test _qdrift_schedule(0, 5) == [0, 0, 0, 0, 0]
+        # Single step gets all.
+        @test _qdrift_schedule(7, 1) == [7]
+        # Bad inputs error loudly.
+        @test_throws ErrorException _qdrift_schedule(10, 0)
+        @test_throws ErrorException _qdrift_schedule(-1, 5)
     end
 
     @testset "Hamiltonian partitioning" begin
