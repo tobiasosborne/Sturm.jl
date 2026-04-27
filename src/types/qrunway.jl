@@ -44,7 +44,7 @@ mutable struct QRunway{W, Cpad, Wtot} <: Quantum
     consumed::Bool
 end
 
-classical_type(::Type{<:QRunway}) = Int8
+classical_type(::Type{<:QRunway{W}}) where {W} = _bennett_arg_type(W; signed=true)
 classical_compile_kwargs(::Type{<:QRunway{W}}) where {W} = (bit_width = W,)
 
 # ── Linearity checks ─────────────────────────────────────────────────────────
@@ -222,7 +222,8 @@ mutable struct QRunwayMid{Wlow, Cpad, Whigh, Wtot} <: Quantum
     consumed::Bool
 end
 
-classical_type(::Type{<:QRunwayMid}) = Int8
+classical_type(::Type{<:QRunwayMid{Wlow, Cpad, Whigh}}) where {Wlow, Cpad, Whigh} =
+    _bennett_arg_type(Wlow + Whigh; signed=true)
 classical_compile_kwargs(::Type{<:QRunwayMid{Wlow, Cpad, Whigh}}) where {Wlow, Cpad, Whigh} =
     (bit_width = Wlow + Whigh,)
 

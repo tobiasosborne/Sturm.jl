@@ -17,7 +17,7 @@ mutable struct QInt{W} <: Quantum
     consumed::Bool
 end
 
-classical_type(::Type{<:QInt}) = Int8
+classical_type(::Type{QInt{W}}) where {W} = _bennett_arg_type(W; signed=true)
 classical_compile_kwargs(::Type{<:QInt{W}}) where {W} = (bit_width = W,)
 
 # ── Linearity checks ─────────────────────────────────────────────────────────

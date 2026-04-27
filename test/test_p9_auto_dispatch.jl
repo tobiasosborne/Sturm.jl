@@ -25,10 +25,23 @@ using Sturm
         @test QInt{8} <: Sturm.Quantum
     end
 
-    @testset "classical_type trait" begin
-        @test Sturm.classical_type(QBool)    === Int8
-        @test Sturm.classical_type(QInt{4})  === Int8
-        @test Sturm.classical_type(QInt{8})  === Int8
+    @testset "classical_type trait — width-parametric (bead a4l)" begin
+        # QBool always Int8: 1 bit fits trivially.
+        @test Sturm.classical_type(QBool)     === Int8
+
+        # QInt{W} picks the narrowest signed Int* holding W bits. Pre-bead-a4l
+        # this was hardcoded to Int8 regardless of W → silent truncation
+        # at W>8 for any caller that routed through `classical_type` (rather
+        # than `_bennett_arg_type` directly).
+        @test Sturm.classical_type(QInt{1})   === Int8
+        @test Sturm.classical_type(QInt{4})   === Int8
+        @test Sturm.classical_type(QInt{8})   === Int8
+        @test Sturm.classical_type(QInt{9})   === Int16
+        @test Sturm.classical_type(QInt{16})  === Int16
+        @test Sturm.classical_type(QInt{17})  === Int32
+        @test Sturm.classical_type(QInt{32})  === Int32
+        @test Sturm.classical_type(QInt{33})  === Int64
+        @test Sturm.classical_type(QInt{64})  === Int64
     end
 
     @testset "classical_compile_kwargs trait" begin

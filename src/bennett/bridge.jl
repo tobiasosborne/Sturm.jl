@@ -20,29 +20,10 @@ using Bennett: emit_qrom!, WireAllocator, wire_count,
                LoweringResult, bennett
 import Bennett: allocate! as _bennett_wa_allocate!
 
-# Pick the narrowest Julia integer type that fits a W-bit quantum register,
-# so that Bennett extracts LLVM IR at the right numeric type. Hardcoding Int8
-# regardless of W forced every function to be compiled against 8-bit
-# semantics: for W > 8 the IR still gets uniformly narrowed to W bits by
-# Bennett, but constants, comparisons, and type-dispatch paths inside the
-# user function all see Int8, which is a type lie (q93).
-#
-# signed=true (default) matches Julia's native `Int` convention; set
-# signed=false when f's behaviour depends on unsigned reinterpretation.
-function _bennett_arg_type(W::Int; signed::Bool=true)
-    W >= 1 || error("_bennett_arg_type: W must be >= 1, got $W")
-    if W <= 8
-        return signed ? Int8  : UInt8
-    elseif W <= 16
-        return signed ? Int16 : UInt16
-    elseif W <= 32
-        return signed ? Int32 : UInt32
-    elseif W <= 64
-        return signed ? Int64 : UInt64
-    else
-        error("_bennett_arg_type: W=$W exceeds Int64/UInt64 (max 64 bits)")
-    end
-end
+# `_bennett_arg_type(W; signed)` lives in src/types/quantum.jl now (moved
+# there in bead a4l) so that the parametric `classical_type` traits on QInt /
+# QCoset / QRunway can call it during types/ load — bennett/bridge.jl is
+# included later in src/Sturm.jl. Same function, same interface.
 
 """
     apply_reversible!(ctx, circuit, input_map)

@@ -19,12 +19,46 @@ abstract type Quantum end
 
 The classical Julia type a quantum register type maps to when a plain Julia
 function is lifted to an oracle via Bennett.jl. QBool → Int8 (interpreted at
-bit_width=1); QInt{W} → Int8 (at bit_width=W).
+bit_width=1); QInt{W} → narrowest signed integer holding W bits
+(`_bennett_arg_type(W)` — Int8 for W≤8, Int16 for W≤16, …).
 
 Every `T <: Quantum` must define this. Subtypes that have no classical shadow
 (e.g. a future quantum-only type) should not be used with P9 auto-dispatch.
 """
 function classical_type end
+
+"""
+    _bennett_arg_type(W::Int; signed::Bool=true) -> Type
+
+Pick the narrowest Julia integer type that fits a W-bit quantum register, so
+that Bennett extracts LLVM IR at the right numeric type. Hardcoding Int8
+regardless of W forced every function to be compiled against 8-bit semantics:
+for W > 8 the IR still gets uniformly narrowed to W bits by Bennett, but
+constants, comparisons, and type-dispatch paths inside the user function all
+see Int8, which is a type lie (bead q93 — for the bridge.jl direct path —
+and bead a4l for the `classical_type` trait).
+
+`signed=true` (default) matches Julia's native `Int` convention; set
+`signed=false` when f's behaviour depends on unsigned reinterpretation.
+
+Defined here in `types/quantum.jl` (not in `bennett/bridge.jl`) because
+`classical_type(::Type{QInt{W}})` and the QCoset/QRunway traits all need it,
+and the types/ files load before bennett/.
+"""
+function _bennett_arg_type(W::Int; signed::Bool=true)
+    W >= 1 || error("_bennett_arg_type: W must be >= 1, got $W")
+    if W <= 8
+        return signed ? Int8  : UInt8
+    elseif W <= 16
+        return signed ? Int16 : UInt16
+    elseif W <= 32
+        return signed ? Int32 : UInt32
+    elseif W <= 64
+        return signed ? Int64 : UInt64
+    else
+        error("_bennett_arg_type: W=$W exceeds Int64/UInt64 (max 64 bits)")
+    end
+end
 
 """
     classical_compile_kwargs(::Type{<:Quantum}) -> NamedTuple
