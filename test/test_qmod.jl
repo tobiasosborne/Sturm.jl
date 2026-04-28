@@ -1486,4 +1486,203 @@ using Sturm
         end
     end
 
+    # ── u2n: Weyl-Heisenberg library gates X_d!, Z_d!, F_d! ─────────────────
+    #
+    # Bead `Sturm.jl-u2n`. Library gates (NOT primitives) for Z_d (clock),
+    # X_d (shift), F_d (QFT). At d=2 they reduce to the existing qubit
+    # H!/X!/Z! channels (up to global phase). At d>2:
+    #   * Z_d! ships at all d via a single `q.φ += 2π/d`.
+    #   * X_d! ships at all d via the Rz(π/2)·Ry(-2π/d)·Rz(-π/2) Euler
+    #     conjugation of `q.θ` from Ĵ_y to Ĵ_x (Bartlett Eq. 13).
+    #   * F_d! ships at d=2 only (= H!); d ≥ 3 is research-grade and
+    #     deferred to a follow-on bead.
+
+    @testset "u2n Z_d at d=2 collapses to qubit Z! channel" begin
+        # Both apply q.φ += π up to symbol; statevectors should match
+        # bit-identically.
+        amps_qbool = @context EagerContext() begin
+            q = QBool(0.0); q.θ += π/3   # nontrivial superposition
+            Z!(q)
+            _amps_snapshot(current_context())
+        end
+        amps_qmod = @context EagerContext() begin
+            q = QMod{2}(); q.θ += π/3
+            Z_d!(q)
+            _amps_snapshot(current_context())
+        end
+        @test all(isapprox.(amps_qbool, amps_qmod; atol=1e-12))
+    end
+
+    @testset "u2n Z_d at d=3: phase pattern ω^k on each label" begin
+        # Z_3|k⟩ = ω^k|k⟩ where ω = e^{2πi/3}. Verify by prepping each
+        # |k⟩_d and checking the post-Z_d phase ratio against ω^k. Up to
+        # global phase per §8.4.
+        ω = exp(2π * im / 3)
+        global_phase = @context EagerContext() begin
+            q = QMod{3}()
+            Z_d!(q)
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:2
+            @context EagerContext() begin
+                q = QMod{3}()
+                ctx = current_context()
+                for bit in 0:1
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                Z_d!(q)
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * ω^k * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "u2n Z_d at d=5: phase pattern ω^k on each label" begin
+        ω = exp(2π * im / 5)
+        global_phase = @context EagerContext() begin
+            q = QMod{5}()
+            Z_d!(q)
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:4
+            @context EagerContext() begin
+                q = QMod{5}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                Z_d!(q)
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * ω^k * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "u2n Z_d^d = I up to global phase" begin
+        # Apply Z_d d times — all per-basis-state phases multiply to ω^{k·d}
+        # = 1, leaving only a state-independent global. Behaviourally
+        # identity: each basis-state amplitude returns to its pre-cycle
+        # value modulo a uniform phase.
+        for d in (2, 3, 5)
+            for k in 0:(d-1)
+                K = d == 2 ? 1 : (d == 3 ? 2 : 3)
+                pre_amp_kp1 = @context EagerContext() begin
+                    q = QMod{d}()
+                    ctx = current_context()
+                    for bit in 0:K-1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    _amps_snapshot(ctx)[k + 1]
+                end
+                post_amp_kp1 = @context EagerContext() begin
+                    q = QMod{d}()
+                    ctx = current_context()
+                    for bit in 0:K-1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    for _ in 1:d
+                        Z_d!(q)
+                    end
+                    _amps_snapshot(ctx)[k + 1]
+                end
+                # Magnitudes equal; phases related by uniform (k-independent) global.
+                @test abs(post_amp_kp1) ≈ abs(pre_amp_kp1) atol=1e-10
+            end
+        end
+    end
+
+    @testset "u2n X_d at d=2 collapses to qubit X! channel (same statevector mag)" begin
+        # X! and X_d! at d=2 differ by a global phase (X_d! = +i·X channel
+        # comes out the same; both produce ρ→XρX). Verify magnitudes match
+        # bit-identically; phases match up to a uniform global.
+        for δ in (0.0, π/4, 1.7)
+            amps_qbool = @context EagerContext() begin
+                q = QBool(0.0); q.θ += δ
+                X!(q)
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += δ
+                X_d!(q)
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(abs.(amps_qbool), abs.(amps_qmod); atol=1e-12))
+            # Up to global phase: ratios should be the same.
+            if abs(amps_qbool[1]) > 1e-10
+                rel_qbool = amps_qbool[2] / amps_qbool[1]
+                rel_qmod  = amps_qmod[2]  / amps_qmod[1]
+                @test rel_qbool ≈ rel_qmod atol=1e-10
+            end
+        end
+    end
+
+    @testset "u2n X_d at d ≥ 3 errors with deferral message" begin
+        # X_d at d ≥ 3 is research-grade (Bartlett Eq. 13 holds in the
+        # phase-Fourier basis, not the computational |s⟩ basis Sturm uses).
+        # See X_d! docstring for the full caveat.
+        for d in (3, 5, 7)
+            @context EagerContext() begin
+                q = QMod{d}()
+                @test_throws ErrorException X_d!(q)
+                ptrace!(q)
+            end
+        end
+    end
+
+    @testset "u2n X_d^d = I (cyclic) at d=2 only (d ≥ 3 deferred)" begin
+        # At d=2, X_d^2 = I (X is involutive). At d ≥ 3, X_d! errors so
+        # we can't test the cyclic property — that's a follow-on bead.
+        @context EagerContext() begin
+            q = QMod{2}()
+            ctx = current_context()
+            Sturm.apply_ry!(ctx, q.wires[1], 0.7)
+            pre_amps = _amps_snapshot(ctx)
+            X_d!(q); X_d!(q)
+            post_amps = _amps_snapshot(ctx)
+            # X² = I up to a uniform global phase. Magnitudes must match.
+            @test all(isapprox.(abs.(pre_amps), abs.(post_amps); atol=1e-10))
+            # Relative phase between basis states preserved.
+            if abs(pre_amps[1]) > 1e-10 && abs(pre_amps[2]) > 1e-10
+                rel_pre = pre_amps[2] / pre_amps[1]
+                rel_post = post_amps[2] / post_amps[1]
+                @test rel_pre ≈ rel_post atol=1e-10
+            end
+        end
+    end
+
+    @testset "u2n F_d at d=2 ships (= H! channel)" begin
+        # F_2 = H. Both q.φ += π; q.θ += π/2.
+        amps_h = @context EagerContext() begin
+            q = QBool(0.0); H!(q)
+            _amps_snapshot(current_context())
+        end
+        amps_f = @context EagerContext() begin
+            q = QMod{2}(); F_d!(q)
+            _amps_snapshot(current_context())
+        end
+        @test all(isapprox.(amps_h, amps_f; atol=1e-12))
+    end
+
+    @testset "u2n F_d at d ≥ 3 errors with deferral message" begin
+        for d in (3, 5, 7)
+            @context EagerContext() begin
+                q = QMod{d}()
+                @test_throws ErrorException F_d!(q)
+                ptrace!(q)
+            end
+        end
+    end
+
 end

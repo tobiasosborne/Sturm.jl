@@ -39,6 +39,7 @@ include("bennett/bridge.jl")
 
 # Convenience gates (built from primitives)
 include("gates.jl")
+include("qudit_gates.jl")
 
 # Optimisation passes
 include("passes/abstract.jl")
@@ -121,6 +122,7 @@ export current_controls, with_controls, with_empty_controls
 # Gates (standard library, not primitives)
 export H!, X!, Y!, Z!, S!, T!, Sdg!, Tdg!, swap!
 export not!  # idiomatic boolean-vocabulary alias for X!
+export X_d!, Z_d!, F_d!  # Weyl-Heisenberg qudit library (Sturm.jl-u2n)
 
 # Library patterns
 export superpose!, interfere!, fourier_sample, phase_estimate
