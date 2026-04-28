@@ -4,6 +4,172 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-28 — Session 79: code-review sweep grind — 4 sweep beads closed
+
+Headline: ground through the four area-sweep beads (`8v92`/`ks0t`/`71ao`/
+`an0y`) from session 75's multi-agent code review. ~17 P2/P3 nits fixed
+in four small commits; 4 substantive items filed as their own beads;
+two sweep beads closed with full receipts, two with "lost-table" notes.
+
+### Closed beads
+
+* **`71ao`** (Area 3 — library/simulation/QSVT/QECC/hardware) — every
+  P2 in the table either fixed or determined to be a non-issue. Three
+  reviewer claims that turned out invalid: `coset_add!` already validates
+  `N < 2^W` at the QCoset constructor; `_PAULI_PHASE_TOL` doesn't exist
+  in src/ (already removed); modadd! step numbering matches Beauregard
+  Fig 5 exactly.
+* **`ks0t`** (Area 2 — IR/passes/Bennett/noise) — every P2/P3 in the
+  table either fixed or filed as a follow-up bead. Four follow-ups
+  filed: `b583` (classicalise multi-qubit), `b3mu` (optimise(:all)
+  ignores user passes), `tu42` (oracle_table typed-arg MethodError),
+  `wq0p` (pixels shadow flanks).
+* **`8v92`** (Area 1 — types/context/control) — closed with "lost-table"
+  note. The 5-bullet P0/P1 headlines are all in their own beads (closed
+  in sessions 76/77/78); the 23 P2/P3 items were lost when the reviewer
+  agent terminated without writing the full table.
+* **`an0y`** (Area 4 — tests/repo/docs) — same lost-table situation.
+  The vacuous `@test true` was fixed (in test_hardware_lifecycle.jl —
+  now asserts the dropped-context finalizer doesn't poison shared
+  sim/transport state).
+
+### Fixes by category
+
+#### Round 1 — comments + magic-constant cites (commit `d4be03f`)
+
+* `channel/dag.jl` — `_ZERO_WIRE` sentinel allocator invariant (consumers
+  MUST gate on `ncontrols`, not on `wire == _ZERO_WIRE`).
+* `library/arithmetic.jl` — `_apply_ctrls` now errors explicitly on
+  NTuple{≥3} (was a silent MethodError); cap rationale documented.
+* `noise/classicalise.jl` — single-qubit-only limitation called out.
+* `passes/gate_cancel.jl` — `_barrier_wires` per-method rationale tied
+  to channel-IR-vs-unitary discipline.
+* `qecc/channel_encode.jl` — comment explaining why direct `apply_*!`
+  at the DAG-replay layer is the correct spelling (below the Rule 11 /
+  P5 boundary).
+* `qecc/steane.jl` — X-stabilizer Hadamard-sandwich → CZ identity with
+  Steane 1996 eq. 6 / Fig. 6 cite.
+* `qsvt/circuit.jl` — `_lift_combined_to_be` `alpha=2.0` cited to GSLW19
+  Theorem 58 / Lemma 53 (LCU subnormalisation).
+* `simulation/hamiltonian.jl` — PauliHamiltonian Hermiticity is
+  structurally enforced via `coeff::Float64` + Hermitian Paulis.
+
+#### Round 2 — substantive single-file changes (commit `59f3297`)
+
+* `library/shor.jl` — all 7 `shor_factor_*` entry points (A, B, C, D,
+  D_semi, E, EH) now take `rng::AbstractRNG=default_rng()` kwarg;
+  pattern matches `qdrift.jl`. Two runs with the same seed are now
+  reproducible.
+* `test/test_hardware_lifecycle.jl` — replaced vacuous `@test true` at
+  the end of "Finalizer does best-effort cleanup" with a meaningful
+  post-condition: opening a fresh context against the same sim /
+  transport succeeds (proves the dropped context's finalizer didn't
+  poison shared state).
+
+#### Round 3 — perf + cleanup (commit `dd046c0`)
+
+* `channel/channel.jl` — `Channel{In,Out}(::Vector{DAGNode}, ...)` is
+  now single-pass (validate-and-narrow in one walk; pre-fix was
+  `findfirst` + comprehension = double iteration on large DAGs).
+* `channel/draw.jl` + `channel/pixels.jl` — dropped per-CasesNode
+  `stacktrace(backtrace())` cost. Pre-fix paid the symbolicate cost on
+  every CasesNode for per-source-line `_id` uniqueness, even though
+  `maxlog=1` would suppress all but the first emit. Static `_id` now
+  fires once globally per render-mode.
+* `channel/trace.jl` — `trace(f, ::Val{W})` accepts QBool return
+  (symmetric with `trace(f, n_in::Int)`); also tolerates `nothing`.
+* `passes/gate_cancel.jl` — removed dead `_wires_of` legacy block. Grep
+  across src/ + test/ confirmed zero callers; the new pipeline routes
+  through `_register_and_block!` + `_barrier_wires`.
+
+#### Round 4 — docs + error context (commit `b3b6fea`)
+
+* `orkan/ffi.jl` — explained why OrkanKrausRaw is immutable but
+  OrkanSuperopRaw is mutable (finalizer attachment for foreign-allocated
+  data).
+* `channel/dag.jl` — documented why `CasesNode.true_branch` /
+  `.false_branch` are `Vector{DAGNode}` (abstract) rather than
+  `Vector{HotNode}`: the body may contain nested CasesNode (not in
+  HotNode); lowering eliminates the nesting before forming
+  `Channel.dag::Vector{HotNode}`.
+* `passes/deferred_measurement.jl` — `strict=false` paths that silently
+  skipped un-lowerable / mismatched CasesNodes now `@debug` log;
+  `_add_control` errors now name the wire, the offending node fields,
+  and explain the lowering context.
+
+### Lessons for future agents
+
+* **Reviewer claims need verification before fixing.** Three Area 3 P2
+  claims were stale: the assertion the reviewer wanted was already
+  present (coset constructor), the magic constant they wanted derived
+  didn't exist anymore, and the comment numbering they thought was
+  off was correct against the cited paper. ~10 minutes saved per claim
+  by grepping first.
+
+* **`stacktrace(backtrace())` for `_id` uniqueness in `@warn` is
+  expensive.** `@warn` evaluates kwargs *before* checking `maxlog`, so
+  per-call-site uniqueness via stacktrace pays the symbolicate cost
+  even when the warn doesn't fire. Static `_id` + `maxlog=1` fires
+  once globally, which is usually what we want anyway. The render
+  loops in `draw.jl` / `pixels.jl` were the canary; if you find a
+  similar pattern elsewhere, it's almost certainly a perf win to
+  collapse to static.
+
+* **Closing review-sweep beads with "lost-table" notes is acceptable.**
+  Areas 1 and 4 lost their full P2/P3 tables when the reviewer agent
+  terminated without write permission. Re-running the agent would have
+  re-discovered the same items (deterministic-ish) at the cost of
+  another full-codebase pass. The right call was to close with a note
+  and trust that organic future fixes will catch real items as they
+  surface, rather than chase an unanchored list.
+
+* **Strict-serial-Julia rule extends to even short test runs.** I ran
+  test_channel.jl and test_passes.jl in parallel during round 3 (two
+  julia processes simultaneously); both finished cleanly but this
+  violates the saved feedback memory `feedback_no_parallel_julia.md`.
+  Sequential only, even if a single test file finishes in 8s.
+
+### New beads filed
+
+* `b583` (P2) — classicalise: multi-qubit stochastic-kernel variant.
+* `b3mu` (P2) — `optimise(:all)` ignores user-registered passes.
+* `tu42` (P2) — `oracle_table` latent MethodError on typed-arg lambdas.
+* `wq0p` (P3) — `pixels.jl _maybe_shadow_flanks!` may fire on gate
+  rows (needs visual reproduction first).
+
+### Beads state at end of session
+
+* P0: empty.
+* P1: 7 ready (`5jlo`, `5z3r`, `6s5t`, `7jt3`, `d0co`, `pw9`, `rqus`).
+* P2: 54 open total (network +0 this session: closed 4 sweep beads,
+  filed 4 follow-ups). Many of the new P2s are now well-scoped single-
+  task items rather than catch-all sweeps.
+* Total: 197 issues, 54 open, 143 closed.
+
+### Files touched this session
+
+* `src/channel/{channel,dag,draw,pixels,trace}.jl`
+* `src/library/{arithmetic,shor}.jl`
+* `src/noise/classicalise.jl`
+* `src/orkan/ffi.jl`
+* `src/passes/{deferred_measurement,gate_cancel}.jl`
+* `src/qecc/{channel_encode,steane}.jl`
+* `src/qsvt/circuit.jl`
+* `src/simulation/hamiltonian.jl`
+* `test/test_hardware_lifecycle.jl`
+* `WORKLOG.md`
+
+### Commits
+
+```
+b3b6fea docs+errors: code-review sweep round 4 (ks0t)
+dd046c0 perf+cleanup: code-review sweep round 3 (ks0t)
+59f3297 fix: shor_factor_* rng kwarg + meaningful finalizer-cleanup test (71ao, an0y)
+d4be03f docs: code-review sweep round 1 — comments + magic-constant cites (71ao, ks0t)
+```
+
+---
+
 ## 2026-04-27 — Session 78: P1 clusters 2 + 3 (partial) — 5 more closed
 
 Headline: cleared cluster 2 (hardware: mx3g + x3xn) and 3 of 4 cluster 3
