@@ -2069,8 +2069,120 @@ using Sturm
         end
     end
 
-    @testset "p38 d ≥ 3 errors with deferral message" begin
-        for d in (3, 4, 5, 7)
+    @testset "p38 d=3: SUM truth table — all 9 (a,b) ∈ {0,1,2}² mappings" begin
+        # `b ⊻= a` (target b, ctrl a): b ← (a + b) mod 3; a unchanged.
+        # Exhaustively test all 9 legal (a, b) pairs.
+        for a_in in 0:2, b_in in 0:2
+            b_out = (a_in + b_in) % 3
+            @context EagerContext() begin
+                a = QMod{3}(); b = QMod{3}()
+                ctx = current_context()
+                # Prep |a_in⟩_d on a, |b_in⟩_d on b via raw bit-flips.
+                for bit in 0:1
+                    if (a_in >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, a.wires[bit + 1], π)
+                    end
+                end
+                for bit in 0:1
+                    if (b_in >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, b.wires[bit + 1], π)
+                    end
+                end
+                b ⊻= a
+                @test Int(a) == a_in
+                @test Int(b) == b_out
+            end
+        end
+    end
+
+    @testset "p38 d=3: forbidden-state preservation under coherent SUM" begin
+        # Prep a in superposition over legal labels, b at any legal state;
+        # apply SUM; verify forbidden labels (|11⟩_qubit on either register)
+        # have zero amplitude. Layer 2 invariant: every primitive must
+        # preserve the d-level subspace.
+        @context EagerContext() begin
+            a = QMod{3}()
+            ctx = current_context()
+            # Prep a in (|0⟩ + |1⟩)/√2 via single H on a.wires[1].
+            Sturm.apply_ry!(ctx, a.wires[1], π/2)
+            b = QMod{3}()
+            # Prep b at |2⟩_d.
+            Sturm.apply_ry!(ctx, b.wires[2], π)
+            b ⊻= a
+            amps = _amps_snapshot(ctx)
+            # 4 wires (2+2) → 16 amps. Forbidden labels: any amp index
+            # where bits 0..1 (a-encoding) form 0b11 OR bits 2..3 form
+            # 0b11. Check structurally.
+            for i in 0:15
+                a_bits = i & 0b11
+                b_bits = (i >> 2) & 0b11
+                if a_bits == 0b11 || b_bits == 0b11
+                    @test abs(amps[i + 1]) < 1e-10
+                end
+            end
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10
+        end
+    end
+
+    @testset "p38 d=3: when(::QBool) outer-control composes" begin
+        # Outer when() turns SUM into a 1-controlled SUM. Verify on a
+        # specific input.
+        @context EagerContext() begin
+            ctrl = QBool(0.0); H!(ctrl)   # |+⟩
+            a = QMod{3}(); b = QMod{3}()
+            ctx = current_context()
+            # Prep a = |1⟩_d, b = |2⟩_d.
+            Sturm.apply_ry!(ctx, a.wires[1], π)
+            Sturm.apply_ry!(ctx, b.wires[2], π)
+            when(ctrl) do
+                b ⊻= a
+            end
+            # Expect:
+            #   ctrl=0 branch: a=1, b=2 (unchanged).
+            #   ctrl=1 branch: a=1, b = (1+2) mod 3 = 0.
+            # Both branches at amplitude 1/√2.
+            amps = _amps_snapshot(ctx)
+            nz_count = count(a -> abs(a) > 1e-10, amps)
+            @test nz_count == 2  # exactly two non-zero branches
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10
+            # Forbidden states stay empty.
+            for i in 0:length(amps)-1
+                # Layout: bit 0 = ctrl, bits 1..2 = a, bits 3..4 = b.
+                a_bits = (i >> 1) & 0b11
+                b_bits = (i >> 3) & 0b11
+                if a_bits == 0b11 || b_bits == 0b11
+                    @test abs(amps[i + 1]) < 1e-10
+                end
+            end
+        end
+    end
+
+    @testset "p38 d=3: associativity / SUM cycles to identity in 3" begin
+        # `b ⊻= a` three times with the same a should map b back to itself
+        # (since 3·a mod 3 = 0). Per-input verification.
+        for a_in in 0:2, b_in in 0:2
+            @context EagerContext() begin
+                a = QMod{3}(); b = QMod{3}()
+                ctx = current_context()
+                for bit in 0:1
+                    if (a_in >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, a.wires[bit + 1], π)
+                    end
+                end
+                for bit in 0:1
+                    if (b_in >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, b.wires[bit + 1], π)
+                    end
+                end
+                b ⊻= a; b ⊻= a; b ⊻= a
+                @test Int(b) == b_in
+                @test Int(a) == a_in
+            end
+        end
+    end
+
+    @testset "p38 d ≥ 4 errors with deferral message" begin
+        for d in (4, 5, 7)
             @context EagerContext() begin
                 a = QMod{d}(); b = QMod{d}()
                 @test_throws ErrorException b ⊻ a
