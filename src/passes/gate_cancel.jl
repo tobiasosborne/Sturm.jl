@@ -291,33 +291,11 @@ function _remove_cx_with_target!(cx_cand, w::WireID)
     end
 end
 
-# ── Legacy API (kept for _wires_of users in other passes) ────────────
-
-_wires_of(n::RyNode)      = _wire_set(n.wire, get_controls(n))
-_wires_of(n::RzNode)      = _wire_set(n.wire, get_controls(n))
-_wires_of(n::PrepNode)    = _wire_set(n.wire, get_controls(n))
-_wires_of(n::ObserveNode) = Set{WireID}((n.wire,))
-_wires_of(n::DiscardNode) = Set{WireID}((n.wire,))
-
-function _wires_of(n::CXNode)
-    s = Set{WireID}((n.control, n.target))
-    for c in get_controls(n); push!(s, c); end
-    s
-end
-
-function _wires_of(n::CasesNode)
-    s = Set{WireID}()
-    for node in n.true_branch;  union!(s, _wires_of(node)); end
-    for node in n.false_branch; union!(s, _wires_of(node)); end
-    s
-end
-
-function _wire_set(wire::WireID, controls)
-    s = Set{WireID}((wire,))
-    for c in controls; push!(s, c); end
-    s
-end
-
+# Note: an earlier `_wires_of(::DAGNode) -> Set{WireID}` family lived here as
+# a "legacy API". Grep confirmed zero callers across src/ and test/ — the
+# new gate_cancel pipeline routes through `_register_and_block!` +
+# `_barrier_wires`, which avoid the per-call `Set` allocation entirely. The
+# block was removed (sweep bead ks0t).
 
 # ── AbstractPass wrapper (Sturm.jl-7ab) ─────────────────────────────────────
 #
