@@ -142,3 +142,79 @@ function F_d!(q::QMod{d, K}) where {d, K}
         )
     end
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T_d! — Per-dimension magic gate (Clifford-hierarchy level 3)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    T_d!(q::QMod{d, K}) -> q
+
+Apply the qudit T-gate analogue — the level-3-Clifford-hierarchy "magic"
+gate per dimension. Per-d branch (locked design §8.5):
+
+* **d = 2**: `T = diag(1, e^{iπ/4})`, the standard qubit T gate.
+  Implemented as `q.θ₃ += -π/4` (which at d=2 collapses to
+  `apply_rz!(wires[1], π/4)` up to global phase, exactly the qubit T).
+* **d = 3** (Watson 2015 Eq. 7): `γ^{n̂³}` with `γ = e^{2πi/9}` (NOT
+  ω = e^{2πi/3}, since 3μ ≡ 0 mod 3 collapses cubic to quadratic at
+  the natural d-th root). Implemented as `q.θ₃ += -2π/9`.
+* **prime d ≥ 5** (Campbell 2014 Eq. 1): `M_1 = ω^{n̂³}` with
+  `ω = e^{2πi/d}`. Implemented as `q.θ₃ += -2π/d`.
+* **d ∈ {4, 6, 8, 9, …}** (composite or non-prime non-3): errors loudly.
+  The Clifford hierarchy structure fragments at non-prime d (CRT
+  factorisation conflicts with the user-level mod-d semantics; see
+  qudit_magic_gate_survey.md §1.5). Filed under follow-on
+  bead "non-prime d magic gate" (locked §8.7).
+
+# Magic-state strategy
+
+T_d! is the EAGER path (locked §8.6): apply `exp(-i(2π/d)·n̂³)` directly
+via the `q.θ₃` primitive. For TracingContext + QECC compilation, the
+gate is the same channel; the lowering strategy differs (MSD + state
+injection via Anwar-Campbell-Browne 2012 / Campbell 2014 Reed-Muller
+codes). Both produce equivalent CPTP maps; users see one library gate.
+
+# Refs
+* `docs/physics/campbell_2014_enhanced_qudit_ft.pdf` Eq. (1).
+* `docs/physics/howard_vala_2012_qudit_magic.pdf` Eq. (16)-(24).
+* `docs/physics/watson_campbell_anwar_browne_2015_qudit_color_codes.pdf`
+  Eq. (7) (d=3 higher-root remedy).
+* `docs/physics/qudit_magic_gate_survey.md` §1, §5 (full derivation +
+  per-d branch reasoning); §8.5 (locked T_d! scope).
+"""
+function T_d!(q::QMod{d, K}) where {d, K}
+    if d == 2
+        q.θ₃ += -π / 4
+    elseif d == 3
+        q.θ₃ += -2π / 9
+    elseif _is_prime_ge_5(d)
+        q.θ₃ += -2π / d
+    else  # d ∈ {4, 6, 8, 9, 10, 12, ...} — composite or non-prime non-3
+        error(
+            "T_d!(q::QMod{$d}) is not yet implemented at d = $d. v0.1 ships " *
+            "T_d! at d ∈ {2, 3} and prime d ≥ 5. At composite or " *
+            "non-prime-non-3 dimensions the Clifford hierarchy structure " *
+            "fragments (CRT factorisation conflicts with mod-d semantics; " *
+            "see docs/physics/qudit_magic_gate_survey.md §1.5). Filed under " *
+            "the non-prime-d magic-gate follow-on bead."
+        )
+    end
+    return q
+end
+
+"""Internal: small primality test for `T_d!`'s d ≥ 5 branch.
+Restricted to d ∈ {5, 7, 11, 13, …} which is exactly the v0.1 prime-d
+target set. Stays inline-allocation-free (no Primes.jl dependency)."""
+@inline function _is_prime_ge_5(d::Int)
+    d < 5 && return false
+    d == 5 && return true
+    iseven(d) && return false
+    # Trial-divide odd factors up to √d.
+    i = 3
+    while i * i <= d
+        d % i == 0 && return false
+        i += 2
+    end
+    return true
+end

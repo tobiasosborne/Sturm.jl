@@ -2191,6 +2191,141 @@ using Sturm
         end
     end
 
+    # ── tws: T_d! library gate (qudit cubic magic) ──────────────────────────
+    #
+    # Bead `Sturm.jl-tws`. Per-d branch:
+    #   * d=2: standard qubit T = diag(1, e^{iπ/4}) via q.θ₃ += -π/4.
+    #   * d=3: Watson γ^{n̂³} with γ = e^{2πi/9} via q.θ₃ += -2π/9.
+    #   * prime d ≥ 5: Campbell M_1 = ω^{n̂³} with ω = e^{2πi/d} via q.θ₃ += -2π/d.
+    #   * d ∈ {4, 6, 8, 9, …}: errors with deferral message (locked §8.7).
+
+    @testset "tws T_d at d=2: qubit T gate (statevector match)" begin
+        # T_2 = diag(1, e^{iπ/4}). Standard qubit T = q.φ += π/4 up to global.
+        for δ_setup in (0.0, π/3, 0.7)
+            amps_qbool = @context EagerContext() begin
+                q = QBool(0.0); q.θ += δ_setup
+                T!(q)
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += δ_setup
+                T_d!(q)
+                _amps_snapshot(current_context())
+            end
+            # Up to a uniform global phase: ratios should match.
+            if abs(amps_qbool[1]) > 1e-10
+                rel_qbool = amps_qbool[2] / amps_qbool[1]
+                rel_qmod = amps_qmod[2] / amps_qmod[1]
+                @test rel_qbool ≈ rel_qmod atol=1e-10
+            end
+        end
+    end
+
+    @testset "tws T_3 at d=3: γ^{n̂³} with γ = e^{2πi/9}" begin
+        # k³ for k ∈ {0, 1, 2} = {0, 1, 8}. Phases (up to global):
+        #   |0⟩_d → 1
+        #   |1⟩_d → γ
+        #   |2⟩_d → γ^8
+        γ = exp(2π * im / 9)
+        expected_phases = (1.0+0.0im, γ, γ^8)
+        global_phase = @context EagerContext() begin
+            q = QMod{3}()
+            T_d!(q)
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:2
+            @context EagerContext() begin
+                q = QMod{3}()
+                ctx = current_context()
+                for bit in 0:1
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                T_d!(q)
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * expected_phases[k + 1] * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "tws T_5 at d=5: ω^{n̂³} = diag(1, ω, ω^3, ω^2, ω^4) per survey §2.2" begin
+        # k³ mod 5 for k ∈ {0,1,2,3,4} = {0, 1, 3, 2, 4}.
+        ω = exp(2π * im / 5)
+        expected_phases = (1.0+0.0im, ω, ω^3, ω^2, ω^4)
+        global_phase = @context EagerContext() begin
+            q = QMod{5}()
+            T_d!(q)
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:4
+            @context EagerContext() begin
+                q = QMod{5}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                T_d!(q)
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * expected_phases[k + 1] * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "tws T_7 at d=7: ω^{n̂³} prime-d branch" begin
+        # k³ mod 7 for k ∈ {0..6} = {0, 1, 1, 6, 1, 6, 6}.
+        # Cube residues mod 7: 0³=0, 1³=1, 2³=8≡1, 3³=27≡6, 4³=64≡1, 5³=125≡6, 6³=216≡6.
+        ω = exp(2π * im / 7)
+        cube_residues = [0, 1, 1, 6, 1, 6, 6]
+        expected_phases = ntuple(k -> ω^cube_residues[k], 7)
+        global_phase = @context EagerContext() begin
+            q = QMod{7}()
+            T_d!(q)
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:6
+            @context EagerContext() begin
+                q = QMod{7}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                T_d!(q)
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * expected_phases[k + 1] * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "tws T_d at composite/non-prime d errors with deferral" begin
+        # d ∈ {4, 6, 8, 9, 10, 12, 15, 16}: composite or non-prime-non-3.
+        for d in (4, 6, 8, 9, 10, 15)
+            @context EagerContext() begin
+                q = QMod{d}()
+                @test_throws ErrorException T_d!(q)
+                ptrace!(q)
+            end
+        end
+    end
+
+    @testset "tws _is_prime_ge_5 internal correctness" begin
+        # Sanity: the inline primality test must match expected primes.
+        for n in 2:30
+            expected = n >= 5 && all(n % i != 0 for i in 2:isqrt(n))
+            @test Sturm._is_prime_ge_5(n) == expected
+        end
+    end
+
     @testset "p38 d=2: context mismatch errors" begin
         ctx1 = EagerContext(); ctx2 = EagerContext()
         a = QMod{2}(ctx1); b = QMod{2}(ctx2)
