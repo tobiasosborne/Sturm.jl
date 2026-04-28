@@ -96,8 +96,13 @@ using Sturm
         sleep(0.2)        # give the @spawn'd close task time to run
         GC.gc()           # encourage finalizer + scheduler activity
         sleep(0.2)
-        # Cannot @test_broken assert sessions are empty — finalizer timing is
-        # non-deterministic. Just verify it didn't blow up the test harness.
-        @test true
+        # Finalizer timing is non-deterministic so we cannot @test_broken
+        # session emptiness. The meaningful post-condition is that the
+        # simulator + transport are NOT poisoned by the dropped context's
+        # finalizer — opening a fresh context against the same sim/transport
+        # must still succeed.
+        ctx2 = Sturm.HardwareContext(t; capacity=2)
+        @test ctx2 isa Sturm.HardwareContext
+        close(ctx2)
     end
 end
