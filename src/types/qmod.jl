@@ -231,9 +231,42 @@ struct QModBlochProxy{d, K}
     parent::QMod{d, K}
 end
 
+"""
+    QModPhaseProxy{d, K, P}
+
+Diagonal-phase-primitive proxy for `QMod{d, K}`. P=2 routes
+[`q.θ₂ += δ`](@ref) (bead `Sturm.jl-os4`, quadratic phase / squeezing); P=3
+will route `q.θ₃ += δ` (bead `Sturm.jl-mle`, cubic phase / magic) once that
+ships. The proxy parallels [`QModBlochProxy`](@ref) but for the polynomial-
+in-`n̂` primitives (Clifford-hierarchy levels 2 and 3) rather than the
+spin-j rotations (level 1).
+
+The `P` parameter lifts the polynomial degree into the type so dispatch on
+`Base.:+(::QModPhaseProxy{..., P}, ::Real)` can pick the right kernel
+(`_apply_n_squared!` for P=2, `_apply_n_cubed!` for P=3) without runtime
+branching. At `d=2` (K=1) the gate collapses to an Rz-equivalent single
+`apply_rz!` (n̂² = n̂³ = n̂ on `{0,1}`); the type machinery is uniform across
+all d ≥ 2.
+
+Refs: `docs/physics/qudit_magic_gate_survey.md` §8.1 (locked primitive set);
+`docs/physics/qudit_magic_gate_survey.md` §8.2 (n̂ vs Ĵ_z convention);
+`docs/physics/qudit_magic_gate_survey.md` §8.4 (SU(d) controlled-phase
+policy under `when()`).
+"""
+struct QModPhaseProxy{d, K, P}
+    wires::NTuple{K, WireID}
+    ctx::AbstractContext
+    parent::QMod{d, K}
+end
+
 # d=2 specialization: route q.θ / q.φ through the existing qubit BlochProxy
 # on the single underlying wire. Julia picks this more-specific method over
 # the generic `where {d, K}` method below for QMod{2, 1} instances.
+#
+# `:θ₂` (and the future `:θ₃`) goes through QModPhaseProxy at all d ≥ 2 —
+# at d=2 (K=1) the underlying decomposition reduces to a single apply_rz!
+# (n̂² = n̂ on {0,1}), so a separate fast path through BlochProxy would buy
+# nothing. Same gate emitted; uniform code path.
 @inline function Base.getproperty(q::QMod{2, 1}, s::Symbol)
     if s === :θ || s === :φ
         check_live!(q)
@@ -245,6 +278,11 @@ end
         # consumed flag is independent of the owning QMod; liveness was just
         # checked above via `check_live!(q)`.
         return BlochProxy(wire, s, ctx, QBool(wire, ctx, false))
+    elseif s === :θ₂
+        check_live!(q)
+        return QModPhaseProxy{2, 1, 2}(
+            getfield(q, :wires), getfield(q, :ctx), q,
+        )
     else
         return getfield(q, s)
     end
@@ -256,6 +294,11 @@ end
         check_live!(q)
         return QModBlochProxy{d, K}(
             getfield(q, :wires), s, getfield(q, :ctx), q,
+        )
+    elseif s === :θ₂
+        check_live!(q)
+        return QModPhaseProxy{d, K, 2}(
+            getfield(q, :wires), getfield(q, :ctx), q,
         )
     else
         return getfield(q, s)
@@ -282,6 +325,17 @@ end
 end
 
 @inline Base.:-(proxy::QModBlochProxy, δ::Real) = proxy + (-δ)
+
+# `+` on a QModPhaseProxy{d, K, 2} applies the quadratic-phase primitive
+# `exp(-i·δ·n̂²)`. The decomposition (see `_apply_n_squared!`) is uniform
+# across all d ≥ 2; no d-dispatch needed at this layer.
+@inline function Base.:+(proxy::QModPhaseProxy{d, K, 2}, δ::Real) where {d, K}
+    check_live!(proxy.parent)
+    _apply_n_squared!(proxy.ctx, proxy.wires, δ)
+    return ROTATION_APPLIED
+end
+
+@inline Base.:-(proxy::QModPhaseProxy, δ::Real) = proxy + (-δ)
 
 """
     _apply_spin_j_ry_d3!(ctx, wires::NTuple{2, WireID}, δ::Real)
@@ -466,4 +520,133 @@ function _apply_spin_j_rotation!(
     else
         error("internal: _apply_spin_j_rotation! axis must be :θ or :φ, got $axis")
     end
+end
+
+# ── os4: q.θ₂ += δ — quadratic phase / squeezing primitive ────────────────
+#
+# Primitive #4 (Sturm.jl-os4). Applies `exp(-i·δ·n̂²)` to a `QMod{d, K}`
+# register, where n̂ is the computational-basis label operator (n̂|k⟩ = k|k⟩
+# for k ∈ {0, …, d−1}; see `qudit_magic_gate_survey.md` §8.2 for the n̂ vs.
+# Ĵ_z choice). The gate is diagonal in the computational basis: it phases
+# each |k⟩ by `exp(-i·δ·k²)` and moves no amplitude.
+
+"""
+    _apply_n_squared!(ctx, wires::NTuple{K, WireID}, δ::Real)
+
+Apply `exp(-i·δ·n̂²)` to a register stored in the K-bit little-endian
+qubit encoding (`wires[1]` = LSB = `b_0`, `wires[K]` = MSB = `b_{K-1}`,
+label `k = Σ b_{i-1}·2^{i-1}`).
+
+## Decomposition
+
+Using `b² = b` for `b ∈ {0,1}`:
+
+    k² = Σᵢ b_{i-1}·4^{i-1} + Σ_{i<j} b_{i-1}·b_{j-1}·2^{i+j-1}
+
+so
+
+    exp(-i·δ·k²) = Πᵢ exp(-i·δ·b_{i-1}·4^{i-1})
+                 · Π_{i<j} exp(-i·δ·b_{i-1}·b_{j-1}·2^{i+j-1})
+
+* **Linear term** per wire `i`: phase `exp(-i·δ·4^{i-1})` on `|1⟩`, none on
+  `|0⟩`. Realised by `apply_rz!(wires[i], -δ·4^{i-1})` — `Rz(β)` produces
+  relative phase `e^{+iβ}` on `|1⟩` over `|0⟩`, so `β = -δ·4^{i-1}` matches
+  (up to a global `e^{+iδ·4^{i-1}/2}` absorbed into SU(d)).
+
+* **Bilinear term** per pair `(i, j)` with `i < j`: phase `exp(-i·δ·c)`
+  on `|11⟩` only, with `c = 2^{i+j-1}`. This is a controlled-phase /
+  CZ(c·δ) gate on `(wires[i], wires[j])`, lowered by the standard ZZ-rotation
+  identity `CZ(α) = Rz_i(-α/2)·Rz_j(-α/2)·CX_{i→j}·Rz_j(α/2)·CX_{i→j}`
+  (up to a global `e^{+iα/4}` per pair, absorbed into SU(d)).
+
+## d=2 collapse
+
+At `K = 1` the bilinear loop is empty and the linear loop fires once with
+`apply_rz!(wires[1], -δ)`. This recovers `exp(-i·δ·n̂)` (since `n̂² = n̂`
+at d=2), matching the locked §8.1 reduction "primitive 4 collapses to
+Rz-equivalent at d=2". Bit-identical to a single qubit `apply_rz!`.
+
+## Subspace preservation
+
+Diagonal in the {|k⟩}_qubit basis ⇒ no amplitude moves between basis
+states. If forbidden labels (k ≥ d at non-power-of-2 d) start at zero
+amplitude (Layer 1: prep is `|0⟩_d`; Layer 2: every primitive preserves
+the d-subspace), they stay at zero after q.θ₂. ✓
+
+## `when()` composition
+
+All `apply_rz!`/`apply_cx!` calls auto-pick up Sturm's control stack via
+`push_control!` / `pop_control!` (managed by `when()`). Per locked §8.4,
+the per-pair global phase from the CZ decomposition becomes a relative
+phase under `when()` — observable as a controlled phase shift, paid as
+the SU(d) discipline ("live in SU(d), pay controlled-phase cost", same
+as the qubit `H² = -I` precedent). Tests assert behavioural correctness,
+not bit-equality with a specific lift.
+
+## Gate count
+
+K Rz (linear) + K(K−1)/2 controlled-phase (bilinear, each = 2 CX + 3 Rz)
+= K + (5/2)·K(K−1) primitives. Specific:
+* K=1: 1 Rz.
+* K=2: 5 Rz + 2 CX.
+* K=3: 12 Rz + 6 CX.
+
+## References
+
+* `docs/physics/qudit_magic_gate_survey.md` §8.1, §8.2, §8.4 (locked design).
+* `docs/physics/qudit_primitives_survey.md` §3 (spin-j universality + the
+  "needs nonlinear partner" argument that motivated primitive #4).
+* `docs/physics/campbell_2014_enhanced_qudit_ft.pdf` §III.B (Z_{α,β} =
+  ω^{α n̂ + β n̂²} as the Clifford diagonal — q.φ + q.θ₂ generates this).
+"""
+@inline function _apply_n_squared!(
+    ctx::AbstractContext,
+    wires::NTuple{K, WireID},
+    δ::Real,
+) where {K}
+    # Linear term: K single-qubit Rz's.
+    @inbounds for i in 1:K
+        apply_rz!(ctx, wires[i], -δ * (1 << (2 * (i - 1))))   # 4^{i-1}
+    end
+    # Bilinear term: K(K-1)/2 controlled-phase pairs.
+    @inbounds for i in 1:K-1
+        for j in i+1:K
+            α = δ * (1 << (i + j - 1))    # 2^{i+j-1}
+            _apply_cphase!(ctx, wires[i], wires[j], α)
+        end
+    end
+    return nothing
+end
+
+"""
+    _apply_cphase!(ctx, wi::WireID, wj::WireID, α::Real)
+
+Apply a controlled-phase `CZ(α) = diag(1, 1, 1, e^{-iα})` between qubit
+wires `wi` and `wj` (basis order `|q_i q_j⟩` = `|00⟩, |01⟩, |10⟩, |11⟩`),
+up to a global phase `e^{+iα/4}` absorbed into SU(d).
+
+## Decomposition (ZZ-rotation identity)
+
+`exp(-iα·|11⟩⟨11|) = exp(-(iα/4)·(I − Z_i)(I − Z_j))` expands to a sum of
+single-qubit Z operators and one ZZ-coupling, giving the textbook lowering
+
+    CZ(α) ≃ Rz_i(-α/2) · Rz_j(-α/2) · CX_{i→j} · Rz_j(α/2) · CX_{i→j}
+
+(global phase `e^{-iα/4}` dropped; lives in SU(d) per CLAUDE.md "Global
+Phase and Universality"). Verified by direct case analysis on each of the
+four computational-basis states. Under `when()`, the global phase
+becomes a relative phase between the control's `|0⟩` and `|1⟩` branches —
+the SU(d) controlled-phase cost called out in `qudit_magic_gate_survey.md`
+§8.4. Same discipline as `H² = -I`.
+
+Helper for [`_apply_n_squared!`](@ref); also reusable for any future
+primitive needing a continuous controlled-phase coupling.
+"""
+@inline function _apply_cphase!(ctx::AbstractContext, wi::WireID, wj::WireID, α::Real)
+    apply_cx!(ctx, wi, wj)
+    apply_rz!(ctx, wj, α / 2)
+    apply_cx!(ctx, wi, wj)
+    apply_rz!(ctx, wj, -α / 2)
+    apply_rz!(ctx, wi, -α / 2)
+    return nothing
 end
