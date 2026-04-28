@@ -879,13 +879,88 @@ function Base.xor(target::QMod{d, K}, ctrl::QMod{d, K}) where {d, K}
         # K = 1 at d = 2; collapse to qubit CNOT on the single wire pair.
         apply_cx!(target.ctx, ctrl.wires[1], target.wires[1])
         return target
+    elseif d == 3
+        _sum_d3!(target.ctx, target.wires, ctrl.wires)
+        return target
     else
         error(
-            "SUM (a ⊻= b) on QMod{$d, $K} is not yet implemented at d ≥ 3. " *
+            "SUM (a ⊻= b) on QMod{$d, $K} is not yet implemented at d ≥ 4. " *
             "Modular addition on the qubit-encoded register requires either " *
             "(a) Bennett-style classical-function compilation (Sturm.jl-jba) " *
             "or (b) a Beauregard mod-d adder construction. Both deferred to " *
-            "a follow-on bead. d = 2 ships."
+            "the follow-on bead Sturm.jl-83ae. d ∈ {2, 3} ships."
         )
     end
+end
+
+# ── SUM at d=3 (helpers) ──────────────────────────────────────────────────
+#
+# X_3 (cyclic shift |k⟩ → |(k+1) mod 3⟩) decomposed on the 2-bit LE
+# encoding as the product of two transpositions:
+#
+#     X_3 = (00 ↔ 01) ∘ (01 ↔ 10)
+#
+# applied right-to-left. Each transposition unfolds to qubit primitives:
+#
+#   * (01 ↔ 10) = swap(lsb, msb) — 3 CX.
+#   * (00 ↔ 01) = anti-controlled-X (lsb target, msb anti-control) =
+#     X(msb) · CX(msb, lsb) · X(msb), where each X is `Rz(π) · Ry(π)`
+#     (the qubit X channel from src/gates.jl::not!).
+#
+# Net: 5 CX + 4 single-qubit primitives. Verified by case analysis on
+# each of the 4 computational-basis states:
+#
+#   |00⟩ (=|0⟩_d) → swap |00⟩ → X(msb) |10⟩ → CX |11⟩ → X(msb) |01⟩ (=|1⟩_d) ✓
+#   |01⟩ (=|1⟩_d) → swap |10⟩ → X(msb) |00⟩ → CX |00⟩ → X(msb) |10⟩ (=|2⟩_d) ✓
+#   |10⟩ (=|2⟩_d) → swap |01⟩ → X(msb) |11⟩ → CX |10⟩ → X(msb) |00⟩ (=|0⟩_d) ✓
+#   |11⟩ (forbidden) → swap |11⟩ → X(msb) |01⟩ → CX |01⟩ → X(msb) |11⟩ ✓
+#
+# Step 2 (X(msb) after swap) DOES transiently put amplitude on the
+# forbidden |11⟩_qubit state, but step 4 (X(msb) after CX) reabsorbs it
+# exactly. End-of-call subspace preservation holds. Coherent
+# superpositions over legal states are mapped correctly (verified by
+# tracing α|0⟩+β|1⟩+γ|2⟩ through all 4 steps).
+#
+# SUM at d=3: target ← (ctrl + target) mod 3. Decompose ctrl as
+# `ctrl = ctrl_msb·2 + ctrl_lsb`, then
+#
+#     X_3^ctrl = X_3^ctrl_lsb · X_3^(2·ctrl_msb)
+#              = X_3^ctrl_lsb · (X_3 · X_3)^ctrl_msb
+#
+# so SUM = `when(ctrl_lsb) do X_3 end; when(ctrl_msb) do X_3; X_3 end`.
+# At ctrl=3 (forbidden) both whens fire, applying X_3³ = I — irrelevant
+# since |3⟩_ctrl has zero amplitude in the legal subspace.
+
+@inline function _shift_d3!(ctx::AbstractContext, w::NTuple{2, WireID})
+    # X_3: |k⟩ → |(k+1) mod 3⟩ on the 2-bit LE encoding.
+    # Decomposition: swap(lsb, msb) · X(msb) · CX(msb, lsb) · X(msb).
+    # Total: 5 CX + 4 single-qubit primitives.
+    apply_cx!(ctx, w[1], w[2])      # swap step 1
+    apply_cx!(ctx, w[2], w[1])      # swap step 2
+    apply_cx!(ctx, w[1], w[2])      # swap step 3
+    apply_rz!(ctx, w[2], π)         # X(msb) start
+    apply_ry!(ctx, w[2], π)         # X(msb) end
+    apply_cx!(ctx, w[2], w[1])      # CX(msb → lsb)
+    apply_rz!(ctx, w[2], π)         # X(msb) start
+    apply_ry!(ctx, w[2], π)         # X(msb) end
+    return nothing
+end
+
+@inline function _sum_d3!(
+    ctx::AbstractContext,
+    target_wires::NTuple{2, WireID},
+    ctrl_wires::NTuple{2, WireID},
+)
+    # SUM at d=3: target ← (ctrl + target) mod 3.
+    # Decomposition: when(ctrl_lsb) X_3; when(ctrl_msb) X_3; X_3.
+    ctrl_lsb = QBool(ctrl_wires[1], ctx, false)
+    ctrl_msb = QBool(ctrl_wires[2], ctx, false)
+    when(ctrl_lsb) do
+        _shift_d3!(ctx, target_wires)
+    end
+    when(ctrl_msb) do
+        _shift_d3!(ctx, target_wires)
+        _shift_d3!(ctx, target_wires)
+    end
+    return nothing
 end
