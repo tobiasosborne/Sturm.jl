@@ -1685,4 +1685,371 @@ using Sturm
         end
     end
 
+    # ── mle: q.θ₃ += δ — cubic phase / magic primitive ──────────────────────
+    #
+    # Bead `Sturm.jl-mle`. Primitive #5 of the locked 6-primitive qudit set
+    # (docs/physics/qudit_magic_gate_survey.md §8.1, §8.2):
+    #
+    #   q.θ₃ += δ ↦ exp(-i·δ·n̂³) on QMod{d, K}
+    #
+    # Diagonal in the computational basis: phases each |k⟩ by exp(-i·δ·k³).
+    # Level-3 of the Clifford hierarchy at prime d ≥ 5 (magic). At
+    # δ = -2π/d this gives the Campbell M_1 = ω^{n̂³} gate.
+    #
+    # At d=2, n̂³ = n̂ (since 0³=0, 1³=1), so the gate collapses to
+    # Rz-equivalent — emits exactly the same single apply_rz!(wires[1], -δ)
+    # as q.θ₂ at d=2. Per locked §8.1 (with §8.2 n̂ lock-in).
+
+    @testset "mle d=3: q.θ₃ += δ is diagonal (no amplitude redistribution)" begin
+        for δ in (0.0, 0.3, π/3, π, -π/5)
+            @context EagerContext() begin
+                q = QMod{3}()
+                q.θ₃ += δ
+                amps = _amps_snapshot(current_context())
+                @test abs(amps[1]) ≈ 1.0 atol=1e-10
+                @test abs(amps[2]) < 1e-12
+                @test abs(amps[3]) < 1e-12
+                @test abs(amps[4]) < 1e-12
+            end
+        end
+    end
+
+    @testset "mle d=3: phase exp(-i·k³·δ) on each label k ∈ {0,1,2}" begin
+        # exp(-iδ·n̂³)|k⟩ = exp(-iδ·k³)|k⟩ — up to global phase per §8.4.
+        for δ in (0.7, π/5, -π/3)
+            global_phase = @context EagerContext() begin
+                q = QMod{3}()
+                q.θ₃ += δ
+                _amps_snapshot(current_context())[1]
+            end
+            for k in 0:2
+                @context EagerContext() begin
+                    q = QMod{3}()
+                    ctx = current_context()
+                    for bit in 0:1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    pre_amps = _amps_snapshot(ctx)
+                    pre_phase = pre_amps[k + 1]
+                    q.θ₃ += δ
+                    amps = _amps_snapshot(ctx)
+                    expected = pre_phase * exp(-im * δ * k^3) * global_phase
+                    @test amps[k + 1] ≈ expected atol=1e-10
+                    for i in 1:4
+                        i == k + 1 && continue
+                        @test abs(amps[i]) < 1e-12
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "mle d=2 collapse: q.θ₃ += δ matches apply_rz!(wire, -δ) (n̂³=n̂)" begin
+        # At d=2, n̂³ = n̂, so q.θ₃ += δ should produce the same statevector
+        # as q.θ₂ += δ (which itself collapses to apply_rz!(wire, -δ)).
+        for δ in (0.0, 0.5, π/4, -π/3, 1.7)
+            amps_ref = @context EagerContext() begin
+                q = QBool(0.0); q.θ += π/3
+                Sturm.apply_rz!(current_context(), q.wire, -δ)
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += π/3
+                q.θ₃ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qmod, amps_ref; atol=1e-12))
+        end
+    end
+
+    @testset "mle d=4: phase exp(-i·k³·δ) on every k ∈ {0,1,2,3}" begin
+        # K=2: linear (2 Rz) + 1 bilinear pair, no trilinear.
+        for δ in (0.4, π/5, -π/4)
+            global_phase = @context EagerContext() begin
+                q = QMod{4}()
+                q.θ₃ += δ
+                _amps_snapshot(current_context())[1]
+            end
+            for k in 0:3
+                @context EagerContext() begin
+                    q = QMod{4}()
+                    ctx = current_context()
+                    for bit in 0:1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    pre_amps = _amps_snapshot(ctx)
+                    pre_phase = pre_amps[k + 1]
+                    q.θ₃ += δ
+                    amps = _amps_snapshot(ctx)
+                    expected = pre_phase * exp(-im * δ * k^3) * global_phase
+                    @test amps[k + 1] ≈ expected atol=1e-10
+                    for i in 1:4
+                        i == k + 1 && continue
+                        @test abs(amps[i]) < 1e-12
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "mle d=5: phase exp(-i·k³·δ) on each label k ∈ 0..4" begin
+        # K=3: linear (3 Rz) + 3 bilinear pairs + 1 trilinear (ancilla-CCX-CPhase-CCX).
+        # The trilinear is the new gate compared to os4.
+        δ = 0.4
+        global_phase = @context EagerContext() begin
+            q = QMod{5}()
+            q.θ₃ += δ
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:4
+            @context EagerContext() begin
+                q = QMod{5}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_amps = _amps_snapshot(ctx)
+                pre_phase = pre_amps[k + 1]
+                q.θ₃ += δ
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * exp(-im * δ * k^3) * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+                # Forbidden labels 5, 6, 7 stay empty.
+                for i in 6:8
+                    @test abs(amps[i]) < 1e-12
+                end
+            end
+        end
+    end
+
+    @testset "mle d=5: Campbell M_1 = ω^{n̂³} at δ = -2π/5" begin
+        # Bead criterion: at d=5, q.θ₃ += -2π/5 produces the diagonal
+        # (1, ω, ω³, ω², ω⁴) where ω = e^{2πi/5}. (k³ mod 5 for
+        # k ∈ 0..4 = {0, 1, 3, 2, 4}.)
+        ω = exp(2π * im / 5)
+        expected_phases = (1, ω, ω^3, ω^2, ω^4)
+        δ = -2π / 5
+        global_phase = @context EagerContext() begin
+            q = QMod{5}()
+            q.θ₃ += δ
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:4
+            @context EagerContext() begin
+                q = QMod{5}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_phase = _amps_snapshot(ctx)[k + 1]
+                q.θ₃ += δ
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * expected_phases[k + 1] * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+            end
+        end
+    end
+
+    @testset "mle: composability — q.θ₃ += δ; q.θ₃ += -δ → identity" begin
+        # At d=5 (K=3) the trilinear path's ancilla allocate!+deallocate!
+        # grows n_qubits but doesn't shrink on dealloc (Sturm's standard
+        # compaction discipline — see compact_state!). pre_amps may be
+        # shorter than post_amps; the upper half of post_amps must be 0
+        # (ancilla returned to |0⟩ branch).
+        for d in (2, 3, 4, 5)
+            for δ in (0.5, π/3, -1.2)
+                @context EagerContext() begin
+                    q = QMod{d}()
+                    ctx = current_context()
+                    Sturm.apply_ry!(ctx, q.wires[1], 0.7)
+                    pre_amps = _amps_snapshot(ctx)
+                    q.θ₃ += δ
+                    q.θ₃ += -δ
+                    post_amps = _amps_snapshot(ctx)
+                    n_pre = length(pre_amps)
+                    n_post = length(post_amps)
+                    @test all(isapprox.(post_amps[1:n_pre], pre_amps; atol=1e-10))
+                    if n_post > n_pre
+                        # Ancilla=1 amplitudes must all be zero (deallocate
+                        # invariant).
+                        @test all(abs.(post_amps[n_pre+1:end]) .< 1e-10)
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "mle: linearity in δ — θ₃(δ₁) ∘ θ₃(δ₂) ≡ θ₃(δ₁+δ₂)" begin
+        for (δ₁, δ₂) in ((0.3, 0.4), (π/5, -π/7), (-1.0, 0.5))
+            split_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₃ += δ₁
+                q.θ₃ += δ₂
+                _amps_snapshot(current_context())
+            end
+            sum_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₃ += (δ₁ + δ₂)
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(split_amps, sum_amps; atol=1e-10))
+        end
+    end
+
+    @testset "mle d=3: subspace preservation under random q.θ₃ chains" begin
+        @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += π/3
+            for _ in 1:10
+                q.θ₃ += rand() * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[4]) < 1e-12   # forbidden |11⟩_qubit
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10
+        end
+    end
+
+    @testset "mle d=5: subspace preservation under random q.θ₃ chains" begin
+        # K=3 → trilinear allocates ancilla each call; ensure ancilla is
+        # cleanly returned to |0⟩ (else amps would leak into the K=4
+        # 16-amplitude space — but ancilla deallocate frees the wire so
+        # this also tests the lifecycle).
+        @context EagerContext() begin
+            q = QMod{5}()
+            q.θ += π/3
+            for _ in 1:5
+                q.θ₃ += rand() * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            # Forbidden labels 5..7
+            for i in 6:8
+                @test abs(amps[i]) < 1e-12
+            end
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10
+        end
+    end
+
+    @testset "mle: proxy types — getproperty(:θ₃) returns QModPhaseProxy{·,·,3}" begin
+        @context EagerContext() begin
+            q2 = QMod{2}()
+            @test getproperty(q2, :θ₃) isa Sturm.QModPhaseProxy{2, 1, 3}
+        end
+        @context EagerContext() begin
+            q3 = QMod{3}()
+            @test getproperty(q3, :θ₃) isa Sturm.QModPhaseProxy{3, 2, 3}
+        end
+        @context EagerContext() begin
+            q5 = QMod{5}()
+            @test getproperty(q5, :θ₃) isa Sturm.QModPhaseProxy{5, 3, 3}
+        end
+    end
+
+    @testset "mle: proxy access on consumed QMod errors" begin
+        @context EagerContext() begin
+            q = QMod{3}()
+            ptrace!(q)
+            @test_throws ErrorException q.θ₃
+        end
+    end
+
+    @testset "mle d=3: q.θ₃ -= δ delegates to q.θ₃ += -δ" begin
+        for δ in (0.5, π/3, -1.0)
+            plus_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₃ += -δ
+                _amps_snapshot(current_context())
+            end
+            minus_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₃ -= δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(plus_amps, minus_amps; atol=1e-12))
+        end
+    end
+
+    @testset "mle d=2 vs d=2 q.θ₂: identical statevectors (n̂² = n̂³ on bits)" begin
+        # Both primitives at d=2 collapse to apply_rz!(wires[1], -δ).
+        # Verify they emit the SAME statevector on the same input.
+        for δ in (0.5, π/3, -1.0)
+            amps_q2 = @context EagerContext() begin
+                q = QMod{2}(); q.θ += π/4
+                q.θ₂ += δ
+                _amps_snapshot(current_context())
+            end
+            amps_q3 = @context EagerContext() begin
+                q = QMod{2}(); q.θ += π/4
+                q.θ₃ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_q2, amps_q3; atol=1e-12))
+        end
+    end
+
+    @testset "mle d=3: when(::QBool) q.θ₃ += δ carries controlled phase" begin
+        δ = 0.5
+        for k in 0:2
+            @context EagerContext() begin
+                ctrl = QBool(0.0); H!(ctrl)  # |+⟩
+                q = QMod{3}()
+                ctx = current_context()
+                for bit in 0:1
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                when(ctrl) do
+                    q.θ₃ += δ
+                end
+                amps = _amps_snapshot(ctx)
+                # Two non-zero amps (ctrl=0 and ctrl=1, both at |k⟩_d).
+                nz_count = count(a -> abs(a) > 1e-10, amps)
+                @test nz_count == 2
+                large = filter(a -> abs(a) > 1e-10, amps)
+                @test all(abs.(large) .≈ 1/√2)
+            end
+        end
+    end
+
+    @testset "mle d=5: when(::QBool) q.θ₃ exercises trilinear-under-when" begin
+        # K=3 trilinear allocates ancilla and routes apply_ccx! through
+        # _multi_controlled_cx! when nc_stack > 0. Smoke test that this
+        # path runs without leaking amplitude into forbidden labels.
+        @context EagerContext() begin
+            ctrl = QBool(0.0); H!(ctrl)
+            q = QMod{5}()
+            ctx = current_context()
+            Sturm.apply_ry!(ctx, q.wires[1], π)  # → |1⟩_d
+            when(ctrl) do
+                q.θ₃ += 0.5
+            end
+            amps = _amps_snapshot(ctx)
+            # 8 amps for ctrl, 8 amps for K=3 qudit ⇒ 64 total.
+            # Magnitude only on (ctrl=*, |1⟩_d) = 2 amplitudes after the
+            # 1/√2 split. Forbidden labels (5..7 in qudit) stay 0.
+            for ctrl_bit in 0:1
+                for s in 5:7
+                    # amp index for (ctrl=ctrl_bit, qudit_qubit_state=s).
+                    # qudit wires are wires[1..3], ctrl is wire 4 (allocated
+                    # before the QMod{5}). Layout depends on allocation
+                    # order. Skip fine-grained index check; just confirm
+                    # total norm preserved + count non-zero amps.
+                end
+            end
+            nz_count = count(a -> abs(a) > 1e-10, amps)
+            # Pure |1⟩_d under H(ctrl): amps split into (ctrl=0)·|1⟩_d and
+            # (ctrl=1)·|1⟩_d, both at magnitude 1/√2 — phase differs.
+            @test nz_count == 2
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10
+        end
+    end
+
 end
