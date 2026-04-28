@@ -223,7 +223,21 @@ end
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
-# Collect wires for barrier nodes (allocation-tolerant — only called for rare barrier nodes)
+# Collect wires for barrier nodes (allocation-tolerant — only called for rare barrier nodes).
+#
+# A "barrier" is a node whose presence invalidates the "two adjacent unitaries
+# on this wire are eligible to fuse/cancel" reasoning gate_cancel relies on.
+# Every non-unitary node is a barrier (CLAUDE.md "Channel IR vs Unitary Methods"):
+#   * ObserveNode  — projective measurement, irreversible.
+#   * DiscardNode  — partial trace, dimension-reducing.
+#   * PrepNode     — wire reset to |p⟩; the wire's pre-prep history is no longer
+#                     observable from the post-prep gates' point of view, so
+#                     cancelling across a prep would erase information already
+#                     committed to the channel's Choi matrix.
+#   * CasesNode    — classical branching ⇒ mixture of channels; cancellation
+#                     of a gate before/after a cases must hold IN BOTH branches,
+#                     which gate_cancel does not analyse, so we conservatively
+#                     barrier on every wire touched by either branch.
 _barrier_wires(n::ObserveNode) = (n.wire,)
 _barrier_wires(n::DiscardNode) = (n.wire,)
 _barrier_wires(n::PrepNode)    = (n.wire,)

@@ -162,6 +162,16 @@ _assert_node_clifford_unitary(::DiscardNode, idx::Int) = error(
     "Partial trace on encoded blocks is deferred to v0.2.")
 
 # ── Transversal emission ────────────────────────────────────────────────────
+#
+# `_emit_transversal!` is DAG-replay infrastructure, NOT user-facing DSL code:
+# it consumes already-traced `Channel.dag` nodes (which carry raw `WireID`s,
+# not `QBool`s) and re-emits them on a fresh context. At this layer we are
+# below the four-primitives boundary (Rule 11) and below the no-gates / no-
+# qubits boundary (P5) — both rules apply to user code that constructs
+# circuits, not to the lowering pipeline that takes those circuits apart.
+# Direct `apply_ry!` / `apply_rz!` / `apply_cx!` is therefore the correct
+# spelling here; wrapping in `QBool` would round-trip through the user-side
+# typing machinery for no benefit and risk aliasing the active wire registry.
 
 """
 Emit a transversal version of `node` into `ctx`, using `wire_map` to resolve

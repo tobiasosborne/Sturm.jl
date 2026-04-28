@@ -12,7 +12,14 @@
 """Abstract base type for all DAG nodes."""
 abstract type DAGNode end
 
-# Sentinel wire for unused control slots
+# Sentinel for unused control slots in HotNode-flavoured DAG nodes
+# (PrepNode/RyNode/RzNode/CXNode each carry a fixed-shape `ctrl1`,`ctrl2`
+# pair populated from `ctx.control_stack`). When `ncontrols < 2`, the unused
+# slots are filled with `_ZERO_WIRE`. Allocator invariant: `fresh_wire!`
+# starts at 1 (see types/wire.jl), so `WireID(0)` is never a live wire — the
+# sentinel cannot collide with a real control. Code that consumes `ctrl1`
+# / `ctrl2` MUST gate on `ncontrols`, not on `wire == _ZERO_WIRE`, since
+# the comparison is a soft check that a future allocator change could alias.
 const _ZERO_WIRE = WireID(UInt32(0))
 
 # ── Inline controls helpers ─────────────────────────────────────────────────

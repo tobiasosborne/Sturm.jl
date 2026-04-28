@@ -211,6 +211,11 @@ function syndrome_extract!(physical::NTuple{7, QBool})
     end
 
     # Z-error syndrome via X-type stabilisers (Hadamard-sandwich).
+    # Per Steane 1996 eq. (6) / Fig. 6: an X-type stabiliser is detected by
+    # CX(anc → physical[i]) under H-conjugation on the anc, which is
+    # equivalent to a CZ between the |+⟩-prepared anc and physical[i] —
+    # the parity of Z-eigenvalues on the support kicks back as a phase on
+    # |+⟩ vs |−⟩, then the closing H rotates it into computational basis.
     sz = UInt8(0)
     for (k, support) in enumerate(_STEANE_STAB_SUPPORTS)
         anc = QBool(0.0)
@@ -219,6 +224,8 @@ function syndrome_extract!(physical::NTuple{7, QBool})
             # `a ⊻= b` desugars to `a = a ⊻ b` and would attempt to setindex!
             # on the immutable NTuple `physical`. `a ⊻ b` is already in-place
             # (mutates a, returns a); evaluate for the side effect and discard.
+            # Direction: anc controls, physical[i] is target — under the
+            # H-sandwich on anc, this realises the X-type stabiliser CZ.
             physical[i] ⊻ anc
         end
         H!(anc)

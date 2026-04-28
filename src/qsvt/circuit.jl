@@ -542,6 +542,11 @@ function _lift_combined_to_be(be::BlockEncoding{N, A},
         return nothing
     end
 
+    # alpha = 2.0: the lifted block encoding is an LCU of two unitaries each
+    # of subnormalisation 1 (the even and odd halves of the combined QSVT
+    # circuit), so the LCU subnormalisation is α_even + α_odd = 1 + 1 = 2.
+    # Per GSLW19 (1806.01838) Theorem 58 / Lemma 53 (LCU of block encodings):
+    # α(U_LCU) = Σ |c_k| · α(U_k) with c_k = 1/2 for the even/odd split.
     return BlockEncoding{N, new_a}(lifted_oracle!, lifted_oracle_adj!, 2.0)
 end
 
