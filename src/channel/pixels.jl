@@ -380,13 +380,14 @@ function _paint_node_px!(img, node::DiscardNode, col, col_w, row_of, bit_row_abs
 end
 
 function _paint_node_px!(img, node::CasesNode, col, col_w, row_of, bit_row_abs, sch, W, stride)
-    # v1 placeholder — magenta stripe across the quantum wire section.
-    # Warn once per source location so the stripe isn't silently mistaken
-    # for a faithful render (Sturm.jl-eiq, Rule 1).
-    site = _first_user_frame(stacktrace(backtrace()))
+    # v1 placeholder — magenta stripe across the quantum wire section. Warn
+    # once globally so the stripe isn't silently mistaken for a faithful
+    # render (Sturm.jl-eiq, Rule 1). Pre-fix this stacktrace'd on every
+    # CasesNode for per-source-line uniqueness — real cost on render-many
+    # channels callers (sweep bead ks0t).
     @warn "Rendering CasesNode as a placeholder pixel stripe — sub-branch " *
           "contents are not drawn (v1 limitation). For a faithful render, " *
-          "lower classical-control IR first via `optimise(ch, :deferred)`." maxlog=1 _id=(:sturm_cases_render_pixels, site.file, site.line) _file=string(site.file) _line=Int(site.line)
+          "lower classical-control IR first via `optimise(ch, :deferred)`." maxlog=1 _id=:sturm_cases_render_pixels
     x_c = col * col_w + col_w ÷ 2 + 1
     last_row = _grow(W - 1, stride)
     for r in 1:last_row

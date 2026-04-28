@@ -90,14 +90,21 @@ function trace(f::Function, ::Val{W}) where {W}
 
     out_wires = if result isa QInt{W}
         result.wires
+    elseif result isa QBool
+        # Symmetric with `trace(f, n_in::Int)` — a Val{W} trace may legitimately
+        # return a single residual QBool (e.g. after partial-tracing the
+        # register down to one wire). Sweep bead ks0t.
+        (result.wire,)
     elseif result isa Tuple
         ntuple(length(result)) do i
             r = result[i]
             r isa QBool || error("trace: return value $i is not a QBool")
             r.wire
         end
+    elseif result === nothing
+        ()
     else
-        error("trace(Val{$W}): expected QInt{$W} return, got $(typeof(result))")
+        error("trace(Val{$W}): expected QInt{$W}, QBool, Tuple, or nothing; got $(typeof(result))")
     end
 
     # Scope-based cleanup (bead sv3): emit DiscardNodes for any wires allocated
