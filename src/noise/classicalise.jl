@@ -1,7 +1,7 @@
 """
     classicalise(f::Function) -> Matrix{Float64}
 
-Compute the classical stochastic map of a single-qubit quantum channel.
+Compute the classical stochastic map of a **single-qubit** quantum channel.
 
 Runs `f` (which takes a QBool and applies operations) on each computational
 basis state using DensityMatrixContext, reads diagonal probabilities of
@@ -10,6 +10,12 @@ the output, and assembles the 2×2 transition matrix.
 Returns M where M[i,j] = P(output=i-1 | input=j-1).
 
 Example: classicalise(X!) → [0 1; 1 0] (bit-flip).
+
+!!! note "Single-qubit only (v0.1)"
+    `f` must accept a single `QBool`. A multi-qubit variant returning the
+    2ⁿ × 2ⁿ stochastic kernel is not yet shipped; track via the sweep bead
+    or file a feature request if needed. `f` may allocate ancillae internally
+    and trace them — the output kernel is the marginal on `f`'s argument.
 """
 function classicalise(f::Function)
     M = zeros(Float64, 2, 2)

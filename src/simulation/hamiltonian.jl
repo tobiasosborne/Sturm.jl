@@ -29,6 +29,11 @@ struct PauliTerm{N}
     ops::NTuple{N, PauliOp}
 end
 
+# Hermiticity is structurally enforced: `coeff::Float64` constrains every term
+# to be a real-weighted Pauli string (each Pauli is itself Hermitian), and any
+# sum of Hermitian operators is Hermitian. So `PauliHamiltonian` is provably
+# Hermitian by construction — no runtime validation needed.
+
 """
     PauliHamiltonian{N}
 

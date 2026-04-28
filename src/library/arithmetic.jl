@@ -173,11 +173,18 @@ end
 # `_apply_ctrls(f, (c1, c2))`      ≡ when(c1) do when(c2) do f() end end
 #
 # Hot-path helper for modadd!'s ctrls kwarg. Stays @inline so Julia elides
-# the Tuple dispatch at the call site.
+# the Tuple dispatch at the call site. Currently capped at 2 controls
+# (matches every Beauregard / windowed-arithmetic call site). Higher
+# arities error explicitly rather than the bare-MethodError fallback.
 @inline _apply_ctrls(f, ::Tuple{}) = f()
 @inline _apply_ctrls(f, c::Tuple{QBool}) = when(c[1]) do; f(); end
 @inline _apply_ctrls(f, c::Tuple{QBool,QBool}) =
     when(c[1]) do; when(c[2]) do; f(); end; end
+@inline _apply_ctrls(f, c::Tuple{Vararg{QBool}}) = error(
+    "_apply_ctrls: only 0, 1, or 2 controls supported (got $(length(c))). " *
+    "Higher-arity nesting requires a recursive expansion that has not yet " *
+    "been audited against ctx.control_stack depth budgets — file a bead if " *
+    "you hit this.")
 
 """
     modadd!(y::QInt{Lplus1}, anc::QBool, a::Integer, N::Integer;
