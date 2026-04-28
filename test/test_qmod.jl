@@ -2019,6 +2019,90 @@ using Sturm
         end
     end
 
+    # ── p38: SUM entangler `a ⊻= b` on (QMod{d}, QMod{d}) ──────────────────
+    #
+    # Bead `Sturm.jl-p38`. Primitive #6 of the locked 6-primitive qudit set.
+    # v0.1 ships at d=2 only (qubit CNOT on the single underlying wire pair);
+    # d>2 deferred to a follow-on bead pending jba (Bennett-on-QMod) or
+    # direct Beauregard mod-d adder.
+
+    @testset "p38 d=2: SUM = qubit CNOT on the single wire pair" begin
+        # `b ⊻= a` (target b, ctrl a): flips b iff a=1; a unchanged.
+        # Tuple format ((b_in, a_in), (b_out, a_out)):
+        #   (0, 0): a=0, b unchanged → (0, 0)
+        #   (0, 1): a=1, b flipped 0→1 → (1, 1)
+        #   (1, 0): a=0, b unchanged → (1, 0)
+        #   (1, 1): a=1, b flipped 1→0 → (0, 1)
+        truth_table = [(0,0)=>(0,0), (0,1)=>(1,1), (1,0)=>(1,0), (1,1)=>(0,1)]
+        for ((b_in, a_in), (b_out, a_out)) in truth_table
+            @context EagerContext() begin
+                a = QMod{2}(); b = QMod{2}()
+                ctx = current_context()
+                # Prep classical inputs via apply_ry!(wire, π) on the
+                # single underlying wire of each QMod{2}.
+                a_in == 1 && Sturm.apply_ry!(ctx, a.wires[1], π)
+                b_in == 1 && Sturm.apply_ry!(ctx, b.wires[1], π)
+                b ⊻= a
+                @test Int(a) == a_out
+                @test Int(b) == b_out
+            end
+        end
+    end
+
+    @testset "p38 d=2: SUM matches QBool ⊻= bit-identically" begin
+        # Statevector check: SUM on QMod{2} = qubit CNOT on the underlying wires.
+        for (b_in, a_in) in ((0.0, 0.0), (0.3, 0.0), (0.0, 0.5), (0.4, 0.6))
+            amps_qmod = @context EagerContext() begin
+                a = QMod{2}(); b = QMod{2}()
+                ctx = current_context()
+                Sturm.apply_ry!(ctx, a.wires[1], 2 * asin(sqrt(a_in)))
+                Sturm.apply_ry!(ctx, b.wires[1], 2 * asin(sqrt(b_in)))
+                b ⊻= a
+                _amps_snapshot(ctx)
+            end
+            amps_qbool = @context EagerContext() begin
+                a = QBool(a_in); b = QBool(b_in)
+                b ⊻= a
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qmod, amps_qbool; atol=1e-12))
+        end
+    end
+
+    @testset "p38 d ≥ 3 errors with deferral message" begin
+        for d in (3, 4, 5, 7)
+            @context EagerContext() begin
+                a = QMod{d}(); b = QMod{d}()
+                @test_throws ErrorException b ⊻ a
+                ptrace!(a); ptrace!(b)
+            end
+        end
+    end
+
+    @testset "p38 d=2: context mismatch errors" begin
+        ctx1 = EagerContext(); ctx2 = EagerContext()
+        a = QMod{2}(ctx1); b = QMod{2}(ctx2)
+        @test_throws ErrorException b ⊻ a
+        # Cleanup so finalizers don't complain.
+        @context ctx1 begin ptrace!(a) end
+        @context ctx2 begin ptrace!(b) end
+    end
+
+    @testset "p38 d=2: consumed input errors" begin
+        @context EagerContext() begin
+            a = QMod{2}(); b = QMod{2}()
+            ptrace!(a)
+            @test_throws ErrorException b ⊻ a
+            ptrace!(b)
+        end
+        @context EagerContext() begin
+            a = QMod{2}(); b = QMod{2}()
+            ptrace!(b)
+            @test_throws ErrorException b ⊻ a
+            ptrace!(a)
+        end
+    end
+
     @testset "mle d=5: when(::QBool) q.θ₃ exercises trilinear-under-when" begin
         # K=3 trilinear allocates ancilla and routes apply_ccx! through
         # _multi_controlled_cx! when nc_stack > 0. Smoke test that this

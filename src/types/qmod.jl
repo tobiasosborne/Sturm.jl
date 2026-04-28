@@ -829,3 +829,63 @@ primitive needing a 3-bit AND-phase coupling.
     end
     return nothing
 end
+
+# ── p38: SUM entangler `a ⊻= b` on (QMod{d}, QMod{d}) ─────────────────────
+#
+# Primitive #6 (Sturm.jl-p38). SUM: |a, b⟩ → |a, (a + b) mod d⟩, with `b` the
+# control and `a` the target (matching the existing QBool / QInt `a ⊻= b`
+# convention: left is target, right is control). Reduces to qubit CNOT at
+# d=2 (a ⊻= b on the single underlying wire pair). Reference: Gottesman
+# 1998 Eq. G12 (SUM gate).
+#
+# v0.1 SCOPE: shipped at d = 2 only. At d > 2, modular addition on the
+# qubit-encoded register requires either:
+#   (a) Bennett-style classical-function compilation via Sturm.jl-jba
+#       (QMod{d} Bennett interop, currently P3); or
+#   (b) Direct Beauregard-style mod-d adder (allocate overflow ancilla,
+#       3-bit ripple-add, conditional subtract d, uncompute) — substantial
+#       work paralleling src/library/arithmetic.jl::modadd! but with
+#       quantum (not classical) `a`.
+# Both are deferred to a follow-on bead.
+
+"""
+    Base.xor(target::QMod{d, K}, ctrl::QMod{d, K}) -> target
+
+SUM entangler: `target ← (ctrl + target) mod d`. Returns `target` after
+mutation (mirrors `Base.xor(::QBool, ::QBool)` semantics so
+`target ⊻= ctrl` desugars correctly to `target = target ⊻ ctrl` and the
+in-place semantics match user expectation).
+
+# v0.1: d = 2 only
+
+At d = 2, K = 1, the gate is qubit CNOT on the single underlying wire
+pair: `apply_cx!(ctx, ctrl.wires[1], target.wires[1])`. Bit-identical
+to `target_qbool ⊻= ctrl_qbool` if the same wires were wrapped as
+QBools.
+
+At d > 2 errors loudly with the deferral rationale (see file header).
+
+# Refs
+* `docs/physics/gottesman_1998_qudit_fault_tolerant.pdf` Eq. (G12): SUM
+  definition.
+* `docs/physics/qudit_magic_gate_survey.md` §8.3: locked SUM choice.
+"""
+function Base.xor(target::QMod{d, K}, ctrl::QMod{d, K}) where {d, K}
+    check_live!(target)
+    check_live!(ctrl)
+    target.ctx === ctrl.ctx ||
+        error("SUM (a ⊻= b): target and ctrl must share a context")
+    if d == 2
+        # K = 1 at d = 2; collapse to qubit CNOT on the single wire pair.
+        apply_cx!(target.ctx, ctrl.wires[1], target.wires[1])
+        return target
+    else
+        error(
+            "SUM (a ⊻= b) on QMod{$d, $K} is not yet implemented at d ≥ 3. " *
+            "Modular addition on the qubit-encoded register requires either " *
+            "(a) Bennett-style classical-function compilation (Sturm.jl-jba) " *
+            "or (b) a Beauregard mod-d adder construction. Both deferred to " *
+            "a follow-on bead. d = 2 ships."
+        )
+    end
+end
