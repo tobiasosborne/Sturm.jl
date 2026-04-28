@@ -1,3 +1,5 @@
+using Random: AbstractRNG, default_rng
+
 # Shor's algorithm — order-finding and factoring.
 #
 # Ground truth: Nielsen & Chuang §5.3 (docs/physics/nielsen_chuang_5.3.md).
@@ -211,12 +213,13 @@ Implements the classical reduction of N&C §5.3.2:
   5. If `r` is even and `a^{r/2} ≢ ±1 mod N`, return
      `gcd(a^{r/2} ± 1, N)`; else retry.
 """
-function shor_factor_A(N::Int; max_attempts::Int=16)
+function shor_factor_A(N::Int; max_attempts::Int=16,
+                       rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_A: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -442,12 +445,13 @@ Factor composite `N` using order-finding implementation B. Identical
 classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref); differs only
 in the quantum order-finding subroutine.
 """
-function shor_factor_B(N::Int; max_attempts::Int=16)
+function shor_factor_B(N::Int; max_attempts::Int=16,
+                       rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_B: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -790,12 +794,13 @@ classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref) and
 [`shor_factor_B`](@ref); differs only in the quantum order-finding
 subroutine — the controlled-`U^{2^j}` cascade from Box 5.2.
 """
-function shor_factor_C(N::Int; max_attempts::Int=16)
+function shor_factor_C(N::Int; max_attempts::Int=16,
+                       rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_C: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -1071,12 +1076,13 @@ classical reduction (N&C §5.3.2) to [`shor_factor_A`](@ref) /
 [`shor_factor_B`](@ref) / [`shor_factor_C`](@ref); differs only in the
 quantum order-finding subroutine — Beauregard 2003 arithmetic mulmod.
 """
-function shor_factor_D(N::Int; max_attempts::Int=16)
+function shor_factor_D(N::Int; max_attempts::Int=16,
+                       rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_D: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -1252,12 +1258,13 @@ Factor composite `N` using the Beauregard 2003 `2n+3`-qubit pipeline
 ([`shor_order_D_semi`](@ref)). Identical classical post-processing to
 [`shor_factor_D`](@ref).
 """
-function shor_factor_D_semi(N::Int; max_attempts::Int=16)
+function shor_factor_D_semi(N::Int; max_attempts::Int=16,
+                            rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_D_semi: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -1418,12 +1425,13 @@ end
 Factor composite `N` via [`shor_order_E`](@ref). Identical classical
 post-processing (continued fractions + gcd) to [`shor_factor_D_semi`](@ref).
 """
-function shor_factor_E(N::Int; max_attempts::Int=16, cpad::Int=1, c_mul::Int=2)
+function shor_factor_E(N::Int; max_attempts::Int=16, cpad::Int=1, c_mul::Int=2,
+                       rng::AbstractRNG=default_rng())
     N >= 2 || error("shor_factor_E: N=$N must be ≥ 2")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
     for _ in 1:max_attempts
-        a = rand(2:(N - 1))
+        a = rand(rng, 2:(N - 1))
         g = gcd(a, N)
         if g > 1
             return sort!([g, N ÷ g])
@@ -1703,7 +1711,8 @@ Peak live wires = `2·ell + m + 2·L + 3`.
 function shor_factor_EH(N::Int;
                         m::Union{Int, Nothing}=nothing,
                         ell::Union{Int, Nothing}=nothing,
-                        max_attempts::Int=16, verbose::Bool=false)
+                        max_attempts::Int=16, verbose::Bool=false,
+                        rng::AbstractRNG=default_rng())
     N >= 4 || error("shor_factor_EH: N=$N must be ≥ 4")
     N % 2 == 0 && return sort!([2, N ÷ 2])
 
@@ -1719,7 +1728,7 @@ function shor_factor_EH(N::Int;
     ell_val >= 1 || error("shor_factor_EH: ell=$ell_val must be ≥ 1")
 
     for attempt in 1:max_attempts
-        g = rand(2:(N - 1))
+        g = rand(rng, 2:(N - 1))
         gcd_gN = gcd(g, N)
         if gcd_gN > 1
             # Lucky draw: g shares a factor with N.  Return it without
