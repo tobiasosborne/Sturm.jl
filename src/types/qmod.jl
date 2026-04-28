@@ -283,6 +283,11 @@ end
         return QModPhaseProxy{2, 1, 2}(
             getfield(q, :wires), getfield(q, :ctx), q,
         )
+    elseif s === :θ₃
+        check_live!(q)
+        return QModPhaseProxy{2, 1, 3}(
+            getfield(q, :wires), getfield(q, :ctx), q,
+        )
     else
         return getfield(q, s)
     end
@@ -298,6 +303,11 @@ end
     elseif s === :θ₂
         check_live!(q)
         return QModPhaseProxy{d, K, 2}(
+            getfield(q, :wires), getfield(q, :ctx), q,
+        )
+    elseif s === :θ₃
+        check_live!(q)
+        return QModPhaseProxy{d, K, 3}(
             getfield(q, :wires), getfield(q, :ctx), q,
         )
     else
@@ -332,6 +342,14 @@ end
 @inline function Base.:+(proxy::QModPhaseProxy{d, K, 2}, δ::Real) where {d, K}
     check_live!(proxy.parent)
     _apply_n_squared!(proxy.ctx, proxy.wires, δ)
+    return ROTATION_APPLIED
+end
+
+# `+` on a QModPhaseProxy{d, K, 3} applies the cubic-phase magic primitive
+# `exp(-i·δ·n̂³)`. Uniform K-parametric kernel; trilinear term kicks in at K≥3.
+@inline function Base.:+(proxy::QModPhaseProxy{d, K, 3}, δ::Real) where {d, K}
+    check_live!(proxy.parent)
+    _apply_n_cubed!(proxy.ctx, proxy.wires, δ)
     return ROTATION_APPLIED
 end
 
@@ -648,5 +666,166 @@ primitive needing a continuous controlled-phase coupling.
     apply_cx!(ctx, wi, wj)
     apply_rz!(ctx, wj, -α / 2)
     apply_rz!(ctx, wi, -α / 2)
+    return nothing
+end
+
+# ── mle: q.θ₃ += δ — cubic phase / magic primitive ────────────────────────
+#
+# Primitive #5 (Sturm.jl-mle). Applies `exp(-i·δ·n̂³)` to a `QMod{d, K}`
+# register, where n̂ is the computational-basis label operator. Diagonal
+# in the computational basis: phases each |k⟩ by `exp(-i·δ·k³)`.
+#
+# Level-3 of the Clifford hierarchy at prime d ≥ 5 (magic). At
+# δ = -2π/d gives the Campbell M_1 = ω^{n̂³} gate (qudit T-gate
+# analogue). At d ∈ {2, 3, 6}, the cubic-on-bits structure is
+# Clifford-degenerate (k³ ≡ k mod d for d ∈ {2}; or 3μ ≡ 0 mod 3 at
+# d=3 collapses cubic to quadratic) — the primitive still applies
+# correctly, but the level-3 MAGIC role requires a higher root of
+# unity (Watson 2015 Eq. 7: γ^{n̂³} with γ = e^{2πi/9} at d=3) which
+# is library-level (T_d! gate, separate bead).
+
+"""
+    _apply_n_cubed!(ctx, wires::NTuple{K, WireID}, δ::Real)
+
+Apply `exp(-i·δ·n̂³)` to a register stored in the K-bit little-endian
+qubit encoding (`wires[1]` = LSB, `wires[K]` = MSB; label
+`k = Σ b_{i-1}·2^{i-1}`).
+
+## Decomposition
+
+Using `b² = b³ = b` for `b ∈ {0,1}`:
+
+    k³ = Σᵢ b_{i-1}·8^{i-1}                                           (linear)
+       + 3·Σ_{i<j} b_{i-1}·b_{j-1}·(2^{2(i-1)+(j-1)} + 2^{(i-1)+2(j-1)})  (bilinear)
+       + 6·Σ_{i<j<l} b_{i-1}·b_{j-1}·b_{l-1}·2^{(i-1)+(j-1)+(l-1)}        (trilinear)
+
+so
+
+    exp(-i·δ·k³) = Πᵢ exp(-i·δ·b_{i-1}·8^{i-1})
+                · Π_{i<j} exp(-i·δ·3·(2^{2i+j-3} + 2^{i+2j-3})·b_{i-1}·b_{j-1})
+                · Π_{i<j<l} exp(-i·δ·6·2^{i+j+l-3}·b_{i-1}·b_{j-1}·b_{l-1})
+
+* **Linear** per wire i: `apply_rz!(wires[i], -δ·8^{i-1})`. Same Rz
+  pattern as os4 but with 8^i instead of 4^i.
+* **Bilinear** per pair (i, j) with i < j: controlled-phase CZ with
+  α = `3·δ·(2^{2i+j-3} + 2^{i+2j-3})`. Reuses [`_apply_cphase!`](@ref)
+  from os4.
+* **Trilinear** per triple (i, j, l) with i < j < l: doubly-controlled
+  phase CCPhase with α = `6·δ·2^{i+j+l-3}`. Lowered by the standard
+  CCX-sandwich identity in [`_apply_ccphase!`](@ref).
+
+## d=2 collapse (K=1)
+
+Linear loop fires once with `apply_rz!(wires[1], -δ·8^0)` =
+`apply_rz!(wires[1], -δ)`. Bilinear and trilinear loops are empty. So
+q.θ₃ at d=2 emits exactly the SAME apply_rz! as q.θ₂ at d=2 — both
+collapse to Rz-equivalent (n̂² = n̂³ = n̂ on bits, per locked §8.1
+read with the §8.2 n̂-vs-Ĵ_z lock-in).
+
+## Subspace preservation
+
+Diagonal in {|k⟩}_qubit ⇒ no amplitude movement ⇒ forbidden states
+stay empty. Same as os4. ✓
+
+## `when()` composition
+
+Linear and bilinear pieces inherit the control stack as in os4 (each
+`apply_rz!` / `apply_cx!` / `_apply_cphase!` is auto-controlled).
+Trilinear: `_apply_ccphase!` allocates a workspace ancilla; the
+`apply_ccx!` calls under `when(c)` become 3-controlled-CX (handled
+via `_multi_controlled_cx!` in `multi_control.jl`); the inner
+`_apply_cphase!` is auto-controlled. The ancilla returns to |0⟩ in
+both control branches.
+
+## Gate count
+
+* K=1: 1 Rz.
+* K=2: 1 Rz + 1 bilinear pair (5 gates) = 5 Rz + 2 CX.
+* K=3: 3 Rz + 3 bilinear (each 5 gates) + 1 trilinear (∼10 gates incl.
+  CCX-sandwich + ancilla) ≈ 12 Rz + 6 CX + ~3 CCX + 1 ancilla
+  alloc/dealloc.
+
+## References
+
+* `docs/physics/qudit_magic_gate_survey.md` §1 (Howard-Vala / Campbell
+  cubic magic gate); §8.1 (locked primitive set, level-3 role);
+  §8.2 (n̂ convention).
+* `docs/physics/campbell_2014_enhanced_qudit_ft.pdf` Eq. (1)
+  (canonical M_μ = ω^{μ n̂³}).
+* `docs/physics/howard_vala_2012_qudit_magic.pdf` Eq. (16)-(24)
+  (qudit π/8 family).
+"""
+@inline function _apply_n_cubed!(
+    ctx::AbstractContext,
+    wires::NTuple{K, WireID},
+    δ::Real,
+) where {K}
+    # Linear term: K single-qubit Rz's at angle -δ·8^{i-1}.
+    @inbounds for i in 1:K
+        apply_rz!(ctx, wires[i], -δ * (1 << (3 * (i - 1))))   # 8^{i-1}
+    end
+    # Bilinear term: K(K-1)/2 controlled-phase pairs.
+    @inbounds for i in 1:K-1
+        for j in i+1:K
+            # α = 3·δ·(2^{2(i-1)+(j-1)} + 2^{(i-1)+2(j-1)})
+            #   = 3·δ·(2^{2i+j-3} + 2^{i+2j-3})
+            α = 3 * δ * ((1 << (2 * i + j - 3)) + (1 << (i + 2 * j - 3)))
+            _apply_cphase!(ctx, wires[i], wires[j], α)
+        end
+    end
+    # Trilinear term: C(K, 3) doubly-controlled-phase triples.
+    @inbounds for i in 1:K-2
+        for j in i+1:K-1
+            for l in j+1:K
+                # α = 6·δ·2^{(i-1)+(j-1)+(l-1)} = 6·δ·2^{i+j+l-3}
+                α = 6 * δ * (1 << (i + j + l - 3))
+                _apply_ccphase!(ctx, wires[i], wires[j], wires[l], α)
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    _apply_ccphase!(ctx, wi, wj, wl, α)
+
+Apply a doubly-controlled phase: `phase exp(-iα)` on `|111⟩` of
+`(wi, wj, wl)`, identity on the other 7 computational states. Up to a
+global phase absorbed into SU(d).
+
+## Decomposition (CCX-sandwich)
+
+    CCX(wi, wj → ws) · CPhase(ws, wl, α) · CCX(wi, wj → ws)
+
+with `ws` a fresh allocated ancilla. Step-by-step:
+
+1. `apply_ccx!(wi, wj, ws)` — sets `ws = b_i ∧ b_j`.
+2. `_apply_cphase!(ws, wl, α)` — phase α on the |1_ws, 1_wl⟩ subspace
+   = the |1_i, 1_j, 1_l⟩ subspace of the original triple.
+3. `apply_ccx!(wi, wj, ws)` — undoes step 1; `ws` returns to `|0⟩`.
+
+Ancilla deallocated in `finally` so it's clean even if a subroutine
+errors mid-flight.
+
+## Under `when()`
+
+The outer control stack adds to each gate: `apply_ccx!` becomes
+3-controlled-CX (handled by `_multi_controlled_cx!`); `_apply_cphase!`
+becomes 3-controlled-phase (CX → CCX, Rz → CRz, all auto-routed).
+The CCX-sandwich is symmetric: ancilla returns to |0⟩ in BOTH
+control branches.
+
+Helper for [`_apply_n_cubed!`](@ref); also reusable for any future
+primitive needing a 3-bit AND-phase coupling.
+"""
+@inline function _apply_ccphase!(ctx::AbstractContext, wi::WireID, wj::WireID, wl::WireID, α::Real)
+    ws = allocate!(ctx)
+    try
+        apply_ccx!(ctx, wi, wj, ws)
+        _apply_cphase!(ctx, ws, wl, α)
+        apply_ccx!(ctx, wi, wj, ws)
+    finally
+        deallocate!(ctx, ws)
+    end
     return nothing
 end
