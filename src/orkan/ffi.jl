@@ -87,6 +87,12 @@ end
 """
 Matches C `kraus_t` — 24 bytes on x86-64.
 Fields: n_qubits (UInt8, 1B), pad (7B), n_terms (UInt64, 8B), data (Ptr, 8B).
+
+Immutable: KrausRaw is constructed Julia-side (the `data` pointer references
+a Julia-owned `Vector{ComplexF64}`), passed by value into Orkan via
+`Ref(::OrkanKrausRaw)`, and never mutated thereafter. No finalizer needed —
+the underlying `Vector` is GC-managed by Julia (callers wrap the call in
+`GC.@preserve` so the buffer outlives the ccall).
 """
 struct OrkanKrausRaw
     n_qubits::UInt8
@@ -98,6 +104,12 @@ end
 """
 Matches C `superop_t` — 16 bytes on x86-64.
 Fields: n_qubits (UInt8, 1B), pad (7B), data (Ptr, 8B).
+
+`mutable struct` because Julia requires mutability to attach a finalizer:
+SuperopRaw owns a heap buffer allocated on the Orkan side
+(`orkan_kraus_to_superop` mallocs into `data`), and `orkan_superop_free!`
+must be invokable as a `finalizer(...)` callback. KrausRaw doesn't own any
+foreign-allocated memory, so it stays immutable.
 """
 mutable struct OrkanSuperopRaw
     n_qubits::UInt8
