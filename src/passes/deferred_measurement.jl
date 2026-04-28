@@ -71,12 +71,16 @@ function defer_measurements(dag::Vector{DAGNode}; strict::Bool=false)::Vector{DA
                         "Cannot lower to deferred-measurement controlled gates. " *
                         "Restructure the trace to remove nested measurements inside cases() bodies."
                     )
+                else
+                    @debug "defer_measurements: skipping un-lowerable CasesNode (nested measurement) at index $i, condition_id=$(node.result_id)"
                 end
             elseif strict
                 error(
                     "defer_measurements: CasesNode condition_id=$(cases.condition_id) " *
                     "does not match preceding ObserveNode result_id=$(node.result_id)."
                 )
+            else
+                @debug "defer_measurements: skipping CasesNode at index $(i+1) — condition_id=$(cases.condition_id) doesn't match preceding ObserveNode result_id=$(node.result_id)"
             end
         end
 
@@ -110,24 +114,35 @@ end
 """Add a control wire to a DAG node (inline controls)."""
 function _add_control(node::RyNode, ctrl::WireID)
     n = node.ncontrols
-    n >= 2 && error("Cannot add control: already at maximum 2")
+    n >= 2 && error(
+        "defer_measurements: cannot add control wire $(ctrl) to RyNode(angle=$(node.angle), " *
+        "wire=$(node.wire)): already at the maximum of 2 inline controls. " *
+        "This indicates a cases() body containing a 2-controlled gate that " *
+        "the lowering would need to control further on the measurement outcome.")
     n == 0 ? RyNode(node.angle, node.wire, ctrl, _ZERO_WIRE, UInt8(1)) :
              RyNode(node.angle, node.wire, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::RzNode, ctrl::WireID)
     n = node.ncontrols
-    n >= 2 && error("Cannot add control: already at maximum 2")
+    n >= 2 && error(
+        "defer_measurements: cannot add control wire $(ctrl) to RzNode(angle=$(node.angle), " *
+        "wire=$(node.wire)): already at the maximum of 2 inline controls.")
     n == 0 ? RzNode(node.angle, node.wire, ctrl, _ZERO_WIRE, UInt8(1)) :
              RzNode(node.angle, node.wire, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::CXNode, ctrl::WireID)
     n = node.ncontrols
-    n >= 2 && error("Cannot add control: already at maximum 2")
+    n >= 2 && error(
+        "defer_measurements: cannot add control wire $(ctrl) to CXNode(control=$(node.control), " *
+        "target=$(node.target)): already at the maximum of 2 inline controls.")
     n == 0 ? CXNode(node.control, node.target, ctrl, _ZERO_WIRE, UInt8(1)) :
              CXNode(node.control, node.target, node.ctrl1, ctrl, UInt8(2))
 end
 function _add_control(node::DAGNode, ctrl::WireID)
-    error("Cannot add control to $(typeof(node))")
+    error(
+        "defer_measurements: cannot add control wire $(ctrl) to $(typeof(node)) — " *
+        "this node type is not lowerable inside a cases() body. Only Ry/Rz/CX " *
+        "nodes can be lifted to controlled form via deferred measurement.")
 end
 
 # ── AbstractPass wrapper (Sturm.jl-7ab) ─────────────────────────────────────

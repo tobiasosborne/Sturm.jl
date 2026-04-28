@@ -117,7 +117,16 @@ struct ObserveNode <: DAGNode
 end
 
 """Classical branching: switch on a measurement outcome.
-NOT in HotNode union — only used in test fixtures and deferred_measurement input."""
+NOT in HotNode union — only used in test fixtures and deferred_measurement input.
+
+The branches are typed `Vector{DAGNode}` (abstract eltype) rather than
+`Vector{HotNode}` (the concrete tag-union used everywhere else) because a
+CasesNode body may itself contain nested `CasesNode` — and `CasesNode` is
+not part of `HotNode` (it's not isbits, since it carries sub-Vectors). The
+asymmetry with `Channel.dag::Vector{HotNode}` is intentional: a Channel
+is the post-lowering form (deferred_measurement has eliminated nested
+CasesNode), so the strict eltype holds; the CasesNode body is the
+pre-lowering form, where the abstract eltype is necessary."""
 struct CasesNode <: DAGNode
     condition_id::UInt32
     true_branch::Vector{DAGNode}
