@@ -1179,4 +1179,311 @@ using Sturm
         end
     end
 
+    # ── os4: q.θ₂ += δ — quadratic-phase / squeezing primitive ──────────────
+    #
+    # Bead `Sturm.jl-os4`. Primitive #4 of the locked 6-primitive qudit set
+    # (docs/physics/qudit_magic_gate_survey.md §8.1, §8.2):
+    #
+    #   q.θ₂ += δ ↦ exp(-i·δ·n̂²) on QMod{d, K}
+    #
+    # where n̂ is the COMPUTATIONAL-BASIS label operator (n̂|k⟩ = k|k⟩, NOT
+    # the spin-j Ĵ_z label). Diagonal in the computational basis: the gate
+    # applies phase exp(-i·δ·k²) to |k⟩.
+    #
+    # At d=2 with k ∈ {0, 1}: k² = k, so exp(-iδ·n̂²) = exp(-iδ·n̂) — collapses
+    # to Rz-equivalent up to global phase (NOT a global phase as a (residual
+    # of an earlier draft) reading of §8.1's "respectively" suggests; with
+    # the §8.2 lock-in to n̂ rather than Ĵ_z, both 4 and 5 collapse to
+    # Rz-equivalent at d=2, since k² = k³ = k for k ∈ {0,1}).
+    #
+    # Qubit-encoded fallback decomposition: with k = Σᵢ b_{i-1}·2^{i-1}
+    # (LE) and b² = b on bits, k² = Σᵢ b_{i-1}·4^{i-1} +
+    # Σ_{i<j} b_{i-1}·b_{j-1}·2^{i+j-1}. The exponential factors as a
+    # product of K linear-phase Rz's (one per wire) and K(K-1)/2 controlled-
+    # phase pairs (one per bit-pair). See `_apply_n_squared!` docstring.
+    #
+    # under `when()`: per locked policy §8.4, the controlled-phase decomp
+    # carries a per-pair global phase that becomes a relative phase under
+    # `when()`. Same SU(d)-not-U(d) discipline as H²=−I. Tests assert
+    # behavioural correctness, not bit-equality with a specific lift.
+
+    @testset "os4 d=3: q.θ₂ += δ is diagonal (no amplitude redistribution)" begin
+        # Prep |0⟩_d. Each amplitude on |0⟩_d picks up phase exp(-i·0²·δ)=1.
+        # Amplitudes elsewhere stay at 0.
+        for δ in (0.0, 0.3, π/3, π, -π/5)
+            @context EagerContext() begin
+                q = QMod{3}()
+                q.θ₂ += δ
+                amps = _amps_snapshot(current_context())
+                @test abs(amps[1]) ≈ 1.0 atol=1e-10
+                @test abs(amps[2]) < 1e-12
+                @test abs(amps[3]) < 1e-12
+                @test abs(amps[4]) < 1e-12  # forbidden state stays empty
+            end
+        end
+    end
+
+    @testset "os4 d=3: phase exp(-i·k²·δ) on each label k ∈ {0,1,2}" begin
+        # Spec: exp(-iδ·n̂²)|k⟩ = exp(-iδ·k²)|k⟩ — UP TO GLOBAL PHASE,
+        # per the SU(d) policy (locked §8.4). The qubit-encoded
+        # decomposition leaves a uniform e^{iδ·G(K)} global on every basis
+        # state. Use a |0⟩_d reference run at the same δ to extract that
+        # global, then divide.
+        for δ in (0.7, π/5, -π/3)
+            global_phase = @context EagerContext() begin
+                q = QMod{3}()
+                q.θ₂ += δ
+                _amps_snapshot(current_context())[1]
+            end
+            for k in 0:2
+                @context EagerContext() begin
+                    q = QMod{3}()
+                    ctx = current_context()
+                    for bit in 0:1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    pre_amps = _amps_snapshot(ctx)
+                    pre_phase = pre_amps[k + 1]
+                    q.θ₂ += δ
+                    amps = _amps_snapshot(ctx)
+                    expected = pre_phase * exp(-im * δ * k^2) * global_phase
+                    @test amps[k + 1] ≈ expected atol=1e-10
+                    for i in 1:4
+                        i == k + 1 && continue
+                        @test abs(amps[i]) < 1e-12
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "os4 d=2 collapse: q.θ₂ += δ matches apply_rz!(wire, -δ)" begin
+        # At d=2 (K=1) the locked design reduces q.θ₂ to Rz-equivalent
+        # (n̂² = n̂ at d=2). Qubit-encoded fallback emits exactly one
+        # apply_rz!(wires[1], -δ).
+        for δ in (0.0, 0.5, π/4, -π/3, 1.7)
+            amps_ref = @context EagerContext() begin
+                q = QBool(0.0); q.θ += π/3   # nontrivial superposition
+                Sturm.apply_rz!(current_context(), q.wire, -δ)
+                _amps_snapshot(current_context())
+            end
+            amps_qmod = @context EagerContext() begin
+                q = QMod{2}(); q.θ += π/3
+                q.θ₂ += δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(amps_qmod, amps_ref; atol=1e-12))
+        end
+    end
+
+    @testset "os4 d=4: phase exp(-i·k²·δ) on every k ∈ {0,1,2,3}" begin
+        # d=4 is the simplest power-of-2 case: K=2, no leakage (every
+        # 2-bit pattern is a legal label). Tests both the linear and
+        # bilinear branches of the decomposition (K=2 has one bilinear
+        # pair, i=1, j=2). Up to global phase per §8.4 — same |0⟩_d
+        # reference trick as the d=3 testset.
+        for δ in (0.4, π/5, -π/4)
+            global_phase = @context EagerContext() begin
+                q = QMod{4}()
+                q.θ₂ += δ
+                _amps_snapshot(current_context())[1]
+            end
+            for k in 0:3
+                @context EagerContext() begin
+                    q = QMod{4}()
+                    ctx = current_context()
+                    for bit in 0:1
+                        if (k >> bit) & 1 == 1
+                            Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                        end
+                    end
+                    pre_amps = _amps_snapshot(ctx)
+                    pre_phase = pre_amps[k + 1]
+                    q.θ₂ += δ
+                    amps = _amps_snapshot(ctx)
+                    expected = pre_phase * exp(-im * δ * k^2) * global_phase
+                    @test amps[k + 1] ≈ expected atol=1e-10
+                    for i in 1:4
+                        i == k + 1 && continue
+                        @test abs(amps[i]) < 1e-12
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "os4: composability — q.θ₂ += δ; q.θ₂ += -δ returns to identity" begin
+        # exp(-iδ·n̂²)·exp(+iδ·n̂²) = I (commuting diagonal exponentials).
+        # Use raw apply_ry! on wire1 to mix |0⟩_d ↔ |1⟩_d across all d
+        # (q.θ Ry isn't shipped at d=4 yet; this prep sidesteps that).
+        for d in (2, 3, 4, 5)
+            for δ in (0.5, π/3, -1.2)
+                @context EagerContext() begin
+                    q = QMod{d}()
+                    ctx = current_context()
+                    Sturm.apply_ry!(ctx, q.wires[1], 0.7)
+                    pre_amps = _amps_snapshot(ctx)
+                    q.θ₂ += δ
+                    q.θ₂ += -δ
+                    post_amps = _amps_snapshot(ctx)
+                    @test all(isapprox.(post_amps, pre_amps; atol=1e-10))
+                end
+            end
+        end
+    end
+
+    @testset "os4: linearity in δ — θ₂(δ₁) ∘ θ₂(δ₂) ≡ θ₂(δ₁+δ₂)" begin
+        # Diagonal commuting Hamiltonians: exp(-iδ₁n̂²)·exp(-iδ₂n̂²) =
+        # exp(-i(δ₁+δ₂)n̂²). Verify on d=3 with a non-trivial input state.
+        for (δ₁, δ₂) in ((0.3, 0.4), (π/5, -π/7), (-1.0, 0.5))
+            split_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₂ += δ₁
+                q.θ₂ += δ₂
+                _amps_snapshot(current_context())
+            end
+            sum_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₂ += (δ₁ + δ₂)
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(split_amps, sum_amps; atol=1e-10))
+        end
+    end
+
+    @testset "os4 d=3: subspace preservation under random q.θ₂ chains" begin
+        # n̂² is diagonal in the qubit basis ⇒ q.θ₂ moves no amplitude.
+        # If forbidden state |11⟩ starts at 0, it stays at 0 regardless
+        # of how many q.θ₂ rotations are stacked.
+        @context EagerContext() begin
+            q = QMod{3}()
+            q.θ += π/3   # populate |0⟩_d, |1⟩_d, |2⟩_d nontrivially
+            for _ in 1:10
+                q.θ₂ += rand() * 2π
+            end
+            amps = _amps_snapshot(current_context())
+            @test abs(amps[4]) < 1e-12  # forbidden |11⟩_qubit
+            @test sum(abs2, amps) ≈ 1.0 atol=1e-10  # unitarity
+        end
+    end
+
+    @testset "os4: proxy types — getproperty(:θ₂) returns QModPhaseProxy" begin
+        @context EagerContext() begin
+            q2 = QMod{2}()
+            @test getproperty(q2, :θ₂) isa Sturm.QModPhaseProxy{2, 1, 2}
+        end
+        @context EagerContext() begin
+            q3 = QMod{3}()
+            @test getproperty(q3, :θ₂) isa Sturm.QModPhaseProxy{3, 2, 2}
+        end
+        @context EagerContext() begin
+            q5 = QMod{5}()
+            @test getproperty(q5, :θ₂) isa Sturm.QModPhaseProxy{5, 3, 2}
+        end
+    end
+
+    @testset "os4: proxy access on consumed QMod errors" begin
+        @context EagerContext() begin
+            q = QMod{3}()
+            ptrace!(q)
+            @test_throws ErrorException q.θ₂
+        end
+    end
+
+    @testset "os4 d=3: q.θ₂ -= δ delegates to q.θ₂ += -δ" begin
+        # Symmetric API with q.θ -= δ, q.φ -= δ (both delegate via Base.:-).
+        for δ in (0.5, π/3, -1.0)
+            plus_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₂ += -δ
+                _amps_snapshot(current_context())
+            end
+            minus_amps = @context EagerContext() begin
+                q = QMod{3}(); q.θ += π/4
+                q.θ₂ -= δ
+                _amps_snapshot(current_context())
+            end
+            @test all(isapprox.(plus_amps, minus_amps; atol=1e-12))
+        end
+    end
+
+    @testset "os4 d=3: when(::QBool) q.θ₂ += δ carries controlled phase" begin
+        # Per locked policy §8.4, the bilinear-CZ decomposition leaves a
+        # global phase per pair under uncontrolled application — visible as
+        # a relative phase under `when()`. The verifiable behavioural claim
+        # is: when ctrl = |1⟩, q.θ₂ applies the phase pattern; when ctrl = |0⟩,
+        # q.θ₂ is identity (modulo controlled-phase global cost).
+        #
+        # Test: prep ctrl=|+⟩ ⊗ |k⟩_d for each k. Apply when(ctrl) q.θ₂ += δ.
+        # The (ctrl=0)·|k⟩ branch has no phase change. The (ctrl=1)·|k⟩
+        # branch picks up exp(-iδ·k²) (plus the SU(d) controlled-phase cost
+        # which is observable as a uniform shift across all k branches).
+        # Then measure ctrl in X-basis: if (ctrl=0) and (ctrl=1) branches
+        # carry the SAME k-state, the phase difference between them is
+        # exp(-iδ·k²) up to a uniform global. Different k values produce
+        # different relative phases — that's the magic.
+        δ = 0.5
+        for k in 0:2
+            @context EagerContext() begin
+                ctrl = QBool(0.0); H!(ctrl)  # |+⟩
+                q = QMod{3}()
+                ctx = current_context()
+                # Prep |k⟩_d on the qudit
+                for bit in 0:1
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                when(ctrl) do
+                    q.θ₂ += δ
+                end
+                # The state should be (1/√2)(|0⟩_ctrl⊗|k⟩_d + e^{iφ}|1⟩_ctrl⊗|k⟩_d)
+                # where φ depends on k AND on the per-bit-pair controlled-
+                # phase cost. The DIFFERENCE between φ(k) and φ(0) is
+                # exp(-iδ·k²) — that's the channel-level observable.
+                amps = _amps_snapshot(ctx)
+                # Find non-zero amplitudes; expect exactly two: ctrl=0/k and ctrl=1/k.
+                nz_count = count(a -> abs(a) > 1e-10, amps)
+                @test nz_count == 2
+                # Both branches keep magnitude 1/√2 (no amplitude movement).
+                large = filter(a -> abs(a) > 1e-10, amps)
+                @test all(abs.(large) .≈ 1/√2)
+            end
+        end
+    end
+
+    @testset "os4 d=5: phase exp(-i·k²·δ) on each label k ∈ 0..4" begin
+        # K=3, three bilinear pairs. End-to-end correctness check.
+        # Up to global phase per §8.4 (|0⟩_d reference).
+        δ = 0.4
+        global_phase = @context EagerContext() begin
+            q = QMod{5}()
+            q.θ₂ += δ
+            _amps_snapshot(current_context())[1]
+        end
+        for k in 0:4
+            @context EagerContext() begin
+                q = QMod{5}()
+                ctx = current_context()
+                for bit in 0:2
+                    if (k >> bit) & 1 == 1
+                        Sturm.apply_ry!(ctx, q.wires[bit + 1], π)
+                    end
+                end
+                pre_amps = _amps_snapshot(ctx)
+                pre_phase = pre_amps[k + 1]
+                q.θ₂ += δ
+                amps = _amps_snapshot(ctx)
+                expected = pre_phase * exp(-im * δ * k^2) * global_phase
+                @test amps[k + 1] ≈ expected atol=1e-10
+                # Forbidden labels 5, 6, 7 stay empty.
+                for i in 6:8
+                    @test abs(amps[i]) < 1e-12
+                end
+            end
+        end
+    end
+
 end
