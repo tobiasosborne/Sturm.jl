@@ -4,6 +4,83 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-30 — Session 81b: README full antipattern cleanup (bead jejb)
+
+After session 81 fixed the headline CNOT-as-primitive issue, Tobias asked me to
+re-read the README end-to-end and find every remaining antipattern. I found 18.
+Tobias asked me to fix all of them. This commit applies them.
+
+### Findings (18, by category)
+
+**Direct self-contradictions (8)**
+1. Lead "any Julia function is a quantum oracle" vs P9 "no catch-all on Function" — fixed: lead now reads `oracle(f, q)` lifts plain Julia integer functions.
+2. P5 listed `cnot!`/`swap!` as named library functions — but the primitives section just argued they shouldn't exist. Fixed: P5 now says **named gates do not appear in user code**, with `not!` as the only exception (justified by no-cloning + Julia bang convention).
+3. P3 "no language-level distinction" vs P2's cast warning. Fixed: P3 reworded to "all are `Channel` at the type level; the cast is the only syntactic distinction."
+4. Project-Status "Phases 1-5: Orkan FFI, core types, QBool, **gates**, contexts" — gates was deliverable per the plan but P5 forbids gates. Fixed: replaced with "primitives".
+5. Bell-example comment claimed `(|00⟩+|11⟩)/√2` — but `when(a) do not!(b) end` produces `(|00⟩−i|11⟩)/√2` (since not! = -iX). Fixed: comment now describes the *correlation* signature, sidesteps exact-state claim.
+6. Teleport same op spelled `not!(b)` and `X!(a)` in 12 lines. Fixed: rewrote with no named gates at all (H! and Z! also gone, replaced by primitives).
+7. Primitive table row #1 was `q = QBool()` (no method exists!) while cast table claimed `QBool(false)` is primitive #1. Fixed: unified into a single 5-row table covering primitives + casts + binder.
+8. "No named two-qubit gates" defensive narrowing repeated in two examples — but P5 says no gates at all. Fixed: replaced both disclaimers with "no named gates."
+
+**Antipatterns (8)**
+9. `H!`/`Z!`/`T!`/`S!`/`X!` as middleware (no Julia-classical analogue) — purged from README examples. Replaced with rotation primitives directly. `gates.jl` source removal filed separately.
+10. Apologetic comment `# Hadamard (library gate, built from primitives)` — proved the example knew it was mid-violation. Fixed: dropped (named gate gone).
+11. `with_silent_casts` documented inside the P2 axiom paragraph itself — "trapdoor in the contract." Fixed: removed from P2 paragraph. (If users need it, source still defines it; not advertised in user-facing docs.)
+12. `tensor` written as Julia infix (`h_gate tensor h_gate`) — not valid Julia syntax. Fixed: `⊗` (which IS exported per `Sturm.jl:153`).
+13. Six syntactic forms for QBool prep (`QBool()`, `QBool(0)`, `QBool(1)`, `QBool(false)`, `QBool(0.5)`, `QBool(1/2)`). Normalised to three: `QBool(false)` for |0⟩, `QBool(true)` for |1⟩, `QBool(1/2)` for |+⟩. (`QBool()` no-arg form removed — doesn't exist as a method.)
+14. `cases(q,...)` presented as a "third syntactic form" — actually a tracer-implementation workaround for Julia's opaque `if`. Fixed: reframed as "tracer plumbing, not a third coordinate primitive." inline examples switched to `not!`/primitives.
+15. Visualization renderer asymmetry (decomposes H! to `Z──Ry(π/2)` but collapses CNOT to `●─⊕`) — added explicit "render-back convention, not source-language" disclaimer.
+16. P7 cited `QDit{D}` — codebase uses `QMod{d}`. Fixed.
+
+**Implementation seams leaking (2)**
+17. "Shipped features" table exposed `compact_state!`, `STURM_COMPACT_VERIFY`, `oracle_table` LRU cache + `clear_oracle_cache!` / `set_oracle_cache_size!`. All removed from user-facing README.
+18. "MUX EXCH" cost cited as "7k–14k gates" with Reference column literally `—`. Replaced with "scales with index domain — see Bennett.jl docs."
+
+### Mid-session correction: `not!` is correct after all
+
+I initially proposed overloading `Base.:!` on `QBool` so the CNOT example could
+read `when(a) do; !b; end`. Tobias caught the contradiction: Julia's `!` is
+**non-mutating** (`Bool` is immutable, idiom is `b = !b` — *rebinding*, not
+in-place). Overloading `!` on `QBool` to mutate would have been a P4-style
+type-lie (same operator, different semantics depending on type).
+
+Correct framing: `not!` IS already Julia-idiomatic. It is the bang-suffix
+companion to `!` that exists wherever a type can't use the rebinding form.
+For `QBool` that's quantum no-cloning forbidding the rebind. Same convention
+as `sort!` vs `sort`. Documented in README + P5 explicitly so future agents
+don't re-propose the `Base.:!` overload.
+
+### Files touched
+
+* `README.md` — 84 insertions, 83 deletions across 18 distinct fixes.
+* `WORKLOG.md` — this entry.
+
+### Follow-ups filed
+
+* `Sturm.jl-ss09` (already filed) — PRD §1.4 + CLAUDE.md Rule 11 still say
+  "four primitives" and need parallel update.
+* (To file before close) — `gates.jl` named-gate retirement
+  (H!/X!/Y!/Z!/S!/T!/Sdg!/Tdg!/swap!): user-facing examples no longer use
+  these; the codebase should follow.
+* (To file before close) — `oracle_table` cache management API hiding
+  (already partly captured under Sturm.jl-rqus).
+
+### Lesson for future agents
+
+**A README that says "P5: no gates" while shipping H!/X!/Z!/T!/S! in
+gates.jl is a P5 violation in the docstring layer.** Either drop the named
+gates (the user's call) or soften P5. The README's earlier defensive
+narrowing ("no named *two-qubit* gates") tried to preserve both — and the
+contradiction surfaced as a class of antipatterns (8 of the 18 above).
+When a principle and a deliverable conflict, the docs eventually betray
+which one is real. Don't paper over it.
+
+### Commits
+
+(below)
+
+---
+
 ## 2026-04-30 — Session 81: README primitives reframing — Four → Three (bead 9044)
 
 Headline: dropped CNOT (`a ⊻= b`) from the primitives table. The Bell example
