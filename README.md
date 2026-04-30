@@ -2,7 +2,7 @@
 
 A Julia quantum programming language where **functions are channels**, the **quantum-classical boundary is a type boundary**, **QECC is a higher-order function**, and **any Julia function is a quantum oracle**.
 
-Sturm is not a circuit construction library. It is a quantum programming DSL with exactly four primitives, a type system that makes measurement implicit, library functions that make quantum algorithms disappear into higher-order patterns, and a reversible compiler that turns plain Julia code into quantum circuits automatically.
+Sturm is not a circuit construction library. It is a quantum programming DSL with three primitives, a type system that makes preparation and measurement *casts* (P2), a single binder (`when`) for quantum control, library functions that make quantum algorithms disappear into higher-order patterns, and a reversible compiler that turns plain Julia code into quantum circuits automatically.
 
 ## Design Principles
 
@@ -25,7 +25,7 @@ The warning fires once per source location. For tight loops where the intent is 
 
 **P4. Quantum control is lexical scope.** `when(q) do ... end` = quantum control. `if x ... end` = classical branch. The distinction is enforced by types — `if q::QBool` never auto-lifts to `when(q)` (see *if vs when* below for the three reasons).
 
-**P5. No gates, no qubits.** The programmer works with registers (`QBool`, `QInt{W}`) and four primitives. Named gates (H, CNOT) are library functions. If your program reads like a circuit diagram, it is wrong.
+**P5. No gates, no qubits.** The programmer works with registers (`QBool`, `QInt{W}`) and three primitives. Named gates (`H!`, `X!`, `Z!`, `T!`, `cnot!`, `swap!`, …) are library functions. If your program reads like a circuit diagram, it is wrong.
 
 **P6. QECC is a higher-order function.** Error correction is `Channel -> Channel`. It wraps a function in encoding and decoding. It is not an annotation or pragma.
 
@@ -53,18 +53,26 @@ g(QInt{8}(5))     # MethodError — same rule, same reason
 
 A catch-all that secretly routed `g(q)` through Bennett would lie about the type contract — Julia rightly forbids overriding `Base.Function`, and so does Sturm. For type-restricted classical functions the bridge is explicit: [`oracle(f, q)`](https://github.com/tobiasosborne/Bennett.jl) compiles the LLVM IR to a reversible circuit, and the opt-in macro `@quantum_lift` adds a specific `f(::QInt{W})` method so that `f(q)` works at the call site. `quantum(f)` pre-compiles once for reuse, the same pattern as `Enzyme.gradient(f)`. Inside `when()`, every path auto-controls via the existing control stack. The autodiff analogy is exact: our P8 + generic path is `ForwardDiff.Dual`; our `oracle` / `@quantum_lift` / `quantum` is `Enzyme.gradient`. Neither adds a catch-all on `Function`; neither needs to.
 
-## The Four Primitives
+## The Three Primitives
 
-Everything in Sturm is built from exactly four operations:
+Everything quantum in Sturm is built from three operations on a register:
 
-| # | Syntax | What it does | QASM equivalent |
-|---|--------|-------------|-----------------|
-| 1 | `QBool(p)` | Prepare qubit with P(\|1>) = p | `ry(2*asin(sqrt(p))) q` |
-| 2 | `q.theta += d` | Amplitude rotation Ry(d) | `ry(d) q` |
-| 3 | `q.phi += d` | Phase rotation Rz(d) | `rz(d) q` |
-| 4 | `a xor= b` | CNOT (b controls, a target) | `cx b, a` |
+| # | Syntax | What it does |
+|---|--------|--------------|
+| 1 | `q = QBool()` | Allocate a fresh qubit at \|0⟩ |
+| 2 | `q.θ += δ` | Amplitude rotation Ry(δ) |
+| 3 | `q.φ += δ` | Phase rotation Rz(δ) |
 
-Every gate, every algorithm, every error-correcting code is derived from these four.
+The quantum-classical boundary is the **cast** (P2) — the same machinery as `Float64(1)` or `Int(3.14)`. Preparation and measurement are not separate primitives; they are the two cast directions:
+
+| Cast | Direction | What it is |
+|------|-----------|------------|
+| `QBool(b::Bool)`, `QBool(p::Real)` | classical → quantum | Preparation. `QBool(false)` is primitive #1; everything else is library on top of #1 + #2. |
+| `Bool(q::QBool)`, `Int(q::QInt)` | quantum → classical | Measurement. Information-losing — implicit casts emit a P2 warning. |
+
+The only quantum-specific control construct is `when(q) do … end`. There is no CNOT primitive, no Toffoli, no swap. **CNOT is `when(a) do; not!(b); end`** — `not!` mutates a `QBool` in place (the Julia bang-suffix version of `!`, since quantum no-cloning forbids the classical rebinding form `b = !b`; on `QBool` it lowers to `q.φ += π; q.θ += π`, an SU(2) realisation of X), and `when` lifts it to a controlled gate.
+
+The deeper principle: **classical-looking code stays classical**. You only reach for the rotation primitives `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum — a non-computational basis state, a relative phase, an interference. Otherwise: write idiomatic Julia and let `when` plus the type system do the lifting. This is the Bennett.jl mindset taken to the language level — the same reason `oracle(f, q)` (P9) takes a plain Julia function and returns a reversible circuit. Every named gate (`H!`, `X!`/`not!`, `Z!`, `T!`), every two-qubit operation (`cnot!`, `cz!`, `swap!`), every algorithm (QFT, phase estimation, Shor, Deutsch-Jozsa), every error-correcting code is library code on top of those three primitives.
 
 ## Examples
 
@@ -86,7 +94,7 @@ using Sturm
 end
 ```
 
-There is no CNOT gate. There is a control structure (`when`) and a flip operation (`not!`). The same channel a circuit diagram would label "CNOT" is composed at the language level from a *lexical scope* and an *unconditional flip*. `q::QBool` is a quantum bit, and the natural mutating operation on a boolean is `not!`, not "X gate". CNOT is what you call this channel when you read it back as a diagram, not what you write to compose it. (`X!` is provided as a textbook alias for `not!` if you prefer the gate vocabulary.)
+There is no CNOT primitive. There is a control structure (`when`) and a bit-flip (`not!`). The same channel a circuit diagram would label "CNOT" is composed at the language level from a *lexical scope* and an *unconditional flip*. `q::QBool` is a quantum bit; the Julia-conventional in-place flip on a mutable boolean is `not!` — the bang-suffix companion to `!` that exists wherever a type can't use the rebinding form `b = !b` (here, because of no-cloning). This is the deeper principle of the DSL: when an operation is *classical in spirit* — flipping a bit, adding two integers, indexing a register — you write the classical Julia idiom, and `when` plus the type system lift it into the quantum circuit automatically. You only reach for `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum. CNOT is what you *call* this channel when you read it back as a diagram, not what you *write* to compose it. (`X!` is a textbook alias for `not!` if you prefer the gate vocabulary; `cnot!(a, b)` and `b ⊻= a` are library aliases for the controlled form.)
 
 ### Teleportation
 
@@ -222,8 +230,8 @@ Classical values auto-promote when combined with quantum values — same as Juli
     s = a + 17             # 17 auto-promotes to QInt{8}(17)
     t = 5 + a              # commutative
 
-    q = QBool(0.0)
-    q ⊻= true              # classical true → X gate (no qubit allocated)
+    q = QBool(false)
+    q ⊻= true              # library `⊻=` on QBool, classical RHS — same as not!(q)
 
     result = Int(s)        # type boundary = measurement
     @assert result == 59
@@ -344,7 +352,7 @@ end
 
 The channel-theoretic name for the explicit primitive is **`ptrace!(q)`** (partial trace) — used when scope-driven cleanup doesn't fit (e.g., a qubit must die mid-scope to free a slot for re-allocation on a capacity-bounded device). It should be rare in idiomatic code.
 
-**Why not `discard!`?** The old spelling `discard!(q)` is unidiomatic on four axes: (a) it speaks C-style resource-management vocabulary in user-facing code (P5 violation in spirit — Sturm shouldn't expose wire/resource concepts to users); (b) the bang-convention is wrong, since the qubit is **destroyed**, not mutated; (c) the name is silent on the physics — the operation IS partial trace and should be named for that; (d) requiring users to call it explicitly was the footgun behind bead `Sturm.jl-hlk` (forgotten `discard!` leaks slots until `MAX_QUBITS` errors). `discard!` remains as a zero-overhead `const` alias for backcompat; prefer `ptrace!`.
+**Why not `discard!`?** The spelling `discard!(q)` is unidiomatic on four axes: (a) it speaks C-style resource-management vocabulary in user-facing code (P5 violation in spirit — Sturm shouldn't expose wire/resource concepts to users); (b) the bang-convention is wrong, since the qubit is **destroyed**, not mutated; (c) the name is silent on the physics — the operation IS partial trace and should be named for that; (d) requiring users to call it explicitly was the footgun behind bead `Sturm.jl-hlk` (forgotten `discard!` leaks slots until `MAX_QUBITS` errors). `discard!` is currently still defined as a zero-overhead `const` alias for users who reach for the resource-management vocabulary out of habit; prefer `ptrace!`, and consider it candidate for removal.
 
 **Current shipped state**: `@context` auto-partial-traces unconsumed resources at block exit (bead `Sturm.jl-sv3` ✓). `ptrace!` is the canonical explicit primitive (bead `Sturm.jl-diy` ✓); `discard!` aliases to it. `QBool(p) do q … end` and `QInt{W}(value) do reg … end` do-block allocation are now supported (bead `Sturm.jl-cbl` ✓) — partial-trace fires at block exit on either normal return or exception, and is suppressed if the body explicitly consumes the resource via `Bool(q)` / `Int(reg)` / `ptrace!`.
 
