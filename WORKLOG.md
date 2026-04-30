@@ -4,6 +4,99 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-30 — Session 81: README primitives reframing — Four → Three (bead 9044)
+
+Headline: dropped CNOT (`a ⊻= b`) from the primitives table. The Bell example
+already uses `when(a) do; not!(b); end` — the table claiming primitive #4 is
+"CNOT" was self-contradicting Qiskit-think. README now frames the DSL as
+**3 primitives** (`q = QBool()` alloc, `q.θ += δ`, `q.φ += δ`) + **casts**
+(P2 boundary, prep + measure both directions) + **`when` binder**.
+
+### Driving principle (Tobias)
+
+"Realising CNOT via `when(a) do; not!(b); end` is more idiomatic and more
+directly expresses the Bennett.jl mindset: write normal classical idiomatic
+Julia as far as possible. `q.θ += δ` IS a primitive, but we only reach for it
+when the operation is genuinely quantum. For CNOT we don't need it."
+
+Captured in the README as: **classical-looking code stays classical**.
+
+### `not!` vs `!` — the Julia idiom (correction mid-session)
+
+I initially proposed overloading `Base.:!` on `QBool` so the CNOT example
+becomes `when(a) do; !b; end`. Tobias caught the contradiction: Julia's `!`
+is **non-mutating** (`Bool` is immutable, so the idiom is `b = !b` —
+*rebinding*, not in-place mutation). Overloading `!` on `QBool` to mutate
+would have been a P4-style type-lie — same operator, different semantics
+depending on type.
+
+The correct framing: `not!` is **already** Julia-idiomatic. It is the
+bang-suffix companion to `!` that exists wherever a type can't use the
+rebinding form `b = !b`. For `QBool` that's quantum no-cloning forbidding
+the rebinding form (you cannot return a separate flipped copy). Same
+convention as `sort!`/`sort`, `push!`/(no non-bang counterpart needed
+because rebinding is fine on the result), etc. README documents this
+explicitly so future agents (and my future self) don't re-propose the
+`Base.:!` overload.
+
+### Catalogue of antipatterns triaged this session
+
+I read the README end-to-end and produced a graded catalogue (foundational
+A1–A3, vocabulary B1–B5, documentation D1–D6, implementation seams E1–E4).
+Tobias confirmed all of A1–A3. This commit applies:
+
+* **A1 — CNOT primitive**: dropped from table (DONE).
+* **A2 — `QBool(p)` is composite**: reframed as cast + library on top of
+  primitive #1 (`QBool()` alloc) + primitive #2 (θ rotation) (DONE).
+* **A3 — prep + measure are casts (P2 already says so)**: explicit
+  cast-table inserted next to primitives table (DONE).
+* **B1 — "Four" framing**: rewritten throughout (DONE).
+* **C1 — "QASM equivalent" column**: dropped (DONE).
+* **D1 — line 65 vs line 89 self-contradiction**: resolved by removing
+  primitive #4 (DONE).
+* **D2 — P5 wording**: updated to list named gates as library
+  (`H!`/`X!`/`Z!`/`T!`/`cnot!`/`swap!`) (DONE).
+* **D4 — `discard!` "backcompat" wording**: cleaned up — codebase is one
+  user old, no backcompat to preserve. Now reads "candidate for removal"
+  (DONE).
+
+Deferred to follow-up beads:
+* **B4 — `gates.jl` exists with H!/X!/Z!**: source-code change, not docs.
+* **C3 — `tensor` vs `⊗` for parallel composition**: stylistic.
+* **D3 — P9 autodiff analogy direction**: stylistic.
+* **D5 — `with_silent_casts` placement in P2 paragraph**: stylistic.
+* **E1–E4**: implementation seams (already have beads or aren't urgent).
+
+### PRD/CLAUDE.md drift
+
+`Sturm-PRD.md` §1.4 (P5), §3, and `CLAUDE.md` Rule 11 + global-phase
+section + mutation-convention + file-structure comment all still say
+"four primitives". Filed as `ss09` (P2). README is now the source of
+truth for the new framing; PRD/CLAUDE.md need a parallel update.
+
+### Lesson for future agents
+
+**Don't overload `Base.:!` on a mutable type to mutate.** Julia's `!` is
+non-mutating across the standard library. The bang-suffix function is
+already the right convention for in-place mutation. P4 forbids
+type-dependent semantics on the same syntax (it auto-lifting `if` to
+`when`); the same logic forbids `!` meaning "rebind" on `Bool` and
+"mutate" on `QBool`. If you find yourself writing `Base.:!(::QBool)`
+to mutate, stop — write `not!(::QBool)` instead, that IS the Julia
+idiom for this case.
+
+### Files touched
+
+* `README.md` — primitives section + P5 + Bell example explanation +
+  `q ⊻= true` comment + `discard!` backcompat wording.
+* `WORKLOG.md` — this entry.
+
+### Commit
+
+(below)
+
+---
+
 ## 2026-04-28 — Session 80: QMod arc — 5 beads closed, 2 follow-ups filed
 
 Headline: shipped the locked 6-primitive qudit set at d=2 (full) and d ∈ {3, 5}
