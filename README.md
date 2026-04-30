@@ -1,8 +1,8 @@
 # Sturm.jl
 
-A Julia quantum programming language where **functions are channels**, the **quantum-classical boundary is a type boundary**, **QECC is a higher-order function**, and **any Julia function is a quantum oracle**.
+A Julia quantum programming language where **functions are channels**, the **quantum-classical boundary is a type cast**, **QECC is a higher-order function**, and **`oracle(f, q)` lifts plain Julia integer functions to reversible circuits**.
 
-Sturm is not a circuit construction library. It is a quantum programming DSL with three primitives, a type system that makes preparation and measurement *casts* (P2), a single binder (`when`) for quantum control, library functions that make quantum algorithms disappear into higher-order patterns, and a reversible compiler that turns plain Julia code into quantum circuits automatically.
+Sturm is not a circuit construction library. The entire quantum surface area is a handful of constructs — two rotation primitives, two P2 casts, and the `when` binder — plus library functions that make quantum algorithms disappear into higher-order patterns.
 
 ## Design Principles
 
@@ -13,23 +13,21 @@ These are axioms, not guidelines.
 **P2. The quantum-classical boundary is a *cast*, like `Float64 → Int64`.** There is no `measure()` function. Measurement is what happens when a quantum value is cast to a classical type — with implied information loss, exactly as truncating a float loses the fractional part:
 
 ```julia
-result = Bool(q)        # explicit cast: measurement
-q = QBool(result)       # explicit cast: preparation
+b  = Bool(q)            # explicit cast: measurement     (qc channel)
+q2 = QBool(b)           # explicit cast: preparation     (cq channel)
 ```
 
 Because the cast loses information irreversibly, the compiler emits a **warning on implicit casts** — `x::Bool = q` without an explicit cast expression is flagged, just like implicit float-to-int truncation is flagged in sensible languages. The fix is always the same: wrap the RHS in an explicit cast. Information loss must be intentional.
 
-The warning fires once per source location. For tight loops where the intent is unambiguous, wrap the block in `with_silent_casts(() -> ...)` to suppress within the current task.
-
-**P3. Operations are operations.** No language-level distinction between unitaries, noise, preparation, or measurement. They are all channels.
+**P3. All operations are channels.** Unitaries, noise, preparation, measurement — every quantum operation is a `Channel` at the type level. The only place the user sees a syntactic distinction is the boundary cast (P2); inside the quantum world, everything composes uniformly.
 
 **P4. Quantum control is lexical scope.** `when(q) do ... end` = quantum control. `if x ... end` = classical branch. The distinction is enforced by types — `if q::QBool` never auto-lifts to `when(q)` (see *if vs when* below for the three reasons).
 
-**P5. No gates, no qubits.** The programmer works with registers (`QBool`, `QInt{W}`) and three primitives. Named gates (`H!`, `X!`, `Z!`, `T!`, `cnot!`, `swap!`, …) are library functions. If your program reads like a circuit diagram, it is wrong.
+**P5. No gates, no qubits.** The programmer works with registers (`QBool`, `QInt{W}`), the rotation primitives, the cast boundary, and the `when` binder. **Named gates do not appear in user code.** `not!` is the one named exception — the Julia bang-suffix companion to `!`, used wherever no-cloning forbids the rebinding form `b = !b`. Hadamard, Z, T have no Julia-classical counterpart; when you need one, write the rotation primitives directly (`q.θ += π/2`, `q.φ += π`, …). Two-qubit operations are *never* named — entanglement is composed from `when` plus a body, not invoked by gate name. If your program reads like a circuit diagram, it is wrong.
 
 **P6. QECC is a higher-order function.** Error correction is `Channel -> Channel`. It wraps a function in encoding and decoding. It is not an annotation or pragma.
 
-**P7. The abstraction is dimension-agnostic across the entire Hilbert spectrum.** The core must extend *without modification* to: finite qudits (qutrits d=3, arbitrary `QDit{D}`), **anyons** (fusion categories, non-abelian braiding as a primitive), and — critically — **infinite-dimensional systems**. At minimum, Gaussian CV for quantum optics (bosonic modes, displacement, squeezing, beamsplitters, homodyne). Ideally, arbitrary infinite-d: Fock-space arithmetic, bosonic codes (cat, binomial, GKP), continuous-variable oracles. If any of these forces a change to the channel algebra, tracing infrastructure, or the P2 cast / P8 promotion rules, the abstraction is wrong.
+**P7. The abstraction is dimension-agnostic across the entire Hilbert spectrum.** The core must extend *without modification* to: finite qudits (`QMod{d}`, currently shipped at d ∈ {2, 3, 5}), **anyons** (fusion categories, non-abelian braiding as a primitive), and — critically — **infinite-dimensional systems**. At minimum, Gaussian CV for quantum optics (bosonic modes, displacement, squeezing, beamsplitters, homodyne). Ideally, arbitrary infinite-d: Fock-space arithmetic, bosonic codes (cat, binomial, GKP), continuous-variable oracles. If any of these forces a change to the channel algebra, tracing infrastructure, or the P2 cast / P8 promotion rules, the abstraction is wrong.
 
 **P8. Quantum promotion follows Julia's numeric tower.** Classical values auto-promote to quantum when combined with quantum values, just as `Int + Float64 -> Float64`. Initial construction is explicit (`QInt{8}(42)` is like `complex(1)`). Mixed operations promote the classical side.
 
@@ -53,26 +51,23 @@ g(QInt{8}(5))     # MethodError — same rule, same reason
 
 A catch-all that secretly routed `g(q)` through Bennett would lie about the type contract — Julia rightly forbids overriding `Base.Function`, and so does Sturm. For type-restricted classical functions the bridge is explicit: [`oracle(f, q)`](https://github.com/tobiasosborne/Bennett.jl) compiles the LLVM IR to a reversible circuit, and the opt-in macro `@quantum_lift` adds a specific `f(::QInt{W})` method so that `f(q)` works at the call site. `quantum(f)` pre-compiles once for reuse, the same pattern as `Enzyme.gradient(f)`. Inside `when()`, every path auto-controls via the existing control stack. The autodiff analogy is exact: our P8 + generic path is `ForwardDiff.Dual`; our `oracle` / `@quantum_lift` / `quantum` is `Enzyme.gradient`. Neither adds a catch-all on `Function`; neither needs to.
 
-## The Three Primitives
+## The Primitives
 
-Everything quantum in Sturm is built from three operations on a register:
+Sturm's quantum surface area is small. The complete vocabulary for *quantum-specific* code is five constructs:
 
-| # | Syntax | What it does |
-|---|--------|--------------|
-| 1 | `q = QBool()` | Allocate a fresh qubit at \|0⟩ |
-| 2 | `q.θ += δ` | Amplitude rotation Ry(δ) |
-| 3 | `q.φ += δ` | Phase rotation Rz(δ) |
+| Surface form | Role | What it is |
+|--------------|------|------------|
+| `QBool(p::Real)` | Preparation cast (cq channel, P2) | Allocate a fresh qubit at `√(1−p)\|0⟩ + √p\|1⟩`. P(\|1⟩) = p. |
+| `Bool(q::QBool)`, `Int(q::QInt)` | Measurement cast (qc channel, P2) | Measure and project. Information-losing — implicit casts warn. |
+| `q.θ += δ` | Channel primitive | Amplitude rotation Ry(δ). |
+| `q.φ += δ` | Channel primitive | Phase rotation Rz(δ). |
+| `when(q) do … end` | Quantum control binder | Lift the body to a channel controlled on `q`. |
 
-The quantum-classical boundary is the **cast** (P2) — the same machinery as `Float64(1)` or `Int(3.14)`. Preparation and measurement are not separate primitives; they are the two cast directions:
+Two rotation primitives, two casts, one binder. Everything else — every algorithm, every error-correcting code — is library on top.
 
-| Cast | Direction | What it is |
-|------|-----------|------------|
-| `QBool(b::Bool)`, `QBool(p::Real)` | classical → quantum | Preparation. `QBool(false)` is primitive #1; everything else is library on top of #1 + #2. |
-| `Bool(q::QBool)`, `Int(q::QInt)` | quantum → classical | Measurement. Information-losing — implicit casts emit a P2 warning. |
+**There is no CNOT primitive, no Toffoli, no swap.** CNOT is `when(a) do; not!(b); end`. `not!` is the Julia bang-suffix companion to `!` (since quantum no-cloning forbids the rebinding form `b = !b`); on `QBool` it lowers to `q.φ += π; q.θ += π`, an SU(2) realisation of X.
 
-The only quantum-specific control construct is `when(q) do … end`. There is no CNOT primitive, no Toffoli, no swap. **CNOT is `when(a) do; not!(b); end`** — `not!` mutates a `QBool` in place (the Julia bang-suffix version of `!`, since quantum no-cloning forbids the classical rebinding form `b = !b`; on `QBool` it lowers to `q.φ += π; q.θ += π`, an SU(2) realisation of X), and `when` lifts it to a controlled gate.
-
-The deeper principle: **classical-looking code stays classical**. You only reach for the rotation primitives `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum — a non-computational basis state, a relative phase, an interference. Otherwise: write idiomatic Julia and let `when` plus the type system do the lifting. This is the Bennett.jl mindset taken to the language level — the same reason `oracle(f, q)` (P9) takes a plain Julia function and returns a reversible circuit. Every named gate (`H!`, `X!`/`not!`, `Z!`, `T!`), every two-qubit operation (`cnot!`, `cz!`, `swap!`), every algorithm (QFT, phase estimation, Shor, Deutsch-Jozsa), every error-correcting code is library code on top of those three primitives.
+The deeper principle: **classical-looking code stays classical**. You only reach for `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum — a non-computational basis state, a relative phase, an interference. Otherwise: write idiomatic Julia and let `when` plus the type system do the lifting. This is the Bennett.jl mindset taken to the language level — the same reason `oracle(f, q)` (P9) takes a plain Julia function and returns a reversible circuit.
 
 ## Examples
 
@@ -82,41 +77,42 @@ The deeper principle: **classical-looking code stays classical**. You only reach
 using Sturm
 
 @context EagerContext() begin
-    a = QBool(1/2)              # |+>
-    b = QBool(0)                # |0>
-    when(a) do                  # Bell pair: (|00> + |11>)/sqrt(2)
-        not!(b)                 # b is flipped exactly when a is |1>
+    a = QBool(1/2)              # |+⟩
+    b = QBool(false)            # |0⟩
+    when(a) do                  # Bell-correlated state on (a, b)
+        not!(b)                 # b flips exactly when a is |1⟩
     end
 
     ra = Bool(a)
     rb = Bool(b)
-    @assert ra == rb            # always correlated
+    @assert ra == rb            # perfect correlation — Bell-pair signature
 end
 ```
 
-There is no CNOT primitive. There is a control structure (`when`) and a bit-flip (`not!`). The same channel a circuit diagram would label "CNOT" is composed at the language level from a *lexical scope* and an *unconditional flip*. `q::QBool` is a quantum bit; the Julia-conventional in-place flip on a mutable boolean is `not!` — the bang-suffix companion to `!` that exists wherever a type can't use the rebinding form `b = !b` (here, because of no-cloning). This is the deeper principle of the DSL: when an operation is *classical in spirit* — flipping a bit, adding two integers, indexing a register — you write the classical Julia idiom, and `when` plus the type system lift it into the quantum circuit automatically. You only reach for `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum. CNOT is what you *call* this channel when you read it back as a diagram, not what you *write* to compose it. (`X!` is a textbook alias for `not!` if you prefer the gate vocabulary; `cnot!(a, b)` and `b ⊻= a` are library aliases for the controlled form.)
+The Bell-pair construction is the canonical demonstration of the principle laid out under *The Primitives*: when an operation is *classical in spirit* — flipping a bit, adding two integers, indexing a register — you write the classical Julia idiom, and `when` plus the type system lift it into the quantum circuit. You only reach for `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum.
 
 ### Teleportation
 
 ```julia
 function teleport!(q::QBool)::QBool
     a = QBool(1/2)
-    b = QBool(0)
-    when(a) do; not!(b); end       # create Bell pair
+    b = QBool(false)
+    when(a) do; not!(b); end       # Bell pair on (a, b)
+    when(q) do; not!(a); end       # entangle input with the pair
 
-    when(q) do; X!(a); end       # entangle input with Bell pair
-    H!(q)                        # Hadamard (library gate, built from primitives)
+    q.φ += π                       # ┐ rotate q to X-basis for measurement —
+    q.θ += π/2                     # ┘ genuinely quantum, primitives surface
 
-    rq = Bool(q)                 # type boundary = measurement
-    ra = Bool(a)                 # type boundary = measurement
+    rq = Bool(q)                   # measurement cast (P2)
+    ra = Bool(a)                   # measurement cast (P2)
 
-    if ra; not!(b); end          # classical correction (post-measurement Bool)
-    if rq; Z!(b); end
-    return b                     # teleported qubit
+    if ra; not!(b); end            # X correction — classical bit-flip
+    if rq; b.φ += π; end           # Z correction — phase flip, primitive
+    return b
 end
 ```
 
-No circuit diagrams. No qubit indices. No `measure()` calls. No named two-qubit gates. The type boundary handles measurement; `when` handles control; the rest is unconditional single-qubit operations.
+No circuit diagrams. No qubit indices. No `measure()` calls. No named gates. The classical operation (bit-flip, both for the Bell-pair construction and the X correction) is `not!` — the Julia idiom. The genuinely-quantum operations (basis change on `q`, phase-flip correction on `b`) surface as the rotation primitives. `when` handles control; the type cast handles measurement.
 
 ### Quantum Arithmetic
 
@@ -131,7 +127,7 @@ No circuit diagrams. No qubit indices. No `measure()` calls. No named two-qubit 
 end
 ```
 
-`QInt{8}` carries width in the type. Julia specialises on it. The `+` operator is a reversible ripple-carry circuit composed from `when()` and the rotation primitives — no two-qubit gates are imported.
+`QInt{8}` carries width in the type. Julia specialises on it. The `+` operator is a reversible ripple-carry circuit composed from `when()` and the rotation primitives — no named gates appear in user code or in `+`'s implementation.
 
 ### Quantum Oracles from Plain Julia (P9)
 
@@ -178,9 +174,9 @@ estimate_oracle_resources(f, Int8; bit_width=2, strategy=:expression)
 end
 ```
 
-Automatic IR-level decomposition for cases the dispatcher can't cover is tracked as Sturm beads `Sturm.jl-16l` (auto-pass on the LLVM IR) and `Sturm.jl-25u` (opt-in `oracle(f, q; decompose=true)` kwarg).
+Automatic IR-level decomposition for cases the dispatcher can't cover is on the roadmap (an auto-pass on the LLVM IR; an opt-in `oracle(f, q; decompose=true)` kwarg).
 
-There is no catch-all on `Base.Function`: Julia forbids it, and it would lie about the type contract — just as `f(::Int)` does not silently accept `Float64`. For typed functions the user wants to feel implicit, the opt-in sugar is `@quantum_lift`, which adds a specific `f(::QInt{W})` method so `f(q)` works directly at the call site (tracked under the `k3m` bead).
+There is no catch-all on `Base.Function`: Julia forbids it, and it would lie about the type contract — just as `f(::Int)` does not silently accept `Float64`. For typed functions the user wants to feel implicit, the opt-in sugar is `@quantum_lift`, which adds a specific `f(::QInt{W})` method so `f(q)` works directly at the call site.
 
 Controlled oracles — just wrap in `when()`:
 
@@ -245,7 +241,7 @@ end
 ```julia
 @context EagerContext() begin
     q = QBool(1/2)                # quantum bit in superposition
-    t = QBool(0)
+    t = QBool(false)
 
     # ── Coherent quantum control: the only way to get controlled-X ─────────
     when(q) do
@@ -254,7 +250,7 @@ end
 
     # ── Post-measurement classical branch: q collapses, entanglement is gone
     s = QBool(1/2)
-    u = QBool(0)
+    u = QBool(false)
     if Bool(s)                     # explicit measurement cast — P2
         u.θ += π                   # classical `if`: branch on the measured bit
     end                             # s is now a classical outcome; no superposition
@@ -277,9 +273,9 @@ For real execution — `EagerContext`, `DensityMatrixContext`, `HardwareContext`
 
 ```julia
 @context HardwareContext(transport) begin
-    ancilla = QBool(1.0); target = QBool(0)
+    ancilla = QBool(true); target = QBool(false)
     if Bool(ancilla)            # ← round-trip to device: measure, await, return Bool
-        X!(target)              # ← plain Julia branch on the classical result
+        not!(target)            # ← plain Julia branch on the classical result
     end
     @assert Bool(target)
 end
@@ -289,25 +285,25 @@ end
 
 `Int(q::QInt)` does the same for multi-bit registers (one round-trip per bit currently; batched all-bits-in-one-round-trip is a follow-on). Use `if`, `switch`, `while` over the result freely — it's a regular Julia value.
 
-**The footgun is `TracingContext` only**, because tracing runs the function once symbolically and Julia's `if` is opaque to runtime tracing — there's no way to capture both arms without source-level rewriting (Cassette/IRTools, which the Julia DSL ecosystem has moved away from). For the symbolic-tracing path (building a `Channel` for OpenQASM export, or feeding the optimisation passes), use the explicit primitive **`cases()`** / **`@cases`**:
+**`TracingContext` is the one exception**, because tracing runs the function once symbolically and Julia's `if` is opaque to runtime tracing — there's no way to capture both arms without source-level rewriting (Cassette/IRTools-style). For the symbolic-tracing path (building a `Channel` for OpenQASM export, or feeding the optimisation passes), use the tracer-specific tooling **`cases()`** / **`@cases`**:
 
 ```julia
 ch = trace(1) do q
-    target = QBool(0)
-    cases(q, () -> X!(target))    # both branches captured into a CasesNode
+    target = QBool(false)
+    cases(q, () -> not!(target))  # both branches captured into the DAG
     target
 end
 # trace() auto-lowers via Nielsen-Chuang deferred measurement →
-# controlled gates from the measurement wire. ch.dag has no CasesNode left.
+# controlled gates from the measurement wire.
 ```
 
 Macro form with two `begin` blocks (Julia doesn't support chained `do` blocks):
 
 ```julia
 @cases q begin
-    X!(target)        # then-branch (measurement = 1)
+    not!(target)        # then-branch (measurement = 1)
 end begin
-    Z!(target)        # else-branch (measurement = 0, optional)
+    target.φ += π       # else-branch (measurement = 0, optional)
 end
 ```
 
@@ -316,11 +312,11 @@ end
 | `EagerContext` | ✓ measure + classical branch | ✓ same effect |
 | `HardwareContext` | ✓ **round-trip + classical branch** | ✓ same effect |
 | `DensityMatrixContext` | ✓ sampled measure + classical branch | ✓ same effect |
-| `TracingContext` | ✗ errors loudly (silent mis-trace footgun) | ✓ captures both branches into `CasesNode` |
+| `TracingContext` | ✗ errors loudly (silent mis-trace footgun) | ✓ captures both branches symbolically |
 
 For tracing-only "record a measurement without classical branching" (e.g., to get `c[0] = measure q[0];` in OpenQASM output), use the empty form `cases(q, () -> nothing)`.
 
-This gives **three distinct channels with three distinct syntactic forms** — `if` is post-measurement classical, `when` is coherent control, `cases` is mid-circuit measurement with traced classical-conditioned operations. The 1:1 OpenQASM 3 lowering target for `cases` is `if (c[i] == 1) { … } [else { … }]` (matches Qiskit-new `with circuit.if_test(...)`, Q# `if M(q) == One`, MQT `IfElseOperation`).
+`cases` is *tracer plumbing*, not a third coordinate primitive — its only job is to reproduce, inside `TracingContext`, what `if Bool(q)` does natively on every other context. The 1:1 OpenQASM 3 lowering is `if (c[i] == 1) { … } [else { … }]` (matches Qiskit-new `with circuit.if_test(...)`, Q# `if M(q) == One`, MQT `IfElseOperation`).
 
 ### Resource lifetime: scope, not `free()` (corollary of P1 + P5)
 
@@ -336,25 +332,24 @@ Sturm follows Julia's resource-management idiom, not C's. Julia has two patterns
 ```julia
 # Idiomatic — qubits live for the @context block, no manual cleanup
 @context EagerContext() begin
-    a = QBool(1/2); b = QBool(0)
+    a = QBool(1/2); b = QBool(false)
     when(a) do; not!(b); end
     Bool(b)
     # a auto-partial-traced at `end`
 end
 
 # Do-block — explicit short lifetime, exception-safe
-QBool(0.5) do q
-    H!(q)
-    Bool(q)
+QBool(1/2) do q
+    Bool(q)         # measure |+⟩, returns a random bit
     # q partial-traced here regardless of how the block exits
 end
 ```
 
 The channel-theoretic name for the explicit primitive is **`ptrace!(q)`** (partial trace) — used when scope-driven cleanup doesn't fit (e.g., a qubit must die mid-scope to free a slot for re-allocation on a capacity-bounded device). It should be rare in idiomatic code.
 
-**Why not `discard!`?** The spelling `discard!(q)` is unidiomatic on four axes: (a) it speaks C-style resource-management vocabulary in user-facing code (P5 violation in spirit — Sturm shouldn't expose wire/resource concepts to users); (b) the bang-convention is wrong, since the qubit is **destroyed**, not mutated; (c) the name is silent on the physics — the operation IS partial trace and should be named for that; (d) requiring users to call it explicitly was the footgun behind bead `Sturm.jl-hlk` (forgotten `discard!` leaks slots until `MAX_QUBITS` errors). `discard!` is currently still defined as a zero-overhead `const` alias for users who reach for the resource-management vocabulary out of habit; prefer `ptrace!`, and consider it candidate for removal.
+**Why not `discard!`?** The spelling speaks C-style resource-management vocabulary, the bang convention is wrong (the qubit is destroyed, not mutated), and the name is silent on the physics. The operation **is** partial trace, and should be named for it. `discard!` lingers as a deprecated alias.
 
-**Current shipped state**: `@context` auto-partial-traces unconsumed resources at block exit (bead `Sturm.jl-sv3` ✓). `ptrace!` is the canonical explicit primitive (bead `Sturm.jl-diy` ✓); `discard!` aliases to it. `QBool(p) do q … end` and `QInt{W}(value) do reg … end` do-block allocation are now supported (bead `Sturm.jl-cbl` ✓) — partial-trace fires at block exit on either normal return or exception, and is suppressed if the body explicitly consumes the resource via `Bool(q)` / `Int(reg)` / `ptrace!`.
+**Current shipped state**: `@context` auto-partial-traces unconsumed resources at block exit. `ptrace!` is the canonical explicit primitive. `QBool(p) do q … end` and `QInt{W}(value) do reg … end` do-block allocation partial-trace at block exit on either normal return or exception, and the trace is suppressed if the body explicitly consumes the resource via `Bool(q)` / `Int(reg)` / `ptrace!`.
 
 The overall design target: **users don't write resource-cleanup primitives.** Quantum mechanics doesn't change the Julia resource-management story; partial trace is what GC means for qubits.
 
@@ -365,7 +360,7 @@ The overall design target: **users don't write resource-cleanup primitives.** Qu
     # The programmer writes domain logic (the oracle):
     function my_oracle!(x::QInt{3})
         b = x[3]           # MSB
-        Z!(b)              # flip phase when MSB = 1
+        b.φ += π           # flip phase when MSB = 1 (a Z rotation, primitive)
     end
 
     # Deutsch-Jozsa is a library call, not a hand-written circuit:
@@ -380,9 +375,12 @@ The programmer never touched a superposition, never interfered, never measured m
 
 ```julia
 @context EagerContext() begin
-    eigenstate = QBool(1)  # |1> is eigenstate of Z
-    result = phase_estimate(Z!, eigenstate, Val(3))
-    phase = result / 2^3   # 2/8 = 0.25
+    eigenstate = QBool(true)         # |1⟩ is eigenstate of Rz(π) = q.φ += π
+    rz_pi(q::QBool) = (q.φ += π; q)  # the unitary whose phase we want
+    result = phase_estimate(rz_pi, eigenstate, Val(3))
+    phase = result / 2^3             # 2/8 = 0.25
+    # SU(2) note: Rz(π)|1⟩ = e^{iπ/2}|1⟩ (not e^{iπ}|1⟩),
+    # because primitives live in SU(2). Half the textbook Z phase.
 end
 ```
 
@@ -392,7 +390,7 @@ Noise is just another operation. No special syntax:
 
 ```julia
 @context DensityMatrixContext() begin
-    q = QBool(1/2)         # |+> as density matrix
+    q = QBool(1/2)         # |+⟩ as density matrix
     depolarise!(q, 0.1)    # 10% depolarising noise
     result = Bool(q)       # type boundary, same as always
 end
@@ -402,11 +400,11 @@ end
 
 ```julia
 ch = trace(2) do a, b
-    H!(a)
-    when(a) do; not!(b); end
+    a.φ += π; a.θ += π/2          # rotate a to |+⟩ (Hadamard, decomposed)
+    when(a) do; not!(b); end       # entangle b with a
     (a, b)
 end
-# ch is a Channel{2,2}: the Bell state circuit as data
+# ch is a Channel{2,2}: the Bell-correlated circuit as data
 
 qasm = to_openqasm(ch)     # export to OpenQASM 3.0
 println(qasm)
@@ -415,16 +413,16 @@ println(qasm)
 ### Channel Composition
 
 ```julia
-h_gate = trace(1) do q; H!(q); q; end
-double_h = h_gate >> h_gate    # sequential: H . H = I
-parallel = h_gate tensor h_gate  # parallel: H on two independent qubits
+flip = trace(1) do q; not!(q); q; end
+flip_twice = flip >> flip      # sequential: bit-flip twice = identity
+two_flips  = flip ⊗ flip       # parallel: flip on two independent qubits
 ```
 
 ### Error Correction
 
 ```julia
 @context EagerContext() begin
-    q = QBool(0)
+    q = QBool(false)
     physical = encode!(Steane(), q)   # 1 logical -> 7 physical qubits
     # ... noise happens ...
     recovered = decode!(Steane(), physical)  # 7 physical -> 1 logical
@@ -439,11 +437,17 @@ Two complementary renderers are built in, both reading straight from the `Channe
 **Terminal (`to_ascii` / `Base.show`)** — Unicode box-drawing with opt-in ANSI colour. At the REPL just evaluate a `Channel`:
 
 ```julia
-julia> ch = trace(2) do a, b; H!(a); when(a) do; not!(b); end; (a, b); end
+julia> ch = trace(2) do a, b
+           a.φ += π; a.θ += π/2          # H, decomposed
+           when(a) do; not!(b); end
+           (a, b)
+       end
 q0: ─Z──Ry(π/2)──●─
                  │
 q1: ─────────────⊕─
 ```
+
+The renderer uses textbook circuit notation (`Z`, `Ry(π/2)`, `●─⊕`) — that's the *read-back* representation. It is not what you write to compose the channel; it is what you call the channel when you read it back as a diagram.
 
 Set `IOContext(io, :color => true)` to colour gates green, controls/targets yellow, measurement red; `:unicode => false` for pure ASCII; `:compact => true` for dense Level-A packing (QFT-8 goes from 336 to 196 chars).
 
@@ -464,11 +468,11 @@ See `examples/` for `bell.png`, `ghz8.png`, `steane_encode.png`, `teleport.png`,
 Just as `Bool(q)` decoheres a quantum state, `classicalise(f)` decoheres a quantum channel into a classical stochastic map:
 
 ```julia
-M = classicalise(X!)
+M = classicalise(not!)
 # M = [0 1; 1 0] -- the classical bit-flip matrix
 
-M = classicalise(H!)
-# M = [0.5 0.5; 0.5 0.5] -- uniform: H decoheres to a fair coin
+M = classicalise(q -> (q.φ += π; q.θ += π/2; q))   # H, decomposed
+# M = [0.5 0.5; 0.5 0.5] -- uniform: a Hadamard decoheres to a fair coin
 ```
 
 ## Backend
@@ -480,7 +484,7 @@ Bennett.jl v0.4 auto-dispatches four memory strategies per allocation site — S
 | Strategy | When it fires | Cost | Reference |
 |----------|--------------|------|-----------|
 | Shadow | static index | 3W CNOT / W CNOT per op | Enzyme-adapted (Moses & Churavy 2020) |
-| MUX EXCH | dynamic index | 7k–14k gates | — |
+| MUX EXCH | dynamic index | scales with index domain | Bennett.jl heuristic — see Bennett.jl docs |
 | QROM | read-only constant tables | 4(L−1) Toffoli, W-independent | Babbush-Gidney 2018 |
 | Feistel hash | bijective key hash | 8W Toffoli | Luby-Rackoff 1988 |
 
@@ -508,7 +512,7 @@ julia --project -e 'using Pkg; Pkg.test()'
 # ~7000 runtime tests across the default suite (≈2100 static @test sites,
 # expanded by `for`-loop / shot-count multipliers in statistical tests).
 # Set STURM_FULL_TEST=1 to additionally include the slower Shor /
-# windowed-arithmetic / Ekera-Hastad files (bead Sturm.jl-4gom).
+# windowed-arithmetic / Ekera-Hastad files.
 ```
 
 ## Project Status
@@ -517,7 +521,7 @@ All 16 phases of the [implementation plan](docs/PLAN.md) are structurally comple
 
 | Phase | What | Status |
 |-------|------|--------|
-| 1-5 | Orkan FFI, core types, QBool, gates, contexts | Complete |
+| 1-5 | Orkan FFI, core types, QBool, primitives, contexts | Complete |
 | 6 | QInt{W}, quantum arithmetic | Complete |
 | 7 | QFT, fourier_sample, phase_estimate | Complete |
 | 8 | TracingContext, Channel, OpenQASM export | Complete |
@@ -535,11 +539,8 @@ Additional shipped features beyond the original plan:
 | What | Notes |
 |------|-------|
 | `HardwareContext` + transport (TCP/IPC) + idealised simulator | Dynamic-circuit pattern (mid-circuit measurement → classical branch) works on `HardwareContext` |
-| `cases(q, then, [else_])` / `@cases q begin … end` | Mid-circuit measurement primitive for `TracingContext`; `if Bool(q)` is the natural form on Eager / Density / Hardware |
-| `compact_state!` for `EagerContext` and `DensityMatrixContext` | Reclaims the n_qubits ratchet after Bennett ancilla bursts; auto-triggered from `deallocate!` |
+| `cases(q, then, [else_])` / `@cases q begin … end` | Tracer plumbing for `TracingContext`; `if Bool(q)` is the natural form on every other context |
 | `QBool(p) do q … end` and `QInt{W}(value) do reg … end` | Do-block allocators with auto partial-trace on exit (mirrors Julia's `open(f, path) do …`) |
-| `STURM_COMPACT_VERIFY` env-gate | Opt out of the `compact_state!` residual scan in hot paths |
-| `oracle_table` LRU cache + `clear_oracle_cache!` / `set_oracle_cache_size!` | Bounded cache (default 64); public management API |
 | Shor's algorithm impls A/B/C/D/D-semi + windowed arithmetic | Beauregard 2L+4 HWM; Gidney-Ekerå mulmod |
 | QSVT / QSP block-encoding primitives | Pillar 4 quantum linear algebra scaffolding |
 
