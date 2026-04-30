@@ -4,6 +4,77 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 ---
 
+## 2026-04-30 — Session 81c: README example verification — every example runs
+
+Tobias asked me to actually compile and run every code example in the README.
+Wrote `/tmp/test_readme_examples.jl` (28 cases) and a separate HardwareContext
+smoke test (1 case). All 29 now pass. Two real README bugs surfaced:
+
+### Bug 1: P9 polynomial example was a lie
+
+The README claimed `f(x) = x^2 + 3x + 1` works on `QInt{8}`, with the
+parenthetical "(QInt's `*`, `+` are defined, P8)". Verified: **only `+` is
+defined**, not `*` or `^`. `f(QInt{8}(5))` raised
+`MethodError: no method matching ^(::QInt{8}, ::Int64)`. The example was
+demonstrating P9 with operations that don't participate in P8.
+
+Fixed: replaced `f(x) = x^2 + 3x + 1` with `f(x) = x + 1` (simpler, but
+honest), wrapped the QInt invocation in `@context EagerContext() begin … end`
+(needed for measurement cast), and added an explicit prose note: "currently
+`+` and `⊻` are the operators implemented in P8; multiplicative and bitwise
+ops are routed through Bennett (P9). When QInt grows `*`, `^`, `<<`, `>>`,
+`&`, `|` they will participate in P8 the same way."
+
+This is the right shape: an honest map of the territory rather than an
+aspirational claim. When P8 grows, the prose updates to drop the "currently".
+
+### Bug 2: Quantum-Promotion example violated linearity
+
+The example was `s = a + 17; t = 5 + a` — but `+` consumes `a` (quantum
+no-cloning forced semantics). Second use raised "Linear resource violation:
+QInt{8} already consumed."
+
+Fixed: `s = a + 17` (consumes `a`, asserts `Int(s) == 59`); then a fresh
+`b = QInt{8}(5)`; then `t = 17 + b` (demonstrates classical-on-left works
+too). Also added explicit assertions so the example is self-checking.
+
+### Test methodology
+
+Single Julia process (per the `feedback_no_parallel_julia` memory), `OMP_NUM_THREADS=16`.
+Each example wrapped in a `check(name) do … end` harness with try/catch so
+failures don't halt the run. Final pass: 28/28 in the main script + 1
+HardwareContext smoke test (via `InProcessTransport(IdealisedSimulator())`).
+
+### Test-harness gotchas
+
+* `@assert ch isa Channel` clashes with `Base.Channel`. Need `Sturm.Channel`
+  in standalone test scripts. Inside `using Sturm` user code this is fine
+  (Sturm.Channel takes precedence in the `using` scope).
+* `classicalise(not!)` returns `[~0 1.0; 1.0 ~0]` with floating-point
+  near-zeros (like `3.7e-33`). The README's `M = [0 1; 1 0]` is correct in
+  spirit; assertions need `isapprox` rather than `==`.
+* `do`-block test harness: `check(f::Function, name::String)` (function
+  first) so `check("name") do … end` parses correctly.
+
+### Lesson for future agents
+
+**README examples drift from reality**. The polynomial example was probably
+written before the P8 implementation was fully fleshed out. Every README
+revision SHOULD be followed by an executable smoke test of every code block.
+The standalone test file is small (`/tmp/test_readme_examples.jl`, ~250 LOC)
+and worth promoting into the test suite proper — bead candidate.
+
+### Files touched
+
+* `README.md` — P9 polynomial → linear; Quantum Promotion linearity fix.
+* `WORKLOG.md` — this entry.
+
+### Commits
+
+(below)
+
+---
+
 ## 2026-04-30 — Session 81b: README full antipattern cleanup (bead jejb)
 
 After session 81 fixed the headline CNOT-as-primitive issue, Tobias asked me to
