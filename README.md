@@ -34,17 +34,21 @@ Because the cast loses information irreversibly, the compiler emits a **warning 
 **P9. Quantum registers are a numeric type for dispatch.** A plain Julia function works on a quantum argument exactly the way it works on `Float64` or `Complex` — via operator overloading, not via magic:
 
 ```julia
-f(x) = x^2 + 3x + 1
-f(5)              # Int      — works
-f(5.0)            # Float64  — works (Float64's `*`, `+` are defined)
-f(1 + 2im)        # Complex  — works (Complex's `*`, `+` are defined)
-f(QInt{8}(5))     # quantum  — works (QInt's `*`, `+` are defined, P8)
+f(x) = x + 1
+f(5)              # 6        — Int       (Int  + Int  via Base)
+f(5.0)            # 6.0      — Float64   (Float64 + Int)
+f(1 + 2im)        # 2 + 2im  — Complex   (Complex + Int)
+@context EagerContext() begin
+    @assert Int(f(QInt{8}(5))) == 6     # quantum — works (QInt + Int via P8)
+end
 ```
 
-Type-restricted methods wall out other types — quantum included, just like Float:
+Currently `+` and `⊻` are the operators implemented in P8; multiplicative and bitwise ops are routed through Bennett (P9 below). When QInt grows `*`, `^`, `<<`, `>>`, `&`, `|` they will participate in P8 the same way — by adding overloads, not by inventing new dispatch rules.
+
+Type-restricted methods wall out other types — quantum included, just like `Float64`:
 
 ```julia
-g(x::Int) = x^2 + 3x + 1
+g(x::Int) = x + 1
 g(5.0)            # MethodError — Int-typed method does not match Float64
 g(QInt{8}(5))     # MethodError — same rule, same reason
 ```
@@ -223,14 +227,16 @@ Classical values auto-promote when combined with quantum values — same as Juli
 ```julia
 @context EagerContext() begin
     a = QInt{8}(42)        # explicit construction, like complex(1)
-    s = a + 17             # 17 auto-promotes to QInt{8}(17)
-    t = 5 + a              # commutative
+    s = a + 17             # 17 auto-promotes to QInt{8}(17); `a` is consumed
+    @assert Int(s) == 59
+
+    b = QInt{8}(5)
+    t = 17 + b             # promotion is commutative: classical-on-left works too
+    @assert Int(t) == 22
 
     q = QBool(false)
     q ⊻= true              # library `⊻=` on QBool, classical RHS — same as not!(q)
-
-    result = Int(s)        # type boundary = measurement
-    @assert result == 59
+    @assert Bool(q) == true
 end
 ```
 
