@@ -241,4 +241,58 @@ using Sturm: OrkanStateRaw, OrkanKrausRaw, OrkanSuperopRaw,
         @test 350 < counts[1] < 650
         @test 350 < counts[2] < 650
     end
+
+    @testset "sample() is allocation-free (Sturm.jl-5z3r)" begin
+        # Previous implementation allocated a Vector{Float64} of length 2^n on
+        # every call. The fix uses a streaming cumulative-sum directly against
+        # the FFI buffer.
+        s = OrkanState(ORKAN_PURE, 8)  # dim = 256
+        for i in 0:255
+            s[i] = 1.0 / √256          # uniform superposition
+        end
+        sample(s)                      # warm-up: compile + first-call
+        allocs = @allocated sample(s)
+        # Allow a small constant for return-value boxing and rand() state;
+        # the previous implementation allocated 8 * 256 = 2048 bytes for the
+        # probability vector alone, which would dwarf this bound.
+        @test allocs < 256
+    end
+
+    @testset "sample() errors loudly on non-normalised state (Sturm.jl-5z3r)" begin
+        # Previous implementation silently returned the last index when the
+        # cumulative probability fell short of r — masking upstream bugs.
+        s = OrkanState(ORKAN_PURE, 1)
+        s[0] = 0.3                     # P(|0⟩) = 0.09, P(|1⟩) = 0.16; total 0.25
+        s[1] = 0.4
+        # Force the fall-through path by exhausting the cumulative sum:
+        # any r > 0.25 will reach the end of the loop. Run repeatedly so we
+        # eventually hit one (probability of NOT hitting in 100 trials ≈ 1e-12).
+        threw = false
+        for _ in 1:100
+            try
+                sample(s)
+            catch e
+                if e isa ErrorException && occursin("non-normalised", e.msg)
+                    threw = true
+                    break
+                end
+                rethrow()
+            end
+        end
+        @test threw
+    end
+
+    @testset "sample() tolerates FP round-off (Sturm.jl-5z3r)" begin
+        # A truly normalised state with cumulative = 1 - δ (tiny FP slack)
+        # should still return a valid index, not error.
+        s = OrkanState(ORKAN_PURE, 4)
+        for i in 0:15
+            s[i] = 1.0 / √16
+        end
+        # Must not throw across many trials.
+        for _ in 1:1000
+            idx = sample(s)
+            @test 0 <= idx <= 15
+        end
+    end
 end

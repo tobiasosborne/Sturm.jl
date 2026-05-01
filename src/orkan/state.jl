@@ -77,16 +77,46 @@ end
     sample(s::OrkanState) -> Int
 
 Sample one computational basis state index (0-based) from the probability distribution.
+
+Allocation-free: cumulative-sum is taken directly against the FFI getter, no
+intermediate probability vector is constructed. At n=20 qubits the previous
+implementation allocated 16 MB per call (`Vector{Float64}` of length `2^n`).
+
+Errors loudly on a non-normalised state. The previous implementation silently
+returned the last index when the cumulative probability fell short of `r`,
+which masked upstream state-preparation bugs. A 1e-10 tolerance absorbs FP
+round-off on truly normalised states.
+
+# Refs
+- Bead `Sturm.jl-5z3r` (P1, 2026-04-27 area2 review).
 """
 function sample(s::OrkanState)
-    probs = probabilities(s)
+    dim = 1 << n_qubits(s)
     r = rand()
     cumulative = 0.0
-    for i in eachindex(probs)
-        cumulative += probs[i]
-        if r <= cumulative
-            return i - 1  # 0-based index
+    if s.raw.type == ORKAN_PURE
+        @inbounds for i in 0:dim-1
+            amp = orkan_state_get(s.raw, i, 0)
+            cumulative += abs2(amp)
+            r <= cumulative && return i
+        end
+    else
+        @inbounds for i in 0:dim-1
+            cumulative += real(orkan_state_get(s.raw, i, i))
+            r <= cumulative && return i
         end
     end
-    return length(probs) - 1  # numerical safety
+    # Loop completed without an early return: either FP round-off on a
+    # normalised state (cumulative ≈ 1 - ε) or a genuinely non-normalised
+    # state. Distinguish by tolerance: 1e-10 covers FP slack at n≤30.
+    if cumulative > 1.0 - 1e-10
+        return dim - 1
+    end
+    error(
+        "Sturm: sample(::OrkanState) called on a non-normalised state " *
+        "(cumulative probability = $cumulative after iterating all $dim " *
+        "basis states; expected 1.0 ± 1e-10). PURE states must satisfy " *
+        "Σ|amp|² = 1; MIXED states must satisfy Σρ_ii = 1. This usually " *
+        "indicates a bug in upstream gate application or state preparation."
+    )
 end

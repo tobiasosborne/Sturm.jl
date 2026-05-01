@@ -1,5 +1,5 @@
 using Test
-using Logging
+using Logging         # for `@test_logs min_level=Warn` (`Warn` is `Logging.Warn`)
 using LinearAlgebra   # Diagonal, for the k8u mixed Ry+Rz analytic comparison
 using Sturm
 
