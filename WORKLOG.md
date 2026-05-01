@@ -8,7 +8,7 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 >
 > **Convention: newest entries at the TOP**, both in this index and within each
 > shard. When you finish a session: write the new entry at the top of the
-> most-recent shard (`worklog/sessions-80-to-81c.md` as of this writing), or
+> most-recent shard (`worklog/sessions-80-to-82.md` as of this writing), or
 > open a fresh shard with a session-range filename if the current one is over
 > ~500 LOC.
 >
@@ -25,7 +25,7 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 | Sessions | File | Dates | Topics |
 |---|---|---|---|
-| 80 → 81c | [sessions-80-to-81c.md](worklog/sessions-80-to-81c.md) | 2026-04-28 → 04-30 | QMod primitives shipped (os4/mle/p38/tws/u2n); README primitives reframing (Four → Three); README antipattern cleanup (18 fixes); README example verification |
+| 80 → 82 | [sessions-80-to-82.md](worklog/sessions-80-to-82.md) | 2026-04-28 → 05-01 | QMod primitives shipped (os4/mle/p38/tws/u2n); README primitives reframing (Four → Three); README antipattern cleanup (18 fixes); README example verification; bd audit-gap reconciliation; worklog shard; 5z3r orkan sample() fix; test-discipline relearn |
 | 77 → 79 | [sessions-77-to-79.md](worklog/sessions-77-to-79.md) | 2026-04-27 → 04-28 | code-review sweep grind (4 sweep beads); P1 clusters 1, 2, 3 partial (12 closed) |
 | 75 → 76 | [sessions-75-to-76.md](worklog/sessions-75-to-76.md) | 2026-04-27 | P0 grind (11 closed); code-review pass + idiom corrections |
 | 73 → 74 | [sessions-73-to-74.md](worklog/sessions-73-to-74.md) | 2026-04-26 | AbstractPass + registry (`7ab`); `2qp` n_qubits-at-peak ratchet diagnosis |
