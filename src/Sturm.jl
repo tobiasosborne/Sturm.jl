@@ -139,6 +139,8 @@ export plus_equal_product!, plus_equal_product_mod!
 # Bennett bridge: classical-tabulate + QROM for functions Bennett cannot lower
 export oracle_table, qrom_lookup_xor!, qrom_lookup_xor_cleanancilla!
 export oracle_cache_size, oracle_cache_max_size, set_oracle_cache_size!, clear_oracle_cache!
+export qrom_lookup_xor_cache_size, qrom_lookup_xor_cache_max_size,
+       set_qrom_lookup_xor_cache_size!, clear_qrom_lookup_xor_cache!
 
 # Shor's algorithm (docs/physics/nielsen_chuang_5.3.md)
 export shor_order_A, shor_factor_A

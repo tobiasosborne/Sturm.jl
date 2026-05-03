@@ -432,7 +432,7 @@ function oracle_table(f, x::QInt{W_in}, ::Val{W_out}) where {W_in, W_out}
         idx_wires_b = _bennett_wa_allocate!(wa, W_in)
         data_out_b  = emit_qrom!(gates, wa, data, idx_wires_b, W_out)
         lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
-                            [W_in], [W_out], Set{Int}())
+                            [W_in], [W_out])
         bennett(lr)
     end
 
@@ -518,13 +518,13 @@ function qrom_lookup_xor!(target::QInt{W},
 
     data = collect(UInt64, table.data)
     key = (hash(data), Ccmul, W)
-    circuit = get!(_QROM_LOOKUP_XOR_CACHE, key) do
+    circuit = _qrom_lookup_xor_cache_get!(key) do
         wa = WireAllocator()
         gates = ReversibleGate[]
         idx_wires_b = _bennett_wa_allocate!(wa, Ccmul)
         data_out_b  = emit_qrom!(gates, wa, data, idx_wires_b, W)
         lr = LoweringResult(gates, wire_count(wa), idx_wires_b, data_out_b,
-                            [Ccmul], [W], Set{Int}())
+                            [Ccmul], [W])
         bennett(lr)
     end
 
@@ -536,5 +536,79 @@ function qrom_lookup_xor!(target::QInt{W},
     return target
 end
 
-const _QROM_LOOKUP_XOR_CACHE = Dict{Tuple{UInt64, Int, Int}, ReversibleCircuit}()
+# ═══════════════════════════════════════════════════════════════════════════
+# qrom_lookup_xor cache — bounded LRU per Sturm.jl-rqus
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Mirrors the _ORACLE_TABLE_CACHE LRU treatment from bead t1v. Without
+# eviction this Dict accumulates one ReversibleCircuit per unique
+# (hash(data), Ccmul, W) triple — long Shor parameter sweeps OOM Julia.
+# Default cap 64 matches the oracle_table cache for consistency.
+
+const _QROMLookupKey = Tuple{UInt64, Int, Int}
+const _QROM_LOOKUP_XOR_CACHE = Dict{_QROMLookupKey, ReversibleCircuit}()
+const _QROM_LOOKUP_XOR_CACHE_ORDER = Vector{_QROMLookupKey}()
+const _QROM_LOOKUP_XOR_CACHE_MAX_SIZE = Ref(64)
+
+"""
+    qrom_lookup_xor_cache_size() -> Int
+
+Current number of compiled QROM circuits cached by `qrom_lookup_xor!`.
+"""
+qrom_lookup_xor_cache_size() = length(_QROM_LOOKUP_XOR_CACHE)
+
+"""
+    qrom_lookup_xor_cache_max_size() -> Int
+
+Current cap on the `qrom_lookup_xor!` LRU cache. Default 64.
+"""
+qrom_lookup_xor_cache_max_size() = _QROM_LOOKUP_XOR_CACHE_MAX_SIZE[]
+
+"""
+    set_qrom_lookup_xor_cache_size!(n::Integer)
+
+Set the LRU cap for the `qrom_lookup_xor!` cache. Evicts the oldest entries
+immediately if the current size exceeds `n`. `n == 0` is allowed and
+disables caching (every call recompiles). Errors on negative `n`.
+"""
+function set_qrom_lookup_xor_cache_size!(n::Integer)
+    n >= 0 || error("set_qrom_lookup_xor_cache_size!: n must be ≥ 0, got $n")
+    _QROM_LOOKUP_XOR_CACHE_MAX_SIZE[] = Int(n)
+    _evict_qrom_lookup_xor_cache_to_cap!()
+    return nothing
+end
+
+"""
+    clear_qrom_lookup_xor_cache!()
+
+Empty the `qrom_lookup_xor!` LRU cache.
+"""
+function clear_qrom_lookup_xor_cache!()
+    empty!(_QROM_LOOKUP_XOR_CACHE)
+    empty!(_QROM_LOOKUP_XOR_CACHE_ORDER)
+    return nothing
+end
+
+function _evict_qrom_lookup_xor_cache_to_cap!()
+    cap = _QROM_LOOKUP_XOR_CACHE_MAX_SIZE[]
+    while length(_QROM_LOOKUP_XOR_CACHE_ORDER) > cap
+        oldest = popfirst!(_QROM_LOOKUP_XOR_CACHE_ORDER)
+        delete!(_QROM_LOOKUP_XOR_CACHE, oldest)
+    end
+    return nothing
+end
+
+function _qrom_lookup_xor_cache_get!(compute_fn, key::_QROMLookupKey)
+    if haskey(_QROM_LOOKUP_XOR_CACHE, key)
+        idx = findfirst(==(key), _QROM_LOOKUP_XOR_CACHE_ORDER)
+        idx === nothing || deleteat!(_QROM_LOOKUP_XOR_CACHE_ORDER, idx)
+        push!(_QROM_LOOKUP_XOR_CACHE_ORDER, key)
+        return _QROM_LOOKUP_XOR_CACHE[key]
+    end
+    circuit = compute_fn()
+    _QROM_LOOKUP_XOR_CACHE[key] = circuit
+    push!(_QROM_LOOKUP_XOR_CACHE_ORDER, key)
+    _evict_qrom_lookup_xor_cache_to_cap!()
+    return circuit
+end
 
