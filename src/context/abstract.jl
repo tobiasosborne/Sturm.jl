@@ -222,6 +222,27 @@ See `compact_state!(::EagerContext)` for the concrete contract.
 """
 compact_state!(ctx::AbstractContext) = ctx
 
+"""
+    compact_state_logical!(ctx::AbstractContext) -> ctx
+
+Logical compaction (bead Sturm.jl-pw9): same wire-remap as
+[`compact_state!`](@ref) but **in-place on the existing amplitude buffer**.
+The Orkan capacity is unchanged; the active dimension drops to `2^new_n`
+via a write to the orkan state's `qubits` field. No malloc, no free, no
+GC.
+
+Used by `apply_reversible!` after Bennett ancilla cleanup, where a
+sub-threshold ancilla burst would otherwise leave `n_qubits` stuck at
+the burst peak — every subsequent gate paying `2^peak` cost despite
+working-set being `2^new_n`.
+
+Default is a no-op (only state-owning contexts implement it). The
+buffer-shrinking variant `compact_state!` is unaffected — it still
+realloc-shrinks for higher-level cleanup paths (e.g. `deallocate!`'s
+8-slot threshold trigger).
+"""
+compact_state_logical!(ctx::AbstractContext) = ctx
+
 # ── Context propagation via task-local storage ────────────────────────────────
 
 """

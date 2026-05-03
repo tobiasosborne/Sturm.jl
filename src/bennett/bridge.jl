@@ -59,6 +59,14 @@ function apply_reversible!(ctx::AbstractContext,
         for w in ancilla_sturm
             deallocate!(ctx, w)
         end
+        # Bead Sturm.jl-pw9: drop the active dim back to the live set so the
+        # next gate doesn't pay 2^peak per amplitude. For sub-threshold
+        # bursts (the common case) `deallocate!` did not trigger
+        # `compact_state!`, so n_qubits is still at the burst peak.
+        # `compact_state_logical!` is in-place and a no-op when free_slots
+        # is empty (e.g. when the deallocate path already triggered the
+        # buffer-shrinking variant).
+        compact_state_logical!(ctx)
     end
 end
 

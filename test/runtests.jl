@@ -62,6 +62,7 @@ using Sturm
     include("test_autocleanup.jl")
     include("test_compact_state.jl")
     include("test_compact_state_dm.jl")
+    include("test_compact_state_logical.jl")
     include("test_do_block_alloc.jl")
     include("test_oracle_cache_lru.jl")
     include("test_qrom_cache_lru.jl")

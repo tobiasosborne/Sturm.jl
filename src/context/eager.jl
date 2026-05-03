@@ -41,6 +41,10 @@ function allocate!(ctx::EagerContext)::WireID
         # HWM unchanged (no new peak).
         qubit_idx = pop!(ctx.free_slots)
         ctx.wire_to_qubit[wire] = qubit_idx
+        # Bead pw9: a recycled slot may have an index ≥ orkan.raw.qubits if
+        # logical compaction shrunk the active dim while the slot was free.
+        # Bump so subsequent gates address it.
+        _bump_orkan_qubits!(ctx, qubit_idx + 1)
         return wire
     end
 
@@ -55,7 +59,22 @@ function allocate!(ctx::EagerContext)::WireID
     if ctx.n_qubits > ctx._n_qubits_hwm
         ctx._n_qubits_hwm = ctx.n_qubits
     end
+    # Bead pw9: if logical compact dropped orkan.raw.qubits below n_qubits,
+    # restore so gates address the newly-allocated slot.
+    _bump_orkan_qubits!(ctx, ctx.n_qubits)
     return wire
+end
+
+# Bead pw9: bump the orkan state's `qubits` field up to `target` (no-op if
+# already ≥ target). Direct field write on the mutable OrkanStateRaw is
+# visible to C reads via Ref(state) — same memory.
+@inline function _bump_orkan_qubits!(ctx::EagerContext, target::Integer)
+    if Int(ctx.orkan.raw.qubits) < target
+        target <= ctx.capacity ||
+            error("_bump_orkan_qubits!: target $target exceeds capacity $(ctx.capacity)")
+        ctx.orkan.raw.qubits = UInt8(target)
+    end
+    nothing
 end
 
 """Maximum qubit capacity for EagerContext. 2^30 amplitudes × 16 bytes = 16 GB."""
@@ -456,6 +475,125 @@ function compact_state!(ctx::EagerContext)
     if old_capacity >= 24
         GC.gc(false)
     end
+    return ctx
+end
+
+# ── Logical compaction (bead Sturm.jl-pw9) ───────────────────────────────────
+#
+# Same plan + scatter as compact_state!, but in-place on the existing buffer.
+# Orkan capacity unchanged. Drop `state.qubits` so subsequent gates run on
+# 2^new_n amplitudes instead of 2^capacity. Used by apply_reversible! after
+# Bennett ancilla cleanup, where a sub-threshold burst (3–7 ancillae) leaves
+# free_slots below the deallocate-trigger threshold (2*GROW_STEP = 8) and
+# n_qubits stuck at the burst peak.
+#
+# Why in-place is safe (read-position-≥-write-position invariant):
+#
+# `_compact_plan` sorts `live_wires` by ascending old slot, so `old_slots[k]`
+# is monotone. For new index j with bits b_{n-1}…b_0, the corresponding old
+# index is Σ_k b_k · 2^{old_slots[k]}. Since old_slots[k] ≥ k, expanding
+# bits onto old_slots positions only ever increases the integer value.
+# Therefore `old_index ≥ j`. Since iteration goes j = 0, 1, …, new_dim-1 in
+# increasing order, position k is written at iteration k and never read
+# afterwards (any later read at iteration j' > k targets old_index ≥ j' > k).
+
+"""
+    _compact_scatter_inplace!(orkan, plan) -> nothing
+
+In-place variant of `_compact_scatter!`: project the live tensor factor
+into the first `2^new_n` amplitudes of the existing Orkan buffer. The
+fast-path (contiguous live slots == 0:new_n-1) is a no-op since old_index
+== j for every j. Outside the fast path, the read-position-≥-write-position
+invariant (see comment above) makes the in-place loop safe.
+"""
+function _compact_scatter_inplace!(orkan::OrkanState, plan::CompactPlan)
+    old_dim = 1 << plan.old_n
+    new_dim = 1 << plan.new_n
+    amps = unsafe_wrap(Array{ComplexF64,1}, orkan.raw.data, old_dim)
+    live_slots = plan.old_slots
+    new_n = plan.new_n
+    if live_slots == 0:new_n - 1
+        # Contiguous-live fast path: amps[j+1] := amps[j+1] for every j → no-op.
+        return nothing
+    end
+    @inbounds for j in 0:new_dim - 1
+        old_index = 0
+        for k in 0:new_n - 1
+            bit = (j >> k) & 1
+            old_slot = live_slots[k + 1]
+            old_index |= bit << old_slot
+        end
+        amps[j + 1] = amps[old_index + 1]
+    end
+    return nothing
+end
+
+"""
+    compact_state_logical!(ctx::EagerContext) -> ctx
+
+Logical compaction: same wire-remap as `compact_state!`, but **in-place
+on the existing amplitude buffer**. Capacity unchanged; the orkan state's
+`qubits` field drops to the new live count so gates run on `2^new_n`
+amplitudes. No malloc, no free, no GC pass.
+
+# Why
+After a Bennett ancilla burst (typically 3–7 wires) the buffer-shrinking
+`compact_state!` is not triggered (deallocate threshold is 2*GROW_STEP=8),
+yet `n_qubits` stays at the burst peak. Subsequent gates between forward
+and uncompute QROM run on a `2^peak`-element buffer instead of the
+working-set `2^new_n`. Per-call wall time spikes from microseconds to tens
+of milliseconds at the high end (bead Sturm.jl-pw9, WORKLOG session 74).
+
+# Postcondition
+- Same wire/slot postcondition as `compact_state!`: live wires at slots
+  `0..k-1`, `n_qubits == k`, `free_slots == []`.
+- `ctx.capacity` unchanged. Orkan buffer pointer unchanged.
+- `ctx.orkan.raw.qubits == k` (subsequent gate ccalls operate on
+  `2^k` amplitudes).
+- Amplitudes in positions `[0, 2^k)` are exactly the |0⟩-branch
+  projection of the old buffer, identical to what `compact_state!`
+  would produce. Positions `[2^k, 2^old_n)` retain stale data; gates
+  ignore them because `state.qubits` says only the first `2^k` are
+  active.
+
+# Atomicity
+Compute-then-commit: validation and verification first, then a single
+in-place scatter, then field writes. If validation or verification
+throws, the buffer is untouched. The scatter is safe in-place (see
+header comment); if it throws (it can't — pure arithmetic on indices),
+the buffer is left in a partially-written state, but that's a
+post-validation invariant break, not a precondition issue.
+
+# Complexity
+Time `O(2^new_n · new_n + 2^old_n)` — same scatter shape as
+`compact_state!` plus the precondition scan; the saved cost is the
+new orkan allocation + zeroing + GC pass at high old_n.
+
+# Idempotence
+Fast-path no-op when `free_slots` is empty.
+"""
+function compact_state_logical!(ctx::EagerContext)
+    plan = _compact_plan(ctx)
+    plan === nothing && return ctx
+    _compact_verify_freed_zero(ctx, plan)
+
+    # In-place scatter on the existing buffer — no allocation.
+    _compact_scatter_inplace!(ctx.orkan, plan)
+
+    # Pre-build new wire_to_qubit so the commit phase is a sequence of
+    # infallible field writes.
+    new_w2q = Dict{WireID, Int}()
+    for (k, w) in enumerate(plan.live_wires)
+        new_w2q[w] = k - 1
+    end
+
+    # Commit. Mutable struct field writes are infallible.
+    ctx.orkan.raw.qubits = UInt8(plan.new_n)   # active dim → 2^new_n
+    ctx.n_qubits = plan.new_n
+    ctx.wire_to_qubit = new_w2q
+    empty!(ctx.free_slots)
+    ctx._compact_count += 1
+    # Capacity unchanged — that's the whole point.
     return ctx
 end
 
