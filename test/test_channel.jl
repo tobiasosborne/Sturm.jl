@@ -112,6 +112,43 @@ using Sturm
         @test n_outputs(ch_par) == 2
     end
 
+    # Sturm.jl-5jlo: ⊗ must reject wire-ID collisions loudly. Hand-construct
+    # two minimal channels that share a WireID — without the disjointness
+    # check, this silently produces an aliased-wire DAG with wrong physics.
+    @testset "⊗ rejects shared wire IDs (Sturm.jl-5jlo)" begin
+        w_shared = Sturm.fresh_wire!()
+        ch_a = Sturm.Channel{1, 1}(Sturm.HotNode[Sturm.RyNode(w_shared, π/2)],
+                                   (w_shared,), (w_shared,))
+        ch_b = Sturm.Channel{1, 1}(Sturm.HotNode[Sturm.RzNode(w_shared, π)],
+                                   (w_shared,), (w_shared,))
+        @test_throws ErrorException ch_a ⊗ ch_b
+    end
+
+    @testset "⊗ rejects shared internal wire (IO disjoint, ancilla collides)" begin
+        # IO disjoint, but a non-IO wire (e.g. an ancilla used as a CX target
+        # inside ch_a, or a control in ch_b) collides. Pure-IO check would miss
+        # this.
+        w_ext_a = Sturm.fresh_wire!()
+        w_ext_b = Sturm.fresh_wire!()
+        w_collide = Sturm.fresh_wire!()  # appears in both DAGs internally
+        # ch_a uses w_collide as a CX control internally
+        ch_a = Sturm.Channel{1, 1}(
+            Sturm.HotNode[Sturm.CXNode(w_collide, w_ext_a)],
+            (w_ext_a,), (w_ext_a,))
+        # ch_b uses w_collide as a Ry target internally
+        ch_b = Sturm.Channel{1, 1}(
+            Sturm.HotNode[Sturm.RyNode(w_collide, π/3)],
+            (w_ext_b,), (w_ext_b,))
+        @test_throws ErrorException ch_a ⊗ ch_b
+    end
+
+    @testset "⊗ accepts disjoint wires" begin
+        # Sanity: the basic case from above must still work after the check.
+        ch1 = trace(1) do q; H!(q); q; end
+        ch2 = trace(1) do q; X!(q); q; end
+        @test_nowarn ch1 ⊗ ch2
+    end
+
     @testset "to_openqasm: H gate" begin
         ch = trace(1) do q; H!(q); q; end
         qasm = to_openqasm(ch)

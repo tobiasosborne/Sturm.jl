@@ -28,12 +28,66 @@ end
     ⊗(f::Channel, g::Channel) -> Channel
 
 Parallel (tensor) composition: disjoint wire sets, concatenated DAGs.
+
+Errors loudly (Sturm.jl-5jlo) when the two operand channels share any
+WireID — anywhere in either DAG, including ancillae and controls. Without
+this check, a user composing two channels that happened to share a wire
+ID (e.g. from `reset_wire_counter!` between two `trace()` calls, or from
+hand-constructed channels in tests) would silently get aliased wires
+producing wrong physics.
 """
 function ⊗(f::Channel{InF, OutF}, g::Channel{InG, OutG}) where {InF, OutF, InG, OutG}
+    fw = _collect_wires(f)
+    gw = _collect_wires(g)
+    shared = intersect(fw, gw)
+    isempty(shared) ||
+        error("⊗: operand channels must have disjoint wire IDs; shared: " *
+              join(sort!([w.id for w in shared]), ", "))
     merged_dag = vcat(f.dag, g.dag)
     in_wires = (f.input_wires..., g.input_wires...)
     out_wires = (f.output_wires..., g.output_wires...)
     return Channel{InF + InG, OutF + OutG}(merged_dag, in_wires, out_wires)
+end
+
+# Sturm.jl-5jlo helper: collect every WireID referenced by a Channel
+# (input wires, output wires, and every DAG node's target + controls).
+# Excludes _ZERO_WIRE (the sentinel for unused control slots).
+function _collect_wires(ch::Channel)
+    s = Set{WireID}()
+    for w in ch.input_wires;  push!(s, w); end
+    for w in ch.output_wires; push!(s, w); end
+    for node in ch.dag
+        _add_node_wires!(s, node)
+    end
+    delete!(s, _ZERO_WIRE)
+    return s
+end
+
+@inline function _add_node_wires!(s::Set{WireID}, n::PrepNode)
+    push!(s, n.wire)
+    n.ncontrols >= 1 && push!(s, n.ctrl1)
+    n.ncontrols >= 2 && push!(s, n.ctrl2)
+end
+@inline function _add_node_wires!(s::Set{WireID}, n::RyNode)
+    push!(s, n.wire)
+    n.ncontrols >= 1 && push!(s, n.ctrl1)
+    n.ncontrols >= 2 && push!(s, n.ctrl2)
+end
+@inline function _add_node_wires!(s::Set{WireID}, n::RzNode)
+    push!(s, n.wire)
+    n.ncontrols >= 1 && push!(s, n.ctrl1)
+    n.ncontrols >= 2 && push!(s, n.ctrl2)
+end
+@inline function _add_node_wires!(s::Set{WireID}, n::CXNode)
+    push!(s, n.control); push!(s, n.target)
+    n.ncontrols >= 1 && push!(s, n.ctrl1)
+    n.ncontrols >= 2 && push!(s, n.ctrl2)
+end
+@inline function _add_node_wires!(s::Set{WireID}, n::ObserveNode)
+    push!(s, n.wire)
+end
+@inline function _add_node_wires!(s::Set{WireID}, n::DiscardNode)
+    push!(s, n.wire)
 end
 
 # ── Wire renaming helpers ────────────────────────────────────────────────────
