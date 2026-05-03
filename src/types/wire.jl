@@ -12,12 +12,12 @@ Base.show(io::IO, w::WireID) = print(io, "Wire(", w.id, ")")
 Base.hash(w::WireID, h::UInt) = hash(w.id, h)
 Base.:(==)(a::WireID, b::WireID) = a.id == b.id
 
-const _wire_counter = Ref(UInt32(0))
+const _wire_counter = Threads.Atomic{UInt32}(0)
 
-"""Allocate a globally unique WireID."""
+"""Allocate a globally unique WireID. Thread-safe (bead Sturm.jl-6s5t)."""
 function fresh_wire!()
-    _wire_counter[] += 1
-    WireID(_wire_counter[])
+    prev = Threads.atomic_add!(_wire_counter, UInt32(1))
+    WireID(prev + UInt32(1))
 end
 
 """Reset the wire counter (for testing only)."""

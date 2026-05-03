@@ -64,6 +64,7 @@ using Sturm
     include("test_compact_state_dm.jl")
     include("test_do_block_alloc.jl")
     include("test_oracle_cache_lru.jl")
+    include("test_wire_counter.jl")
     include("test_ptrace.jl")
     include("test_bench_shor_scaling.jl")
 
