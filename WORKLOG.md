@@ -25,6 +25,7 @@ Gotchas, learnings, decisions, and surprises. Updated every step.
 
 | Sessions | File | Dates | Topics |
 |---|---|---|---|
+| 83 | [session-83.md](worklog/session-83.md) | 2026-05-04 | bd resync from origin (canonical); ph26 doc sweep (PRD + CLAUDE.md + 5 src docstrings — README is now source of truth); viz-frontend deep research (Classiq Studio = standard React+ReactFlow, no patent moat) + 34-bead epic plan (`02nv` epic; phases 0–9; MVP gate `dy1y`); `yl52` bd-dep schema-glitch bug filed |
 | 80 → 82 | [sessions-80-to-82.md](worklog/sessions-80-to-82.md) | 2026-04-28 → 05-01 | QMod primitives shipped (os4/mle/p38/tws/u2n); README primitives reframing (Four → Three); README antipattern cleanup (18 fixes); README example verification; bd audit-gap reconciliation; worklog shard; 5z3r orkan sample() fix; test-discipline relearn |
 | 77 → 79 | [sessions-77-to-79.md](worklog/sessions-77-to-79.md) | 2026-04-27 → 04-28 | code-review sweep grind (4 sweep beads); P1 clusters 1, 2, 3 partial (12 closed) |
 | 75 → 76 | [sessions-75-to-76.md](worklog/sessions-75-to-76.md) | 2026-04-27 | P0 grind (11 closed); code-review pass + idiom corrections |
