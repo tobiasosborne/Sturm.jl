@@ -1,4 +1,4 @@
-# Convenience gates built entirely from the four primitives.
+# Convenience gates built entirely from the rotation primitives + when + not!.
 # These are NOT part of the language spec — they are standard library.
 
 """

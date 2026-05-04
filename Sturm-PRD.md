@@ -41,13 +41,13 @@ This is the ONLY mechanism for crossing the boundary. Measurement, preparation, 
 
 **P4 corollary — `if q` does NOT auto-lift to `when(q)`.** Julia's `if x` is defined on `x::Bool`. `QBool → Bool` is measurement (P2). A user writing `if q … end` with `q::QBool` triggers an **implicit** cast, which is exactly the P2 warning: measurement, then a classical branch. Silent promotion of `if q` into `when(q) do … end` would be the twin of the P9 catch-all mistake — collapsing semantically distinct channels (post-measurement classical branch vs. coherent controlled unitary) into one syntactic form whose meaning depends on type. It is especially dangerous with P9's `oracle` path: inside a function body, `if` is compiled by Bennett as an in-circuit reversible branch — so the *same* `if` in user source would have three different meanings depending on whether the enclosing function is called classically, measured-then-branched, or lifted as an oracle. That is not Julia-idiomatic; that is a type lie. Coherent quantum control is spelled `when(q) do … end` — and only that. Cf. ForwardDiff.jl: `if x > 0` on a `Dual` also measures-then-branches (strips the dual); autodiff-friendly code uses `ifelse` or `@inbounds`-style primitives that carry the derivative through. The Sturm rule is the direct analogue.
 
-**P5. No gates, no qubits.** The programmer never names a gate and never manipulates individual qubits. The programmer works with quantum registers (`QBool`, `QInt{W}`, `QMod{N}`) and the four primitives (§3). Named gates (H, T, CNOT, etc.) exist only as convenience library functions. Individual qubit indexing (`q[i]`) exists for oracle construction but is not the normal mode of programming. The correct test for this principle: if a program reads like a circuit diagram transcribed into code, it is wrong.
+**P5. No gates, no qubits.** The programmer never names a gate and never manipulates individual qubits. The programmer works with quantum registers (`QBool`, `QInt{W}`, `QMod{N}`), the rotation primitives (`q.θ += δ`, `q.φ += δ`), the P2 casts, and the `when` binder (§3). The one named exception is `not!` — the Julia bang-suffix companion to `!`, since no-cloning forbids the rebinding form `b = !b`. Two-qubit operations are *never* named: CNOT is `when(a) do; not!(b); end`, and entanglement is composed from `when` plus a body, not invoked by gate name. Hadamard, T, and CCNOT have no Julia-classical counterpart; when you need one, write the rotation primitives directly. Named gates (H, T, etc.) exist only as convenience library functions. Individual qubit indexing (`q[i]`) exists for oracle construction but is not the normal mode of programming. The correct test for this principle: if a program reads like a circuit diagram transcribed into code, it is wrong.
 
 **P6. QECC is a higher-order function.** Error correction wraps a channel (= function) in encoding/syndrome/correction/decoding channels. It is a function `Channel → Channel`. It is not a language feature, annotation, or pragma. It is a library function.
 
 **P7. The abstraction is dimension-agnostic across the entire Hilbert spectrum.** The core type system and channel algebra must not assume qubits (d=2), nor any specific local dimension. All of the following must be expressible by *extending* the type hierarchy — never by modifying the core:
 
-- **Finite qudits.** Qutrits (`QTrit`, d=3), arbitrary qudits (`QDit{D}`). The four primitives generalise to `Ry_D`, `Rz_D` on `su(D)` generators plus a controlled-shift for entanglement.
+- **Finite qudits.** Qutrits (`QTrit`, d=3), arbitrary qudits (`QDit{D}`). The rotation primitives generalise to `Ry_D`, `Rz_D` on `su(D)` generators; entanglement remains `when(c) do; not!_d(t); end` (the qudit cyclic shift) — no new primitive admitted.
 - **Anyons.** Fusion-category wires (`QAnyon{C}`), with braiding and F-/R-moves as primitive-level operations. Topological charge is a type parameter; composition is fusion, not tensor product.
 - **Infinite-dimensional systems.** At minimum, **Gaussian CV** for quantum optics: bosonic modes (`QMode`), displacement, squeezing, beamsplitters, phase rotation, and homodyne/heterodyne measurement — all expressible as channels on a covariance-matrix context. Ideally, arbitrary infinite-dimensional systems: full Fock-space arithmetic, bosonic codes (cat, binomial, GKP), and continuous-variable oracles. A CV context stores a Gaussian covariance matrix (or a truncated Fock-basis density operator for non-Gaussian cases); the DSL surface is unchanged.
 
@@ -222,14 +222,21 @@ Future: enforce linearity at compile time via a macro or compiler plugin. Runtim
 
 ## 3. Primitives
 
-Exactly four. Everything else is derived.
+Sturm's quantum surface area is small. The complete vocabulary for *quantum-specific* code is five constructs — **two rotation primitives, two P2 casts, and one binder**:
 
-| # | Syntax | Semantics | QASM |
-|---|--------|-----------|------|
-| 1 | `QBool(p::Real)` | Preparation: Ry(2 arcsin √p)\|0⟩. P(\|1⟩) = p | `ry(2*arcsin(sqrt(p))) q` |
-| 2 | `q.θ += δ` | Amplitude rotation: Ry(δ) | `ry(δ) q` |
-| 3 | `q.φ += δ` | Phase rotation: Rz(δ) | `rz(δ) q` |
-| 4 | `a ⊻= b` | CNOT: b controls, a target | `cx b, a` |
+| # | Surface form | Role | Semantics | QASM |
+|---|--------------|------|-----------|------|
+| 1 | `QBool(p::Real)` | Preparation cast (cq channel, P2) | Allocate at √(1−p)\|0⟩ + √p\|1⟩; Ry(2·arcsin√p)\|0⟩ | `ry(2*arcsin(sqrt(p))) q` |
+| 2 | `Bool(q)`, `Int(q)` | Measurement cast (qc channel, P2) | Measure and project; information-losing — implicit casts warn | `measure q -> c` |
+| 3 | `q.θ += δ` | Channel primitive | Amplitude rotation Ry(δ) | `ry(δ) q` |
+| 4 | `q.φ += δ` | Channel primitive | Phase rotation Rz(δ) | `rz(δ) q` |
+| 5 | `when(q) do … end` | Quantum control binder | Lift body to a channel controlled on `q` | controlled gates |
+
+**There is no CNOT primitive, no Toffoli, no swap.** Two-qubit operations are *never* named — entanglement is composed from `when` plus a body. CNOT is `when(a) do; not!(b); end`. The library `a ⊻= b` operator is convenience sugar for the same composition; it is not a primitive.
+
+**`not!` is the one named exception** — the Julia bang-suffix companion to `!`, used wherever quantum no-cloning forbids the rebinding form `b = !b`. On `QBool` it lowers to `q.φ += π; q.θ += π` (an SU(2) realisation of X). It exists because flipping a bit is *classical in spirit* — `not!(b)` reads naturally where `b.φ += π; b.θ += π` would obscure intent. Hadamard, Z, T have no Julia-classical counterpart; when you need one, write the rotation primitives directly (`q.φ += π; q.θ += π/2`, `q.φ += π`, `q.φ += π/4`).
+
+The deeper principle: **classical-looking code stays classical**. You only reach for `q.θ += δ` / `q.φ += δ` when the operation is genuinely quantum — a non-computational basis state, a relative phase, an interference. Otherwise: write idiomatic Julia and let `when` plus the type system do the lifting. This is the Bennett.jl mindset taken to the language level — the same reason `oracle(f, q)` (P9) takes a plain Julia function and returns a reversible circuit.
 
 Implementation of `.θ` and `.φ`:
 
@@ -258,26 +265,38 @@ end
 
 Attempting to read `q.θ` as a value (rather than using `+=`) returns a `BlochProxy`, which is useless as a number. The type system prevents misuse. You cannot observe the Bloch angles without measurement.
 
-### 3.1 Derived gates (standard library, NOT primitives)
+### 3.1 The named exception: `not!`
 
 ```julia
-# These live in src/gates.jl as convenience functions.
-# They are NOT part of the language spec.
+# `not!` is the Julia bang-suffix companion to `!`. It is the one named gate
+# that appears in idiomatic Sturm code, because flipping a bit reads
+# naturally as `not!(b)` and unnaturally as `b.φ += π; b.θ += π`.
+# Quantum no-cloning forbids the rebinding form `b = !b`, hence the bang.
+not!(q::QBool) = (q.φ += π; q.θ += π; q)   # Rz(π)·Ry(π), channel X — bead 3yz
+const X! = not!                            # textbook alias; idiomatic spelling is `not!`
+```
 
-X!(q::QBool)  = (q.φ += π; q.θ += π)     # Rz(π)·Ry(π), channel X — bead 3yz
+### 3.2 Derived gates (standard library, NOT primitives)
+
+```julia
+# These live in src/gates.jl as convenience functions for textbook-quantum
+# vocabulary users. They are NOT part of the language spec.
+
 Y!(q::QBool)  = q.θ += π                  # Ry(π), channel Y
 Z!(q::QBool)  = q.φ += π
 S!(q::QBool)  = q.φ += π/2
 T!(q::QBool)  = q.φ += π/4
 H!(q::QBool)  = (q.φ += π; q.θ += π/2)   # up to global phase
 
-# Swap is three CNOTs
+# Swap is three CNOTs — composed from `when` + `not!`, no two-qubit name.
 function swap!(a::QBool, b::QBool)
-    a ⊻= b
-    b ⊻= a
-    a ⊻= b
+    when(b) do; not!(a); end
+    when(a) do; not!(b); end
+    when(b) do; not!(a); end
 end
 ```
+
+The library `a ⊻= b` operator is convenience sugar that composes to `when(b) do; not!(a); end`; it appears throughout the codebase and in this document where the textbook CNOT idiom reads more naturally than the explicit `when` form, but it is not a primitive.
 
 ---
 
@@ -416,7 +435,7 @@ This is the Principle of Deferred Measurement expressed as a compiler rewrite ru
 
 Live, tested, exported:
 
-- **Core DSL** — `QBool`, `QInt{W}`, `QMod{d}`, `QCoset`, `QRunway`, `WireID`, `ClassicalRef`; the four primitives; `when(q) do … end`; `cases(q, then, [else_])` / `@cases` mid-circuit measurement primitive; standard gates (`H!`, `X!`, `Y!`, `Z!`, `S!`, `T!`, `Sdg!`, `Tdg!`, `swap!`); quantum→classical casts (`Bool(q)`, `Int(q)`); runtime linearity via `consumed::Bool`. Do-block allocation `QBool(p) do q … end` and `QInt{W}(value) do reg … end` mirrors `open(f, path) do …` (auto-ptrace on exit).
+- **Core DSL** — `QBool`, `QInt{W}`, `QMod{d}`, `QCoset`, `QRunway`, `WireID`, `ClassicalRef`; the rotation primitives (`q.θ += δ`, `q.φ += δ`); the P2 cast forms (`QBool(p)` prep, `Bool(q)` / `Int(q)` measure); the `when(q) do … end` binder; `not!(q)` — the named exception; `cases(q, then, [else_])` / `@cases` mid-circuit measurement primitive; library gates (`H!`, `X!`, `Y!`, `Z!`, `S!`, `T!`, `Sdg!`, `Tdg!`, `swap!`); the `a ⊻= b` library convenience operator; runtime linearity via `consumed::Bool`. Do-block allocation `QBool(p) do q … end` and `QInt{W}(value) do reg … end` mirrors `open(f, path) do …` (auto-ptrace on exit).
 - **Four contexts** — `EagerContext` (Orkan statevector, 30-qubit hard cap), `DensityMatrixContext` (Orkan mixed-packed), `TracingContext` (DAG builder), `HardwareContext` (transport over TCP/IPC; idealised in-process simulator + future device adapters). `@context ctx begin … end` + task-local-storage propagation. Qubit recycling via `free_slots`. `compact_state!(::EagerContext)` and `compact_state!(::DensityMatrixContext)` reclaim the n_qubits ratchet after Bennett ancilla bursts; auto-triggered from `deallocate!` at `length(free_slots) >= 2*GROW_STEP`. The freed-slot residual scan is governed by the `STURM_COMPACT_VERIFY` env-gate (default on).
 - **Channel IR** — `Channel{In,Out}` over an isbits `HotNode` union (25 bytes/element, 6 node types); `>>` and `⊗` composition; `trace(f, ::Val{N})`.
 - **Export + rendering** — OpenQASM 3.0, Unicode-ASCII terminal renderer with ANSI colour, pixel-art PNG renderer scaling to 1000+ wires, Birren industrial-safety colour palettes.
@@ -837,13 +856,14 @@ end
 end
 ```
 
-### 9.5 The ⊻= operator
+### 9.5 The `⊻=` library operator
 
-Julia does not have `Base.xor!` for custom types. Override `Base.xor` and handle assignment:
+`a ⊻= b` is a *library convenience operator*, not a primitive. It composes to `when(b) do; not!(a); end` — the only sanctioned way to express CNOT in Sturm — and is provided because the textbook XOR-assignment idiom reads naturally for bit arithmetic (`a ⊻= b` in classical Julia is the same operation, type-promoted). Julia does not have `Base.xor!` for custom types, so the implementation overrides `Base.xor`:
 
 ```julia
 # a ⊻= b  desugars to  a = a ⊻ b  in Julia
 # So we return a NEW QBool with the same wire but with a CX applied
+# (semantically equivalent to: when(b) do; not!(a); end)
 
 function Base.xor(a::QBool, b::QBool)
     @assert a.ctx === b.ctx "Cannot entangle qubits from different contexts"
@@ -851,6 +871,8 @@ function Base.xor(a::QBool, b::QBool)
     return a   # return same object — the mutation happened in the DAG
 end
 ```
+
+The mixed-type `q ⊻= true` (classical RHS) is equivalent to `not!(q)` — same library-level convenience.
 
 ### 9.6 Handling `if` on ClassicalRef in tracing mode
 

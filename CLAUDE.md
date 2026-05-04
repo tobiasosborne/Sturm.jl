@@ -18,7 +18,7 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 2. **CORE CHANGES REQUIRE 3+1 AGENTS.** Any change to core types (`types/`), context interface (`context/abstract.jl`), primitives (`primitives/`), or the Orkan FFI layer requires: 2 proposer subagents (independent designs), 1 implementer. The orchestrating agent is the reviewer (+1). Proposers must not see each other's output. The implementer picks the better design (or synthesises). The orchestrator reviews for PRD conformance, idiomatic DSL usage, and test coverage before accepting.
 
-3. **GROUND = PHYSICS.** Every quantum operation, every gate decomposition, every channel identity must be grounded in physics. Not pinned numbers. Not "it works on the test case." The physics must be right. If you derive a gate from the four primitives, prove it on paper first.
+3. **GROUND = PHYSICS.** Every quantum operation, every gate decomposition, every channel identity must be grounded in physics. Not pinned numbers. Not "it works on the test case." The physics must be right. If you derive a gate from the rotation primitives, prove it on paper first.
 
 4. **PHYSICS = LOCAL PDF + EQUATION (two-tier policy).** "Grounded in physics" means a local source for every cited paper plus an explicit equation reference. Two tiers, both committed:
     - `docs/physics/` is the canonical project-side citation directory. It holds (a) the original PDFs of each paper Sturm depends on, AND (b) short Markdown distillations (`docs/physics/<author>_<topic>.md`) that summarise the relevant theorems / equations / page numbers. Source docstrings cite the `.md` distillation; the `.md` file is the contract that "the citation still resolves" even if the PDF moves.
@@ -37,16 +37,19 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 10. **TEST-DRIVEN DEVELOPMENT.** Write the test first. Then write the code to make it pass. Tests live in `test/`. Every PR needs tests. Use `@testset` and `@test`. Statistical tests (measurement outcomes) use N>=1000 samples with tolerance.
 
-11. **IDIOMATIC DSL — 4 PRIMITIVES ONLY.** All quantum code must be written using the four primitives. No imported gate matrices, no raw unitary arrays applied directly. The four primitives are:
+11. **IDIOMATIC DSL — TWO ROTATIONS, TWO CASTS, ONE BINDER.** All quantum code must be written using the surface forms below. No imported gate matrices, no raw unitary arrays applied directly. There is no CNOT primitive, no Toffoli, no swap — entanglement is *composed* from `when` plus a body, never invoked by gate name. The complete vocabulary for quantum-specific code is five constructs:
 
-    | # | Syntax | Semantics | QASM |
-    |---|--------|-----------|------|
-    | 1 | `QBool(p::Real)` | Preparation: Ry(2 arcsin sqrt(p))\|0> | `ry(2*arcsin(sqrt(p))) q` |
-    | 2 | `q.theta += delta` | Amplitude rotation: Ry(delta) | `ry(delta) q` |
-    | 3 | `q.phi += delta` | Phase rotation: Rz(delta) | `rz(delta) q` |
-    | 4 | `a xor= b` | CNOT: b controls, a target | `cx b, a` |
+    | # | Surface form | Role | Semantics | QASM |
+    |---|--------------|------|-----------|------|
+    | 1 | `QBool(p::Real)` | Preparation cast (cq channel, P2) | Allocate at √(1−p)\|0⟩ + √p\|1⟩; Ry(2·arcsin√p)\|0⟩ | `ry(2*arcsin(sqrt(p))) q` |
+    | 2 | `Bool(q)`, `Int(q)` | Measurement cast (qc channel, P2) | Measure and project; implicit casts warn | `measure q -> c` |
+    | 3 | `q.theta += delta` | Channel primitive | Amplitude rotation Ry(delta) | `ry(delta) q` |
+    | 4 | `q.phi += delta` | Channel primitive | Phase rotation Rz(delta) | `rz(delta) q` |
+    | 5 | `when(q) do … end` | Quantum control binder | Lift body to a channel controlled on `q` | controlled gates |
 
-    Every gate in `src/gates.jl` is built from these. Every new algorithm must do the same. A subagent that constructs a gate from a raw matrix is WRONG.
+    **The one named exception is `not!`** — the Julia bang-suffix companion to `!` (since no-cloning forbids the rebinding form `b = !b`). On `QBool` it lowers to `q.φ += π; q.θ += π`. CNOT is `when(a) do; not!(b); end`. The library `a ⊻= b` operator is convenience sugar for the same composition.
+
+    Every gate in `src/gates.jl` is built from this surface. Every new algorithm must do the same. A subagent that constructs a gate from a raw matrix is WRONG. **If your program reads like a circuit diagram, it is wrong** — classical-looking code stays classical; reach for `q.θ += δ` / `q.φ += δ` only when the operation is genuinely quantum.
 
 12. **FULL PIPELINE TESTS WITH VERIFICATION.** Every quantum algorithm must have end-to-end tests: construct circuit via DSL primitives -> execute on EagerContext -> compare output statevector/measurement statistics against the mathematically expected result. Not "does it run without errors." The test must verify the actual output against a known-correct answer.
 
@@ -63,9 +66,9 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 ## Global Phase and Universality
 
-**The 4 primitives generate all single-qubit channels (CPTP maps), not all unitaries.** Ry and Rz have determinant 1 (SU(2)), so no product of them can produce a unitary with determinant ≠ 1 (e.g., the standard Hadamard has det = -1). Every derived gate is defined up to a global phase: H! = -i·H, Z! = -i·Z, etc.
+**The two rotation primitives generate all single-qubit channels (CPTP maps), not all unitaries.** Ry and Rz have determinant 1 (SU(2)), so no product of them can produce a unitary with determinant ≠ 1 (e.g., the standard Hadamard has det = -1). Every derived gate is defined up to a global phase: H! = -i·H, Z! = -i·Z, etc.
 
-**This is physically correct.** In operational quantum mechanics, the fundamental objects are channels, not unitaries. A unitary U and e^{iα}U define the same channel ρ → UρU†. Global phases are not physical — this is not an approximation but a theorem. The DSL lives in SU(2), and SU(2) + CNOT generates all channels on n qubits.
+**This is physically correct.** In operational quantum mechanics, the fundamental objects are channels, not unitaries. A unitary U and e^{iα}U define the same channel ρ → UρU†. Global phases are not physical — this is not an approximation but a theorem. The DSL lives in SU(2), and SU(2) + entanglement (composed via `when(a) do; not!(b); end`) generates all channels on n qubits.
 
 **Consequence: H!² = -I, not I.** This is correct. The states |ψ⟩ and -|ψ⟩ are physically identical. No experiment can distinguish them. Future agents: do NOT attempt to "fix" H!² = -I. It is a feature, not a bug.
 
@@ -102,7 +105,7 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 ## Julia Conventions
 
 1. **Module name is `Sturm`.** `using Sturm` brings the public API into scope.
-2. **Mutation convention.** Functions that mutate quantum state end with `!` (e.g., `H!`, `swap!`, `depolarise!`). The four primitives are the exception — they use operator syntax.
+2. **Mutation convention.** Functions that mutate quantum state end with `!` (e.g., `H!`, `swap!`, `depolarise!`). The rotation primitives (`q.θ += δ`, `q.φ += δ`) and the cast forms (`QBool(p)`, `Bool(q)`, `Int(q)`) are exceptions — they use operator / constructor syntax. `not!` is the named exception (Julia bang-suffix companion to `!`, since no-cloning forbids `b = !b`).
 3. **Type stability.** Functions should be type-stable. Use `@code_warntype` to check hot paths.
 4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan (via `ccall`). No Qiskit, no Cirq, no other quantum frameworks. Only `Test` in extras.
 5. **Width as type parameter.** `QInt{W}` carries width in the type. Julia specialises on it. Use `where {W}` dispatch, not runtime branching on width.
@@ -119,7 +122,8 @@ Julia (Sturm.jl)                    C (Orkan)
 ─────────────────                   ─────────
 QBool, QInt, types                  -
 CompilationContext, DAG             -
-when(), ⊻=, .θ+=, .φ+=             -
+when(), not!, .θ+=, .φ+=,           -
+QBool()/Bool()/Int() casts
 EagerContext          ──ccall──►    orkan_state_create()
   apply_ry!()         ──ccall──►    orkan_gate_ry()
   apply_rz!()         ──ccall──►    orkan_gate_rz()
@@ -150,7 +154,7 @@ Sturm.jl/
     qsvt/                  # quantum singular value transformation
     simulation/            # Trotter-Suzuki, Ising, Heisenberg evolve!
     hardware/              # HardwareContext, IdealisedSimulator, transport (TCP/IPC), protocol
-    gates.jl               # convenience gates built from 4 primitives
+    gates.jl               # convenience gates built from rotation primitives + when + not!
   test/
     runtests.jl            # ~60 test files across all subsystems
 ```

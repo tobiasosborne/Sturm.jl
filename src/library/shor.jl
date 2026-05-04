@@ -986,8 +986,8 @@ finding. Algorithm body is identical to impl C — the `t` classical
 constants `a_j = a^{2^{j-1}} mod N` precomputed via `powermod`, one
 controlled-multiply-by-`a_j` per counter qubit — but each multiply is
 realised with 2·L doubly-controlled φADD(a) modular additions in the
-Fourier basis, running entirely on Sturm's 4 primitives and
-`mulmod_beauregard!`'s own `L+1`-qubit Fourier accumulator.
+Fourier basis, running entirely on Sturm's rotation primitives + `when`
++ `not!` and `mulmod_beauregard!`'s own `L+1`-qubit Fourier accumulator.
 
 Scaling (Beauregard 2003 §3, Eq. p.11):
   * **Gates per c-U_a:**        `O(L² · k_max) = O(L³)`  with exact QFT

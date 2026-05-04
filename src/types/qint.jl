@@ -195,8 +195,9 @@ end
 # Arithmetic Operations", Phys. Rev. A 54(1):147-153.
 # See docs/physics/vedral_1996_adder.md
 #
-# Computes s = (a + b) mod 2^W using the 4 primitives only:
-#   ⊻= (CNOT) and when() { ⊻= } (Toffoli)
+# Computes s = (a + b) mod 2^W using the rotation primitives + `when` + `not!`:
+#   `a ⊻= b`     (library sugar for when(b) do; not!(a); end — CNOT)
+#   `when(c) do a ⊻= b end`   (nested — Toffoli)
 
 """
     _carry_compute!(ctx, c_in, a, b, c_out)

@@ -1,5 +1,7 @@
 # Library patterns: higher-order quantum operations built from the DSL.
-# These are standard algorithms expressed using the 4 primitives.
+# These are standard algorithms expressed using the rotation primitives,
+# the P2 casts, the `when` binder, and `not!` — no raw matrices, no
+# named two-qubit gates.
 
 # ── QFT: superpose and interfere ─────────────────────────────────────────────
 # Ref: Nielsen & Chuang, §5.1 "The quantum Fourier transform", Eq. (5.2)-(5.4).
@@ -219,9 +221,11 @@ end
 #   A   = preparation (uniform superposition for standard Grover)
 #   S₀  = 2|0⟩⟨0| - I (reflection about zero)
 #
-# All operations decompose to the 4 primitives via existing library:
+# All operations decompose to the DSL surface via existing library:
 #   Multi-controlled Z → Toffoli cascade (Barenco et al. 1995, Lemma 7.2)
-#   Each Toffoli = when(c) { target ⊻= c2 } (uses CCX from Orkan)
+#   Each Toffoli = nested when(c) do; when(c2) do; not!(target); end; end
+#   (the library `a ⊻= b` operator is convenience sugar for the same composition;
+#    `apply_cx!` dispatches to Orkan's CCX fast path under control stacks)
 
 """
     _optimal_iterations(n_items::Int, n_marked::Int) -> Int
@@ -334,7 +338,8 @@ Mark a computational basis state by flipping its phase: |target⟩ → -|target�
 All other states unchanged.
 
 Circuit: X qubits where target has a 0 bit (mapping |target⟩ to |1...1⟩),
-multi-controlled Z, undo X. Built entirely from the 4 primitives.
+multi-controlled Z, undo X. Built entirely from the rotation primitives
++ `when` + `not!`.
 """
 function phase_flip!(x::QInt{W}, target::Integer) where {W}
     check_live!(x)

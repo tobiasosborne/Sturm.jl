@@ -6,7 +6,9 @@
 #   Local copy: docs/physics/draper_2000_qft_adder.pdf.
 #
 # Design principles:
-#   * 4 primitives only — no raw matrices, no named gates outside `gates.jl`.
+#   * Rotation primitives + `when` + `not!` only — no raw matrices, no
+#     named two-qubit gates outside `gates.jl`. (The library `⊻=` operator,
+#     used here for readability, is convenience sugar for `when(b) do; not!(a); end`.)
 #   * Caller manages the QFT↔computational-basis sandwich. This file
 #     implements the in-basis operations.
 #   * `a` is a classical `Integer` — Draper's n²/2 controlled rotations
