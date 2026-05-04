@@ -189,7 +189,8 @@ export BlockEncoding, block_encode_lcu
 
 # QSVT
 export QSVTPhases, apply_processing_op!
-export qsvt_combined_reflect!, oaa_amplify!
+export qsvt_combined_reflect!, oaa_amplify!, qsvt_reflect!, qsvt_phases
+export sign_polynomial
 
 # Bennett integration
 export apply_reversible!, apply_oracle!, build_wire_map, estimate_oracle_resources

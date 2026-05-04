@@ -13,7 +13,8 @@
 # The global phase factors out and doesn't affect measurements.
 #
 # Ref: Laneve (2025), arXiv:2503.03026, Theorem 9.
-#      Local PDF: docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf
+#      Distillation: docs/physics/laneve_2025_gqsp_nlft.md
+#      Local PDF:    docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf
 
 """
     qsvt_protocol!(theta_signal::Float64, phases::QSVTPhases) -> QBool

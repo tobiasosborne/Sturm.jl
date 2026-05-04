@@ -38,6 +38,7 @@ using Sturm
     include("test_block_encoding.jl")
     include("test_qsvt_conventions.jl")
     include("test_qsvt_polynomials.jl")
+    include("test_qsvt_sign_polynomial.jl")
     include("test_qsvt_phase_factors.jl")
     include("test_qsvt_reflect.jl")
     include("test_oaa.jl")

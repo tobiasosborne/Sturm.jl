@@ -7,10 +7,12 @@
 # Step 3: RHW factorization (c_hat → F_k)
 # Step 4: Phase extraction (F_k → GQSP angles)
 #
-# Ref: Berntson, Sunderhauf (2025), CMP 406:161.
-#      Local PDF: docs/literature/quantum_simulation/qsp_qsvt/s00220-025-05302-9.pdf
+# Ref: Berntson, Sünderhauf (2025), CMP 406:161 (arXiv:2406.04246).
+#      Distillation: docs/physics/berntson_sunderhauf_2025_complementary_polynomials.md
+#      Local PDF:    docs/literature/quantum_simulation/qsp_qsvt/2406.04246.pdf
 # Ref: Laneve (2025), arXiv:2503.03026.
-#      Local PDF: docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf
+#      Distillation: docs/physics/laneve_2025_gqsp_nlft.md
+#      Local PDF:    docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf
 #
 # ── Parity convention ──
 # The user-facing phase-count rule for qsvt_phases (src/qsvt/circuit.jl) is:
