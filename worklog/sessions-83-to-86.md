@@ -1,3 +1,62 @@
+## 2026-05-04 — Session 86: Sextant.jl PRD + PLAN + CLAUDE.md (fresh-agent handoff docs)
+
+User asked for a PRD + plan in Sextant.jl so a fresh agent (or human
+contributor) can pick up work without prior context. Three docs landed in
+Sextant.jl commit `d43da79`:
+
+- **`CLAUDE.md`** — local conventions + bd-tracking quirks. Key points:
+  Sextant beads live in Sturm.jl's bd db with `sextant` label (no `bd init`
+  here for now); reading order for fresh agents (CLAUDE → PRD → PLAN →
+  research reports → Sturm/CLAUDE.md for shared engineering discipline);
+  the wisp_dependencies caveat (yl52); session-close protocol mirroring
+  Sturm.jl's. Explicitly defers the development-discipline rules (TDD,
+  fail-fast, no parallel Julia, etc.) to Sturm/CLAUDE.md as authoritative —
+  Sextant inherits, doesn't duplicate.
+
+- **`Sextant-PRD.md`** — vision document (~400 lines). Sections: one-line
+  summary; why-this-exists (the Discourse 2017+2022 community-want gap);
+  four pillars (idiomatic, REPL-first, substrate not application, static
+  export beats live server); nine design principles (P1 Profile.jl is the
+  foundation, P2 REPL-usable on day one, P3 versioned schema, P4 extension
+  API as the only public seam, P5 static export primary, P6 monorepo, P7
+  sampled coverage OK for v1.0, P8 license-free deps, P9 golden-snapshot
+  testing); explicit non-goals list (custom tracer, JET overlays, multi-
+  pane, semantic zoom, WebGL fallback — all deferred); layered-stack
+  architecture diagram; Trace data model spec (flat ID-keyed dict per
+  Classiq's lesson, extensions slot for downstream packages); extension API
+  contract sketch; public API surface (provisional names); license.
+
+- **`PLAN.md`** — six-phase bead plan with full Sturm.jl-XXXX IDs and an
+  ASCII critical-path diagram. Each phase has a status table (bead ID,
+  title, status, prerequisite). Section per phase explaining the goal.
+  Calls out the two milestones explicitly: `wse6` (REPL milestone — Sextant
+  becomes useful with no JS) and `akqx` (MVP gate — registerable in
+  General). Reference materials section pointing at the three deep-research
+  reports in `~/Projects/research-notebook/raw/`. "After v1.0" section
+  noting the JuliaCon-talk pitch as a possibility.
+
+- **`README.md`** — updated index pointing at the three docs.
+
+No bead filed for this — it's documentation following a closed bead (aywf).
+The work is captured here in the worklog and in Sextant's git history.
+
+### What an agent will see
+
+- Sextant.jl repo lands them in CLAUDE.md
+- CLAUDE.md tells them: read PRD next, then PLAN, then claim a bead
+- PLAN tells them: next ready is `uo0f` (JSON schema spec, design-doc-only)
+- bd shows them the bead description; the prerequisite chain in PLAN.md
+  guides them past the broken `bd ready` / wisp_dependencies issue
+- Three deep-research reports in research-notebook explain the *why*
+
+### Next ready bead — confirmed
+
+`Sturm.jl-uo0f` (sx-0b) — JSON wire-schema v0.1 spec. Pure design doc
+(no code). Lands `Sextant.jl/docs/SCHEMA.md` with the full spec + a worked
+Bell-pair example. Lock the contract before any tracer code is written.
+
+---
+
 ## 2026-05-04 — Session 85: Sextant.jl scaffolded + GitHub repo shipped (sx-0a closed)
 
 Closed bead `Sturm.jl-aywf` (sx-0a — project scaffold). Sextant.jl bootstrap
