@@ -1,3 +1,102 @@
+## 2026-05-04 — Session 84: viz scope expansion → Sextant.jl substrate split
+
+Continuation of session 83 within the same day. User pushed the viz scope:
+"this should function as a plain Julia vis as well if no quantum gets called.
+This is very much in line with sturm.jl being as julia as possible. I realise
+this makes the scope 'all of julia' but, there you go." The original 34-bead
+Sturm-only viz plan was wrong-shaped for that. Sonnet deep-research agent
+launched on Julia code-vis tooling (saved at
+`../research-notebook/raw/code-viz-survey/JULIA_CODE_VIZ_SURVEY.md`); findings:
+
+- **The Julia community has wanted a graphical, source-linked, type-annotated
+  call-graph navigator for years and nobody has built it.** Cthulhu.jl is REPL
+  only; PProf.jl gives flame graphs but the call-graph view is minimal;
+  Compiler Explorer/Godbolt supports Julia for assembly only (no typed IR, no
+  call structure). Discourse threads from 2017 and 2022 explicitly request a
+  call-graph generator; both go unresolved.
+- **The right MVP-Julia stack is NOT a custom IRTools dynamo.** Profile.jl is
+  stdlib; FlameGraphs.jl already produces an `AbstractTrees`-compatible call
+  tree. Build a thin bridge — the classical execution graph already exists.
+  IRTools/Cassette/IRTracker are for "complete call capture" (vs sampled),
+  which is a Phase-N enhancement, not a foundation. (Cassette is broken on
+  Julia 1.12; IRTracker.jl was archived May 2025 — reimplement only when
+  sampled coverage is genuinely insufficient.)
+- **Bonito.jl is the right Julia↔React bridge** (WebSocket binary serializer,
+  ES6 module loading), but file-drop offline viewer is the right MVP — it
+  validates the visual design without coupling to Julia process lifecycle.
+- **Hybrid quantum-classical execution-graph viz has zero prior art.** QVis,
+  Quff, IBM classical-feedforward, all stop at "show classical `if` as a box
+  inside a circuit diagram." The Sturm vision is genuinely novel.
+
+Reframed the plan after the user said "what would an expert software engineer
+julia expert do?" The expert answer is to build the generic Julia execution
+trace package FIRST (Sextant.jl, separate AGPL-3.0), then layer Sturm-specific
+quantum extensions ON TOP via a clean extension API. Tim Holy / Jameson Nash /
+Kristoffer Carlsson would ship the REPL `print_tree` view in week one and the
+file-drop static-HTML viewer in week two; Bonito + live mode comes later.
+
+### Bead restructure
+
+- **Closed all 33 viz atoms from session 83** (1ypa through 66p7) with a single
+  supersession note pointing to the new structure. Substantially all of their
+  work moved to Sextant. The original `Sturm.jl-02nv` epic is KEPT but rewrote
+  its description to be the Sturm-side quantum overlay parent (links to
+  Sextant epic + the 6 Sturm-quantum atoms).
+- **Filed Sextant.jl epic Sturm.jl-pggr + 22 atoms** (still under Sturm.jl bead
+  prefix; will move to Sextant.jl's own bead repo when the package is created).
+  Phase 0 scaffold (aywf project + uo0f schema), Phase 1 Julia tracer (pxfk
+  Profile bridge, wse6 print_tree, wscn to_json, xlhw goldens), Phase 2 frontend
+  MVP (rg1s scaffold, a6so React Flow + ELK, hgca classical node renderer, xpqc
+  drill-down, **akqx MVP gate** — the bead that makes Sextant registerable in
+  General), Phase 3 source↔DAG sync (okad Monaco, dyg3 click→source, 1x1z
+  cursor→DAG, g8b9 URL state), Phase 4 live mode (br9n Bonito bridge, j8em
+  live updates, 580c replay), Phase 5 deployment (0u0c to_html, g8f7 Pluto, w2io
+  VS Code), Phase 6 extension API (bnxj — the seam that lets Sturm extend cleanly).
+- **Filed 6 Sturm-quantum-overlay atoms**: rl1s channel-DAG to_json + Sextant
+  extension wiring, 5igx quantum node React renderers, **nh4w hybrid Shor demo
+  gate** (the Sturm-MVP bead — answers the user's "will it show all of Shor?"
+  question end-to-end), 0h7t quantum goldens, 2vfo DM noise overlay (P3,
+  Sturm-unique), fwlh quantum-flavoured VS Code/Pluto hooks (P3).
+
+### Critical paths
+
+- **Sextant MVP**: aywf → uo0f → pxfk → wse6 (REPL-usable here, ~1 week of
+  effort) → wscn → xlhw → rg1s → a6so → hgca → xpqc → **akqx** (registerable
+  in General).
+- **Sturm-quantum MVP**: requires Sextant up to bnxj (extension API). Then
+  rl1s → 5igx → **nh4w** (hybrid Shor renders end-to-end).
+
+### Architectural decisions captured
+
+1. **Separate package (Sextant.jl)** — the Julia community gets a generic tool;
+   Sturm extends it via the extension API; layering is honest and discoverable.
+2. **No custom tracer for MVP** — Profile.jl + FlameGraphs.jl is the substrate.
+   IRTools dynamo is filed nowhere yet (will be added to a "richer-trace-data"
+   epic once MVP is in users' hands).
+3. **File-drop offline viewer as MVP** — Bonito live mode is Phase 4; MVP
+   doesn't need it. Validates the visual design first.
+4. **Monorepo for Sextant** — `frontend/` as a subdir of Sextant.jl, not a
+   separate `Sextant-viz` repo. Julia ecosystem doesn't usually fragment
+   frontends out; one repo means one CI, one release, one source of truth.
+5. **REPL `print_tree` from day one** — implementing `AbstractTrees.children`
+   on the Trace type makes the package useful before any JS exists. Tim Holy
+   discipline: ship a working primitive, then layer the GUI.
+
+### Carryover
+
+- **Sextant.jl GitHub repo doesn't exist yet** — needs to be created (`aywf`
+  bead). When it is, decide whether to give it its own bd database or keep
+  beads under Sturm.jl with the `sextant` label. Argument for separate db:
+  community contributors shouldn't need to know about Sturm to file Sextant
+  issues. Argument for unified: everything stays under one Dolt remote for now,
+  decoupling can happen later.
+- The `Sturm.jl-yl52` wisp_dependencies bug remains open — `bd dep` writes
+  silently warn and create the link (parent-child workaround); reads still
+  fail. The 28 new parent-child links exist in the DB but `bd dep tree` /
+  `bd ready` cannot display them. Phase ordering is in the epic descriptions.
+
+---
+
 ## 2026-05-04 — Session 83: bd resync from origin + ph26 doc sweep + viz-frontend epic plan
 
 Three streams: re-cloned beads from origin (canonical), shipped the ph26 doc-sweep
