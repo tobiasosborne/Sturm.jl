@@ -12,8 +12,10 @@
 
 using Test, Sturm
 using Sturm: sign_polynomial, chebyshev_eval,
-             PauliHamiltonian, PauliTerm, pauli_I, pauli_Z,
+             PauliHamiltonian, PauliTerm, pauli_I, pauli_X, pauli_Y, pauli_Z,
              block_encode_lcu, qsvt_reflect!, qsvt_phases
+using LinearAlgebra: eigen, Diagonal, Hermitian
+using Random: MersenneTwister
 
 @testset "sign_polynomial — Lin-Tong 2020 Lemma 3" begin
 
@@ -158,6 +160,116 @@ using Sturm: sign_polynomial, chebyshev_eval,
             # for shot noise + polynomial approximation error (ε=0.05).
             p_one = n_one / n_success
             @test p_one > 0.85
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────
+    # End-to-end on a non-trivial Hermitian: H = a·X + b·Y + c·Z with
+    # eigenvectors that are NOT computational basis states. Compares the
+    # post-selected output distribution against the diagonalised ground
+    # truth `sign(H/α)·|0⟩` — this catches polynomial / phase / circuit
+    # bugs that the H = Z case (computational-basis eigenvectors) hides.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @testset "qsvt_reflect! · sign_polynomial: random 1-qubit Hermitians vs ground truth" begin
+        # Pauli matrices for the analytic reference.
+        I2 = ComplexF64[1 0; 0 1]
+        sX = ComplexF64[0 1; 1 0]
+        sY = ComplexF64[0 -im; im 0]
+        sZ = ComplexF64[1 0; 0 -1]
+
+        # Three random Hermitians, fixed-seed reproducible. Coefficients
+        # chosen so that:
+        #   * α = |a_X| + |a_Y| + |a_Z| (LCU 1-norm), so H/α has spectral
+        #     radius < 1 (eigenvalues strictly inside [-1, 1]),
+        #   * |λ/α| ≥ δ for some δ ≥ 0.4 (eigenvalues lie on the plateau),
+        #   * neither eigenvector aligns with the computational basis (X
+        #     and/or Y terms make the eigenvectors superpositions).
+        rng = MersenneTwister(0xc0ffee)
+        cases = NamedTuple[]
+        while length(cases) < 3
+            a_X, a_Y, a_Z = (rand(rng) - 0.5), (rand(rng) - 0.5), (rand(rng) - 0.5)
+            α = abs(a_X) + abs(a_Y) + abs(a_Z)
+            r = sqrt(a_X^2 + a_Y^2 + a_Z^2)        # spectral radius of H
+            r / α >= 0.5 || continue                 # ensures plateau room
+            push!(cases, (a_X=a_X, a_Y=a_Y, a_Z=a_Z, α=α))
+        end
+
+        δ = 0.4
+        ε = 0.05
+        cheb = sign_polynomial(δ, ε)
+        phi  = qsvt_phases(cheb; epsilon=1e-3)
+
+        for (i, c) in enumerate(cases)
+            H_mat = c.a_X * sX + c.a_Y * sY + c.a_Z * sZ
+
+            # Ground truth: sign(H/α) acting on |0⟩, computed via spectral
+            # decomposition (this is the "what should happen" reference).
+            evals, evecs = eigen(Hermitian(H_mat ./ c.α))
+            sign_op   = evecs * Diagonal(sign.(evals)) * evecs'
+            psi_in    = ComplexF64[1.0, 0.0]                # |0⟩
+            psi_out   = sign_op * psi_in
+            p_exp     = abs2.(psi_out)                       # [P(0), P(1)]
+
+            # Sanity: eigenvalues fall in the plateau (otherwise the
+            # polynomial cannot map them within ε).
+            @test all(abs(λ) >= δ for λ in evals)
+
+            # Build the block encoding (LCU of the three Pauli terms).
+            # Skip terms whose coefficient is 0 — block_encode_lcu doesn't
+            # reject them but it pads the ancilla register pointlessly.
+            terms = PauliTerm{1}[]
+            iszero(c.a_X) || push!(terms, PauliTerm{1}(c.a_X, (pauli_X,)))
+            iszero(c.a_Y) || push!(terms, PauliTerm{1}(c.a_Y, (pauli_Y,)))
+            iszero(c.a_Z) || push!(terms, PauliTerm{1}(c.a_Z, (pauli_Z,)))
+            H = PauliHamiltonian{1}(terms)
+            be = block_encode_lcu(H)
+            @test be.alpha ≈ c.α
+            @test be.n_system == 1
+
+            # Statistical run on Orkan.
+            N_shots = 600
+            n_success = 0
+            n_one     = 0
+            for _ in 1:N_shots
+                ctx = EagerContext()
+                @context ctx begin
+                    sys = [QBool(ctx, 0.0)]                  # |0⟩
+                    success = qsvt_reflect!(sys, be, phi)
+                    if success
+                        n_success += 1
+                        if Bool(sys[1])
+                            n_one += 1
+                        end
+                    else
+                        for s in sys; discard!(s); end
+                    end
+                end
+            end
+
+            # Post-selection: ||P(A)|0⟩||² ≈ 1 (sign is norm-preserving and
+            # P ≈ sign within ε), so success rate should be close to 1.
+            @test n_success > N_shots ÷ 4
+
+            if n_success > 30
+                p_one_meas = n_one / n_success
+                p_one_exp  = p_exp[2]
+                σ          = sqrt(max(p_one_exp * (1 - p_one_exp), 1e-6) / n_success)
+                # Tolerate 5σ shot noise + polynomial approximation slack.
+                # The polynomial error ε = 0.05 may shift ⟨1|out⟩ by O(ε),
+                # so we allow a 0.10 absolute floor on the residual.
+                tol = max(5σ, 0.10)
+                @test abs(p_one_meas - p_one_exp) < tol
+                # Diagnostic — only printed when test FAILS.
+                if !(abs(p_one_meas - p_one_exp) < tol)
+                    @info "case $i: H = $(c.a_X)·X + $(c.a_Y)·Y + $(c.a_Z)·Z" *
+                          "  α=$(round(c.α,digits=3))" *
+                          "  evals/α=$(round.(evals,digits=3))" *
+                          "  expected P(1)=$(round(p_one_exp,digits=3))" *
+                          "  measured P(1)=$(round(p_one_meas,digits=3))" *
+                          "  success=$(n_success)/$(N_shots)"
+                end
+            end
         end
     end
 end
