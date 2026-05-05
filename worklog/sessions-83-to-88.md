@@ -1,3 +1,171 @@
+## 2026-05-05 — Session 88: 4ceh QSVT post-selection-rate root-cause investigation (open, handoff)
+
+Filed and investigated bead `Sturm.jl-4ceh` (P1 bug). Surfaced from session
+87's u1er Phase 2 random-2x2 demo: the QSVT post-selection success rate for
+multi-ancilla block encodings (m ≥ 2) is consistently far below the naïve
+GSLW Theorem 17 prediction. Conditional-on-success output matches the
+analytical reference, so amplitude is leaking out of the flag-zero
+subspace somewhere and the existing tests (which only check conditional
+distributions and use loose `n_success > 30` thresholds) don't catch it.
+
+**Hypothesis tried and falsified**:
+`qsvt_reflect!` (src/qsvt/circuit.jl line 228) applies
+`ancillas[1].φ += -2*phases[j]` — a single-qubit Rz on ancilla 0 — instead
+of the GSLW canonical `Π^φ = e^{iφ(2|0⟩⟨0|^m − I)}`. For m=1 these are
+identical; for m≥2 they differ. The natural fix was to route the rotation
+through the existing `_reflect_ancilla_phase!` helper (line 605, written
+for OAA in bead 1g7, which IS the canonical multi-controlled reflection).
+
+Empirically:
+
+| Case               | m | Single-Rz (current) | Multi-controlled (canonical) |
+|--------------------|---|---------------------|------------------------------|
+| H = Z              | 1 | 100% ✓              | 100% ✓                       |
+| 3-Pauli H          | 2 | ~37%                | 35% (worse)                  |
+
+Conditional output matched the analytical reference under both. So the
+phases from `qsvt_phases` are calibrated for the single-Rz convention,
+not the canonical Π^φ — replacing the rotation broke the calibration.
+Reverted; comment block on `qsvt_reflect!` documents the failed attempt
+so future agents don't repeat it (commit 328726f).
+
+**Empirical structure surfaced for the next investigator**: across four
+distinct 3-Pauli-term Hamiltonians with sign polynomial, the measured
+success rate ≈ `⟨ψ|(H/α)²|ψ⟩` exactly — the one-step block-encoding
+success probability, NOT the iterated QSVT result.
+
+| | r²/α² (one-step) | Measured |
+|---|---|---|
+| Random case 1 | 0.470 | 0.50 |
+| Random case 2 | 0.379 | 0.40 |
+| Random case 3 | 0.479 | 0.46 |
+| Probe2 H      | 0.347 | 0.37 |
+
+The Hamsim **cos** test on the same m=2 ising BE gets ~80% success when
+r²/α² = 0.375 — the rule isn't universal. Polynomial-parity dependence
+I don't yet understand.
+
+**Live hypotheses on the bead** (none confirmed):
+- H6: implemented polynomial under single-Rz convention is `P(A/α)·(H/α)`,
+  not `P(A/α)` — extra `(H/α)` factor. Matches the sign-poly observation
+  but doesn't explain cos.
+- H7: LCU PREPARE pad-state leakage (when L is not a power of 2, e.g. L=3
+  → m=2 with `|11⟩` as a padding slot). Doesn't explain cos either (L=3 too).
+- H8: `qsvt_phases` introduces a parity-dependent normalization (BS-25 →
+  Laneve-25 → `phi[end] += π/2`).
+
+**Concrete next-step probe** (for the next agent):
+Take a 1-qubit BE that gives 100% (e.g. H = Z), pad it to m=2 by adding a
+tautological identity ancilla wire that doesn't participate in the encoded
+operator. Same eigenvalues, same polynomial, different m. If the padded
+version tanks success → H7 (PREPARE pads are the culprit). If not → H6/H8,
+and the next move is to hand-multiply qsvt_reflect for n=3 phases on a
+tiny m=2 BE and compute the polynomial actually implemented.
+
+**Tooling left for the next agent**:
+- `/tmp/4ceh_probe1.jl` — clean rate measurement on H=Z and ising-cos.
+  Reproduces the sign m=1 → 100% / cos m=2 → 80% baseline.
+- `/tmp/4ceh_probe2.jl` — minimal m=2 reproduction (3 Pauli terms, 400 shots).
+- Bead `Sturm.jl-4ceh` notes contain the full hypothesis matrix and reasoning.
+
+**Bead state**: `4ceh` claimed/in_progress, code reverted, all findings
+recorded. **Do not repeat the multi-controlled-reflection swap** — it's
+documented as a dead end. Start with the H7 padding probe.
+
+**Related beads filed this session**:
+- `Sturm.jl-zh8u` (P2) — projector via Lin-Tong Lemma 5 LCU
+- `Sturm.jl-jlaw` (P2) — `Vector{QBool}` → typed register hygiene
+
+---
+
+## 2026-05-04 — Session 87: u1er QSVT eigenvalue filter / sign polynomial shipped
+
+Bead `Sturm.jl-u1er` (P2 → CLOSED). First concrete non-Hamsim QSVT atom
+of the mt9 epic. HHL explicitly excluded from the epic per user direction.
+
+Three deliverables across two commits:
+
+**Phase 1 (commit 08f2b68)** — `sign_polynomial(δ, ε)` in
+`src/qsvt/polynomials.jl`. Lin-Tong 2020 Lemma 3 odd-parity Chebyshev
+coefficients: `|S(x)| ≤ 1` on `[-1,1]`, `|S(x) − sign(x)| ≤ ε` on
+`[-1,-δ] ∪ [δ,1]`, degree `O((1/δ) log(1/ε))`. Construction: DCT-I of
+`erf(K·x)` at Chebyshev–Lobatto nodes with `K = √(log(2/ε))/δ`, automatic
+degree from Chebyshev tail, final rescale `(1 − ε/4)` for QSP downscaling
+headroom.
+
+Three new `docs/physics/` distillations per Rule 4 (none existed for the
+QSVT pipeline before this commit — the existing src cited `docs/literature/`
+only):
+- `berntson_sunderhauf_2025_complementary_polynomials.md` — BS-25 P→Q
+  (FFT, provably stable). Algorithm 1 with explicit error bound.
+- `laneve_2025_gqsp_nlft.md` — Laneve-25 (P,Q) → phase factors via NLFT
+  inverse / RHW. Theorem 5 NLFT bridge, §4.3 RHW algorithm.
+- `lin_tong_2020_ground_state_prep.md` — Lemma 3 (the polynomial),
+  Lemma 5 (reflector → projector, deferred to bead `zh8u`).
+
+`test/test_qsvt_sign_polynomial.jl` — TDD red→green, 570 tests covering
+shape, Lemma 3 (1) and (2), degree scaling, and integration with
+`qsvt_phases` (verifies BS-25 → Laneve-25 pipeline accepts the polynomial
+and emits 2d+1 phases for odd parity). Wired into `test/runtests.jl`.
+
+**Phase 2 (commit 0472374)** — End-to-end `sign(H)` on a 1-qubit
+block-encoded H = Z. Build H = Z directly as `PauliHamiltonian{1}`, then
+run the shipped pipeline:
+
+```julia
+cheb = sign_polynomial(δ=0.5, ε=0.05)
+phi  = qsvt_phases(cheb; epsilon=1e-3)         # BS-25 → Laneve-25 RHW
+@context EagerContext() begin
+    sys = [QBool(0.5)]                          # |+⟩ via P2 prep cast
+    success = qsvt_reflect!(sys, be_of_Z, phi)
+    if success
+        sys[1].φ += π                           # ┐ Hadamard via primitives
+        sys[1].θ += π / 2                       # ┘ no named gate
+        Bool(sys[1])                            # → 1 with prob > 0.85
+    end
+end
+```
+
+Statistical acceptance (400 shots): post-selection > 50%, `P(1)|success
+> 0.85`. Both pass on real Orkan. Zero named gates in new code; Hadamard
+synthesised via the rotation primitives.
+
+**Random 2x2 demo (commit 7eaaba4)** — Sturdier check after user pushback
+("Z is too simple and won't expose real problems"). Three deterministic-
+seed (`MersenneTwister(0xc0ffee)`) random Hermitians of the form
+`a_X·X + a_Y·Y + a_Z·Z`, eigenvectors not aligned with the computational
+basis. Reference computed via spectral decomposition (`eigen(Hermitian(H/α))`),
+fully independent of the QSVT pipeline. Maximum residual `|Δ| = 0.041`
+(case 2) on 600 shots — all within polynomial slack.
+
+| case | a_X | a_Y | a_Z | α | λ/α | P(1) exp | P(1) meas | post-sel |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 0.156 | -0.049 | 0.326 | 0.532 | ±0.687 | 0.201 | 0.203 | 300/600 |
+| 2 | -0.178 | 0.489 | -0.374 | 1.041 | ±0.616 | 0.660 | 0.619 | 239/600 |
+| 3 | -0.090 | 0.446 | 0.160 | 0.697 | ±0.693 | 0.890 | 0.924 | 276/600 |
+
+The post-selection rates ~50% (vs. naïvely-predicted ~97%) led to the
+4ceh bug filing and Session 88's investigation above.
+
+**Idiom hygiene during u1er**: zero named gates in new code. Hadamard
+spelled `q.φ += π; q.θ += π/2` (the rotation primitives directly) per
+the README rule that Hadamard "has no Julia-classical counterpart; when
+you need one, write the rotation primitives directly". The existing
+`Vector{QBool}` antipattern in `qsvt_reflect!` was untouched; refactor
+is filed as `jlaw` to land before more QSVT atoms.
+
+**Related beads filed during u1er**:
+- `Sturm.jl-zh8u` (P2) — Lin-Tong Lemma 5 projector LCU + GSLW19 Lemma 29
+  shift, builds `Π_{<µ}` from the reflector. Foundation for ground-state
+  prep. Includes the `H − µI` shift that brings non-zero thresholds online.
+- `Sturm.jl-jlaw` (P2) — `Vector{QBool}` → typed register hygiene across
+  QSVT/block-encoding API. Sequencing: ship before more QSVT atoms.
+
+**Test count after u1er**: 590 in `test_qsvt_sign_polynomial` (215+575
+in the QSVT triangle).
+
+---
+
 ## 2026-05-04 — Session 86: Sextant.jl PRD + PLAN + CLAUDE.md (fresh-agent handoff docs)
 
 User asked for a PRD + plan in Sextant.jl so a fresh agent (or human
