@@ -239,19 +239,28 @@ function qsvt_reflect!(system::Vector{QBool}, be::BlockEncoding,
     # ── QSVT circuit (GSLW Definition 15) ──
     # Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), ...
     # Oracle alternates: U first, then U†, then U, then U†, ...
+    #
+    # Bead Sturm.jl-4ceh: the GSLW canonical form uses
+    # Π^φ = e^{iφ(2|0⟩⟨0|^m − I)} — a multi-controlled reflection on the
+    # all-zero ancilla state.  For m=1 ancilla this equals Rz(-2φ) on the
+    # ancilla; for m≥2 it does NOT.  Replacing the single-qubit Rz below
+    # with a multi-controlled reflection (via _reflect_ancilla_phase!)
+    # was attempted in 4ceh and made the post-selection success rate
+    # WORSE (50%→35% on a 3-Pauli-term H).  Conclusion: the phases out
+    # of qsvt_phases are calibrated for the single-qubit-Rz-on-ancilla[1]
+    # convention used here, not the GSLW canonical Π^φ.  The output
+    # operator (conditional on success) matches the analytical reference,
+    # but the success rate for m>1 is empirically below the naïve |P|²
+    # prediction.  Root cause for the m>1 success-rate gap is NOT this
+    # rotation; investigation continues in 4ceh.
     use_oracle = true  # true = U, false = U†
     for j in n:-1:1
-        # Apply oracle (U or U†)
         if use_oracle
             be.oracle!(ancillas, system)
         else
             be.oracle_adj!(ancillas, system)
         end
-
-        # Apply Z-rotation e^{iφ_j Z} on first ancilla qubit
-        # e^{iφZ} = diag(e^{iφ}, e^{-iφ}) = Rz(-2φ)
         ancillas[1].φ += -2.0 * phases[j]
-
         use_oracle = !use_oracle  # alternate U ↔ U†
     end
 
