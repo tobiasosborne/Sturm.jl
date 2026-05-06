@@ -17,7 +17,8 @@
 using Test, Sturm
 using Sturm: sign_polynomial, qsvt_phases, chebyshev_eval,
              PauliHamiltonian, PauliTerm, pauli_X, pauli_Y, pauli_Z,
-             block_encode_lcu, EagerContext, QBool, nqubits
+             block_encode_lcu, EagerContext, QBool, nqubits,
+             _qsvt_reflect_naked!
 using LinearAlgebra: eigen, Diagonal, Hermitian, norm
 using Random: MersenneTwister
 
@@ -43,17 +44,7 @@ function reflect_block_operator(H::PauliHamiltonian{N},
         @context ctx begin
             sys = [QBool(ctx, Float64((j >> k) & 1)) for k in 0:N-1]
             ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
-            n = length(phi)
-            use_oracle = true
-            for k in n:-1:1
-                if use_oracle
-                    be.oracle!(ancillas, sys)
-                else
-                    be.oracle_adj!(ancillas, sys)
-                end
-                ancillas[1].φ += -2.0 * phi[k]
-                use_oracle = !use_oracle
-            end
+            _qsvt_reflect_naked!(sys, be, phi, ancillas)
             dim = 1 << Int(ctx.orkan.raw.qubits)
             amps = unsafe_wrap(Array{ComplexF64,1}, ctx.orkan.raw.data, dim)
             for i in 0:dim_sys-1
@@ -118,9 +109,11 @@ end
 
     # ────────────────────────────────────────────────────────────────────
     # T2 — H = aX·X + aZ·Z (n_ancilla = 1). Eigenvectors are NOT comp-basis
-    # but the BE still has only 1 ancilla. Probe finding: |c| = 1.
-    # Expected PASS — n_ancilla = 1 means single-qubit Rz on ancillas[1] IS
-    # the correct multi-ancilla reflector Π^φ for m = 1.
+    # but the BE has only 1 ancilla, so Bug B (multi-ancilla Π^φ) does NOT
+    # fire. The bug that fires here is Bug A (l5s5): qsvt_phases ships
+    # analytic-QSP angles without the §2.1 analytic→reflection conversion
+    # shift. Probe finding (session 89): |c| ≈ 0.7256 instead of 1.
+    # Expected RED on current code; passes when l5s5 is fixed.
     # ────────────────────────────────────────────────────────────────────
     @testset "T2 — H = a·X + b·Z (n_ancilla = 1)" begin
         a_X, a_Z = 0.3, 0.4

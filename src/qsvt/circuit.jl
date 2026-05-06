@@ -233,46 +233,54 @@ function qsvt_reflect!(system::Vector{QBool}, be::BlockEncoding,
     n >= 1 || error("qsvt_reflect!: need at least 1 phase, got 0")
     ctx = system[1].ctx
 
-    # ── Allocate ancilla qubits ──
     ancillas = [QBool(ctx, 0.0) for _ in 1:be.n_ancilla]
+    _qsvt_reflect_naked!(system, be, phases, ancillas)
 
-    # ── QSVT circuit (GSLW Definition 15) ──
-    # Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), ...
-    # Oracle alternates: U first, then U†, then U, then U†, ...
-    #
-    # Bead Sturm.jl-4ceh: the GSLW canonical form uses
-    # Π^φ = e^{iφ(2|0⟩⟨0|^m − I)} — a multi-controlled reflection on the
-    # all-zero ancilla state.  For m=1 ancilla this equals Rz(-2φ) on the
-    # ancilla; for m≥2 it does NOT.  Replacing the single-qubit Rz below
-    # with a multi-controlled reflection (via _reflect_ancilla_phase!)
-    # was attempted in 4ceh and made the post-selection success rate
-    # WORSE (50%→35% on a 3-Pauli-term H).  Conclusion: the phases out
-    # of qsvt_phases are calibrated for the single-qubit-Rz-on-ancilla[1]
-    # convention used here, not the GSLW canonical Π^φ.  The output
-    # operator (conditional on success) matches the analytical reference,
-    # but the success rate for m>1 is empirically below the naïve |P|²
-    # prediction.  Root cause for the m>1 success-rate gap is NOT this
-    # rotation; investigation continues in 4ceh.
-    use_oracle = true  # true = U, false = U†
-    for j in n:-1:1
-        if use_oracle
-            be.oracle!(ancillas, system)
-        else
-            be.oracle_adj!(ancillas, system)
-        end
-        ancillas[1].φ += -2.0 * phases[j]
-        use_oracle = !use_oracle  # alternate U ↔ U†
-    end
-
-    # ── Post-select ancilla on |0⟩ ──
     success = true
     for a in ancillas
         if Bool(a)
             success = false
         end
     end
-
     return success
+end
+
+"""
+    _qsvt_reflect_naked!(system, be, phases, ancillas)
+
+Body of the GSLW reflection QSVT circuit, WITHOUT ancilla allocation
+or post-selection. Operates on a caller-supplied ancilla register that
+must enter the call in `|0…0⟩`. Used by `qsvt_reflect!` and by
+amplitude-level probes that read `|anc=0…0⟩`-block operators directly.
+
+Time order: U, Rz(φₙ), U†, Rz(φₙ₋₁), U, Rz(φₙ₋₂), … (GSLW Definition 15).
+
+Bead `Sturm.jl-grq5`: the inner phase rotation `ancillas[1].φ += -2φ_j`
+equals the canonical reflector `Π^φ = e^{iφ(2|0…0⟩⟨0…0|^m − I)}` only at
+`m = 1`. For `m ≥ 2` the correct primitive is `_reflect_ancilla_phase!`.
+Bead `Sturm.jl-l5s5`: the phases delivered by `qsvt_phases` are X-constrained
+analytic-QSP angles missing the §2.1 analytic→reflection conversion shift
+(Laneve 2025). Both bugs surface as `|c| < 1` operator attenuation in
+`test/test_qsvt_amplitude_level.jl` (bead `Sturm.jl-5lu4`).
+
+Ref: GSLW (2019), arXiv:1806.01838, Definition 15, Theorem 17.
+     Distillation: docs/physics/laneve_2025_gqsp_nlft.md (§2.1).
+"""
+function _qsvt_reflect_naked!(system::Vector{QBool}, be::BlockEncoding,
+                               phases::Vector{Float64},
+                               ancillas::Vector{QBool})
+    n = length(phases)
+    use_oracle = true
+    for j in n:-1:1
+        if use_oracle
+            be.oracle!(ancillas, system)
+        else
+            be.oracle_adj!(ancillas, system)
+        end
+        _reflect_ancilla_phase!(ancillas, phases[j])
+        use_oracle = !use_oracle
+    end
+    return nothing
 end
 
 # ═══════════════════════════════════════════════════════════════════════════

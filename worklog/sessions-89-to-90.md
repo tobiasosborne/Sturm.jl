@@ -1,3 +1,141 @@
+## 2026-05-06 — Session 90: 4ceh continuation — xcye + grq5 fix landed; l5s5/50k1 deepened
+
+Continued session 89's bug-decomposition. Closed `xcye` (refactor),
+landed the `grq5` one-line fix, fetched the Laneve PDF and re-derived
+§2.1 to clarify why the bug isn't a pure phase shift.
+
+### What shipped
+
+1. **`Sturm.jl-xcye` CLOSED.** Extracted `_qsvt_reflect_naked!(system,
+   be, phases, ancillas)` from `qsvt_reflect!`. Caller-supplied ancilla
+   register, no allocation, no post-select. `qsvt_reflect!` is now: alloc
+   + naked-call + post-select. `test/test_qsvt_amplitude_level.jl`'s
+   `reflect_block_operator` now calls `_qsvt_reflect_naked!` directly via
+   `using Sturm: _qsvt_reflect_naked!` instead of duplicating the
+   oracle/Rz loop. Behavior preservation verified at the amplitude level
+   (T1 |c|=1.0, T2 |c|=0.7256, T3 |c|=0.6973/0.6218/0.7034 — bit-exact
+   match to pre-refactor numbers from session 89). Acceptance (a)-(c) of
+   bead met; (d) refactor of `qsvt_combined_reflect!` / `oaa_amplify!` is
+   structural cleanup deferred to a follow-on bead.
+
+2. **`Sturm.jl-grq5` FIX IN PLACE (kept open pending end-to-end verification).**
+   `src/qsvt/circuit.jl:280`: `ancillas[1].φ += -2.0 * phases[j]` →
+   `_reflect_ancilla_phase!(ancillas, phases[j])`. For `m=1` the helper
+   degenerates to the same `Rz(-2φ)` (`circuit.jl:626`), so the fix is
+   invisible on n_anc=1 cases (T1, T2 unchanged). For `m≥2` it applies
+   the canonical `Π^φ = e^{iφ(2|0…0⟩⟨0…0|^m − I)}`.
+
+   **Surprise**: the amplitude-level test T3 numbers are *also* unchanged
+   post-fix (|c|=0.6973/0.6218/0.7034, residual=0.0). At first I thought
+   the edit hadn't landed; verified it had via `grep`. Closer analysis
+   shows: with Bug A's incorrectly-calibrated phases, both single-Rz and
+   `_reflect_ancilla_phase!` produce operators on the |anc=00⟩-block that
+   differ only by a unit-modulus scalar (a phase that the LSQ closest-
+   scalar fit absorbs into `c`). The two operators DIFFER on the
+   |anc=01⟩, |anc=10⟩, |anc=11⟩ components in a way that affects POST-
+   SELECTION SUCCESS RATE but not the conditional-on-success operator
+   structure that this test reads. Bug B's visible signature only
+   surfaces when (a) Bug A is fixed AND (b) the test reads success
+   probability, not just |anc=00⟩-block proportionality. Filed this as a
+   follow-on test improvement (TBD bead).
+
+   Conclusion: Bug B fix is theoretically correct (matches GSLW
+   Definition 15 / Theorem 17) but cannot be unit-tested in isolation
+   from Bug A on the current `test_qsvt_amplitude_level.jl` setup. Keep
+   `grq5` open; close it as soon as `5lu4` is GREEN end-to-end.
+
+   Sanity probe `test/probe_grq5_bugb.jl`: with phases `[0]` (identity
+   polynomial) on a 2-anc and a 1-anc BE, M = H/α exactly (|c|=1,
+   residual=1e-16). Confirms the BE oracle path through the refactored
+   body works. Not in `runtests.jl` — diagnostic only.
+
+3. **`Sturm.jl-l5s5` (Bug A) — DERIVATION DEEPENED, NOT YET FIXED.**
+   Fetched `docs/literature/quantum_simulation/qsp_qsvt/2503.03026.pdf`
+   from arXiv (gitignored) and extracted §2.1 verbatim. The §2.1 chain
+   is:
+
+   - **Step 1 (Lemma 1)**: analytic w̃ ↔ Laurent ṽ, **same** phases.
+     `(P', Q') = (z⁻ⁿ P(z²), z⁻ⁿ Q(z²))` — degree doubles, **variable
+     doubles** (θ_a = 2θ_L on T).
+   - **Step 2** (page 5): X-Laurent body matrix = H · Z-Cheb body matrix
+     · H. Same phases. Z-Cheb (0,0)-block in x-coordinate is
+     `P''(x) = Σ 2 p'_k T_k(x)` — Cheb T-poly with coefs from the
+     Laurent indices.
+   - **Step 3** (page 6): `r̃ = -i e^{-iπ/4 Z} x̃ e^{-iπ/4 Z}`.
+     Substituting into the Z-Cheb body and merging adjacent
+     Z-rotations: ψ_0 = φ_0 + π/4, ψ_k = φ_k + π/2 (interior),
+     ψ_n = φ_n + π/4, plus global iⁿ. Reflection body with these ψ_k
+     produces SAME matrix as Z-Cheb body with φ_k (up to iⁿ).
+
+   **The bug**: Sturm's pipeline uses `chebyshev_to_analytic` to
+   build `P_a(z)` from input Cheb coefs `c`. Result: `P_a(e^{iθ}) =
+   e^{idθ} P_target(cos θ)`. Same phases applied via Lemma 1 give
+   Laurent body output `P'(e^{iθ}) = P_target(cos 2θ) = P_target(2x²-1)`
+   on (0,0)-block. After H-conjugation (step 2), the Z-Cheb body's
+   (0,0) is `P''(x) = c_0 + Σ c_k T_{2k}(x)` — Cheb indices are
+   **DOUBLED**. So the reflection circuit (with §2.1 phase shift)
+   produces `P_target(2x²-1)`, NOT `P_target(x)`.
+
+   So §2.1 phase shift alone is INSUFFICIENT. Session 89's empirical
+   "0.7256 → 0.7836" partial improvement makes sense — the shift gets
+   us to the right reflection phases for `P_target(2x²-1)`, but not for
+   `P_target(x)`.
+
+   **Three plausible fixes, none implemented**:
+   - **(i) Pre-compose target**: build `P̃_target` such that
+     `P̃_target(2x² - 1) = P_target(x)`. Information-losing in general
+     since 2x²-1 is not injective on [-1,1]; works only if P_target has
+     even parity in x (then we can "pull back" to a poly in T_2(x)).
+     Needs a half-degree split (Wang-Dong-Lin or similar).
+   - **(ii) Direct reflection-QSP phase computation**: bypass BS+NLFT
+     entirely; use Wang-Dong-Lin layer-stripping or numerical
+     optimization on the SU(2) reflection-QSP product to find phases
+     directly for `P_target(x)` of degree d using d phases. This is
+     what `_oaa_phases_half_deg3()` does for the specific case of
+     -T_3(x). Generalising it = bead `Sturm.jl-50k1` work.
+   - **(iii) Different analytic embedding**: use `P_a(z) = z^{n/2}
+     P_target(z^{1/2})` (paper's converse of Lemma 1, only well-defined
+     for definite-parity Laurent), which preserves the variable through
+     the chain.
+
+   Path (ii) is the cleanest practical fix; deferred to next session.
+
+### Worklog/process
+
+- **bd dolt pull at session start** added as a habit recommendation —
+  local bd was 3 days behind remote; sessions 87-89 beads
+  (4ceh/5lu4/l5s5/grq5/u1er/zh8u/jlaw) all missing locally until the
+  pull. Two extra P0 4ceh sub-beads (`50k1` "γ derive §2.1", `xcye`
+  "α refactor") surfaced post-pull and were not narrated in session
+  89's worklog. Both legitimate.
+- `.beads/` perms tightened to 0700; `git config beads.role maintainer`
+  set (clears two warnings on every `bd` invocation).
+- Concurrent julia from another agent running Bennett.jl `Pkg.test()`
+  is fine — different project, parallel allowed (user clarified the
+  `feedback_julia_serial_only` rule scope: same project only).
+
+### Next-step (for the next agent)
+
+1. **`Sturm.jl-50k1` (Bug A path ii)**: implement reflection-QSP phase
+   optimizer. Inputs: Cheb coefs `c` of definite parity, polynomial
+   degree `d`, target accuracy `ε`. Output: `d`-element phase vector
+   `ψ` such that the reflection body's (0,0)-entry approximates
+   `Σ c_k T_k(x)` to within `ε` on a grid covering `[-1, 1]`.
+   Reference: Wang-Dong-Lin (Newton-method symmetric-QSP); pyqsp's
+   `qsp_solver`. Initial guess: zero phases. Cost: BFGS or Newton on
+   max-norm error.
+2. Replace `qsvt_phases` body with `50k1`'s output (after parity check).
+   Keep BS+NLFT pipeline available for analytic-QSP / GQSP / Hamsim use
+   cases that need it — the reflection-QSVT path is what changes.
+3. Re-run `test_qsvt_amplitude_level.jl`: T1, T2, T3 all should give
+   |c|=1, residual=0 once both bugs are addressed.
+4. Close `5lu4`, `grq5`, `l5s5`, `50k1`, `4ceh`.
+5. Add `test_qsvt_amplitude_level.jl` to `runtests.jl`.
+6. Tighten thresholds on the four pre-existing "DIRECTLY BROKEN TESTS"
+   noted in 4ceh.
+
+---
+
 ## 2026-05-05 — Session 89: 4ceh decomposed into two independent bugs
 
 Continuation of session 88's `Sturm.jl-4ceh` investigation. **Reversed session
