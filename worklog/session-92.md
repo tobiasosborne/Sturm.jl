@@ -1,5 +1,35 @@
 # Session 92 — 2026-07-04 — PRD-v2 refinement round 2: evidence-backed revision
 
+## Round 4 — THE REBOOT (same session, Tobias's call)
+
+**v0.1 is deprecated wholesale. Main begins at zero.**
+
+- Branch `v0.1-deprecated` created at `f44edb7` (the PRD rounds-2+3
+  commit) and pushed — the complete v0.1 tree, full history, lives there.
+- Main gutted: 323 files removed (`src/`, `test/`, `docs/`, `examples/`,
+  `benchmarks/`, `bin/`, `probe_*.jl`, `Project.toml`, `KNOWN_ISSUES.md`).
+  This is a normal deletion commit, NOT a history rewrite — nothing is
+  lost, `git log` on main still reaches all of v0.1.
+- Kept on main (judgment call, flagged to Tobias): both PRDs, CLAUDE.md
+  (rewritten), README (stub), LICENSE, .gitignore, AGENTS.md, `.beads/`
+  (tracker infra), WORKLOG.md + worklog/ + WORKLOG-archive.md
+  (institutional memory, rule 0).
+- CLAUDE.md rewritten for the v2 era: reboot status + reimport policy
+  ("the deprecated branch is a quarry, not a library"); rule 11 now the
+  seven-construct v2 table (PRD-v2 §3.8); v0.1's "H!² = −I is a feature"
+  doctrine REMOVED and replaced by the v2 Phase Discipline (U(2) kernel,
+  Ad quotient crossed once, ctrl choke point, views-unwrap law); rule 1
+  gains the §3.9 no-backaction exception; rule 3/12 cite the wm28
+  teleportation lesson (channel-level tests, not marginals); target file
+  structure with build order (kernel/ first, law tests first).
+- Reimport policy (normative, in CLAUDE.md): v0.1 code returns only
+  re-expressed against v2 surface/kernel + 3+1 gates + rewritten tests +
+  physics distillations. Never bulk-copy.
+
+**Gotcha for future agents:** wm28 (teleport bug) file paths now resolve
+only on `v0.1-deprecated`. When quarrying, `git show v0.1-deprecated:path`
+beats checking the branch out.
+
 ## Round 3 (same session, after argument with Tobias)
 
 Two design discussions, both folded into the PRD:

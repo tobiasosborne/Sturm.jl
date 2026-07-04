@@ -12,3 +12,6 @@ Manifest.toml
 .beads-credential-key
 docs/literature/**/*.pdf
 docs/literature/quantum_simulation/.browser-profile/
+
+# Claude Code local state
+.claude/scheduled_tasks.lock

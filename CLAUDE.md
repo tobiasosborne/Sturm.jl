@@ -1,189 +1,253 @@
-# Sturm.jl — Quantum Programming DSL
+# Sturm.jl — Quantum Programming DSL (v2 rebuild)
 
 ## What This Is
 
-A Julia quantum programming language where functions are channels, the quantum-classical boundary is a type boundary, and QECC is a higher-order function.
+A Julia quantum programming language where functions are channels, the
+quantum-classical boundary is a type boundary, and QECC is a higher-order
+function.
 
-Full PRD: `Sturm-PRD.md`.
+**Spec:** `Sturm-PRD-v2.md` (normative). `Sturm-PRD.md` (v0.1) remains for
+the parts v2 explicitly carries over — contexts, Orkan FFI, Bennett bridge,
+QECC-as-HOF, promotion, channel-IR passes discipline.
 
-**Backend: Orkan from day 1.** The EagerContext delegates to `../orkan/` (C17 statevector + density matrix simulator with OpenMP) via `ccall`. No pure-Julia simulator — Orkan IS the simulation engine. Julia owns the type system, DSL, compilation, and channel algebra. Orkan owns the linear algebra.
+## ⚠ REBOOT STATUS (2026-07-04)
+
+**This branch begins at zero.** The complete v0.1 implementation (~60 test
+files, Shor, QSVT, Steane, hardware transport — a working prototype) lives
+on the **`v0.1-deprecated`** branch with full history. It was deprecated
+deliberately: the v0.1 primitive layer (Bloch-angle rotations `q.θ += δ` /
+`q.φ += δ`) is condemned by PRD-v2 §1, and the codebase is saturated with
+it. We rebuild from the spec.
+
+**Reimport policy.** v0.1 code returns from `v0.1-deprecated` only through
+the v2 design gates: it must be re-expressed against the v2 surface/kernel,
+pass the 3+1 agent rule where applicable, arrive with its tests rewritten
+to v2 vocabulary, and carry its `docs/physics/` distillations with it.
+Never bulk-copy. The deprecated branch is a quarry, not a library.
+Institutional memory (`WORKLOG.md`, `worklog/`, beads) carries across the
+reboot — read session-91/92 for how v2 was derived.
+
+**Backend: Orkan from day 1.** The EagerContext delegates to `../orkan/`
+(C17 statevector + density matrix simulator with OpenMP) via `ccall`. No
+pure-Julia simulator — Orkan IS the simulation engine. Julia owns the type
+system, DSL, compilation, and channel algebra. Orkan owns the linear
+algebra.
 
 ## Implementation Principles
 
 These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
-0. **MAINTAIN THE WORKLOG.** Every step, every session: update `WORKLOG.md` with gotchas, learnings, surprising decisions, ABI mismatches, test failures and their root causes, anything a future agent would wish it knew. This is the project's institutional memory. If you hit something non-obvious, write it down before moving on.
+0. **MAINTAIN THE WORKLOG.** Every step, every session: update `WORKLOG.md`
+   (index) + `worklog/` shards with gotchas, learnings, surprising
+   decisions, ABI mismatches, test failures and their root causes, anything
+   a future agent would wish it knew. If you hit something non-obvious,
+   write it down before moving on.
 
-1. **FAIL FAST, FAIL LOUD.** Assertions, not silent returns. Crashes, not corrupted state. `error()` with a clear message, not a quiet `nothing`. Get errors in front of eyeballs immediately.
+1. **FAIL FAST, FAIL LOUD.** Assertions, not silent returns. Crashes, not
+   corrupted state. `error()` with a clear message, not a quiet `nothing`.
+   One principled exception, from PRD-v2 §3.9: implicit operations
+   *without backaction* (scope-exit traces) are silent by design; implicit
+   operations *with* backaction (P2 casts) warn. Do not "fix" the silence
+   of traces.
 
-2. **CORE CHANGES REQUIRE 3+1 AGENTS.** Any change to core types (`types/`), context interface (`context/abstract.jl`), primitives (`primitives/`), or the Orkan FFI layer requires: 2 proposer subagents (independent designs), 1 implementer. The orchestrating agent is the reviewer (+1). Proposers must not see each other's output. The implementer picks the better design (or synthesises). The orchestrator reviews for PRD conformance, idiomatic DSL usage, and test coverage before accepting.
+2. **CORE CHANGES REQUIRE 3+1 AGENTS.** Any change to core types
+   (`types/`), the context interface, the kernel (process values, `ctrl`,
+   views), primitives/casts, or the Orkan FFI layer requires: 2 proposer
+   subagents (independent designs), 1 implementer. The orchestrating agent
+   is the reviewer (+1). Proposers must not see each other's output. The
+   implementer picks the better design (or synthesises). The orchestrator
+   reviews for PRD conformance, idiomatic DSL usage, and test coverage.
 
-3. **GROUND = PHYSICS.** Every quantum operation, every gate decomposition, every channel identity must be grounded in physics. Not pinned numbers. Not "it works on the test case." The physics must be right. If you derive a gate from the rotation primitives, prove it on paper first.
+3. **GROUND = PHYSICS.** Every quantum operation, every kernel identity,
+   every channel law must be grounded in physics. Not pinned numbers. Not
+   "it works on the test case." If you derive something, prove it on paper
+   first. The v0.1 teleportation bug (wm28: shipped protocol teleported
+   only the diagonal; marginal-statistics test was blind to it) is the
+   canonical cautionary tale — channel-level tests (Choi), not marginals.
 
-4. **PHYSICS = LOCAL PDF + EQUATION (two-tier policy).** "Grounded in physics" means a local source for every cited paper plus an explicit equation reference. Two tiers, both committed:
-    - `docs/physics/` is the canonical project-side citation directory. It holds (a) the original PDFs of each paper Sturm depends on, AND (b) short Markdown distillations (`docs/physics/<author>_<topic>.md`) that summarise the relevant theorems / equations / page numbers. Source docstrings cite the `.md` distillation; the `.md` file is the contract that "the citation still resolves" even if the PDF moves.
-    - `docs/literature/` is gitignored — a working scratch space for personal annotations, alternative copies, draft Latex, pre-publication PDFs, anything not suitable for the public repo. Source docstrings MAY reference `docs/literature/...` paths AS WELL, but a `docs/physics/...md` distillation MUST also exist for the same paper (and the docstring should reference that as the primary).
-    Lint: a runtests boot pass greps `src/` for `docs/physics/...\.md` references and asserts each path resolves; this catches the failure mode where a docstring cites a distillation that was never written.
+4. **PHYSICS = LOCAL PDF + EQUATION (two-tier policy).** Every cited paper
+   needs a local source plus an explicit equation reference:
+   - `docs/physics/` — canonical, committed: original PDFs AND short
+     Markdown distillations (`docs/physics/<author>_<topic>.md`) with
+     theorems/equations/page numbers. Docstrings cite the `.md`.
+   - `docs/literature/` — gitignored scratch space.
+   Lint: a runtests boot pass greps `src/` for `docs/physics/...\.md`
+   references and asserts each path resolves. PRD-v2 §9 "Citations TODO"
+   lists the ~16 distillations the v2 build needs — write each before the
+   code that cites it.
 
-5. **LITERATE CODING.** Every non-trivial function has a docstring explaining WHAT it does, WHY it exists, and WHICH equation/paper it implements. Comments explain intent, not mechanics. Julia docstrings use `"""..."""` above the function.
+5. **LITERATE CODING.** Every non-trivial function has a docstring: WHAT,
+   WHY, WHICH equation/paper. Comments explain intent, not mechanics.
 
-6. **BUGS ARE DEEP AND INTERLOCKED.** Never assume a bug is shallow. Investigate root causes. Quantum bugs are especially treacherous: a sign error in a phase rotation is invisible until entanglement amplifies it.
+6. **BUGS ARE DEEP AND INTERLOCKED.** Never assume a bug is shallow.
+   Quantum bugs are treacherous: a sign error in a phase is invisible
+   until entanglement amplifies it — and controlled-phase bugs recurred in
+   Cirq/Qiskit/pytket for *years* (PRD-v2 §4.2) despite dedicated fields.
 
-7. **GET FEEDBACK FAST.** Run `julia --project -e 'using Sturm; ...'` or the test suite after every non-trivial change. Don't code blind for 500 lines then check. Check every 50 lines.
+7. **GET FEEDBACK FAST.** Run `julia --project -e 'using Sturm; ...'` or
+   the test suite after every non-trivial change. Check every 50 lines.
 
-8. **RESEARCH STEPS ARE EXPLICIT.** If you don't know what a step involves, mark it as a research step. Don't guess. Don't hallucinate an implementation. Research it properly.
+8. **RESEARCH STEPS ARE EXPLICIT.** If you don't know what a step
+   involves, mark it as a research step. Don't guess. Don't hallucinate.
 
-9. **SKEPTICISM.** Be skeptical of everything: subagent output, previous agent work, your own assumptions, library documentation. Verify. Test. Reproduce.
+9. **SKEPTICISM.** Be skeptical of everything: subagent output, previous
+   agents' work, your own assumptions, the PRD's own claims. Verify. Test.
+   Reproduce.
 
-10. **TEST-DRIVEN DEVELOPMENT.** Write the test first. Then write the code to make it pass. Tests live in `test/`. Every PR needs tests. Use `@testset` and `@test`. Statistical tests (measurement outcomes) use N>=1000 samples with tolerance.
+10. **TEST-DRIVEN DEVELOPMENT.** Write the test first. Tests live in
+    `test/`. Every PR needs tests. Statistical tests use N>=1000 samples
+    with tolerance. The normative laws in PRD-v2 (§3.2 boundary algebra,
+    §4.2 kernel laws, §3.9 scope) are each a named required test.
 
-11. **IDIOMATIC DSL — TWO ROTATIONS, TWO CASTS, ONE BINDER.** All quantum code must be written using the surface forms below. No imported gate matrices, no raw unitary arrays applied directly. There is no CNOT primitive, no Toffoli, no swap — entanglement is *composed* from `when` plus a body, never invoked by gate name. The complete vocabulary for quantum-specific code is five constructs:
+11. **IDIOMATIC DSL — THE SEVEN SURFACE CONSTRUCTS.** All user-facing
+    quantum code is written with the v2 surface vocabulary (PRD-v2 §3.8),
+    which supersedes v0.1's five-construct table:
 
-    | # | Surface form | Role | Semantics | QASM |
-    |---|--------------|------|-----------|------|
-    | 1 | `QBool(p::Real)` | Preparation cast (cq channel, P2) | Allocate at √(1−p)\|0⟩ + √p\|1⟩; Ry(2·arcsin√p)\|0⟩ | `ry(2*arcsin(sqrt(p))) q` |
-    | 2 | `Bool(q)`, `Int(q)` | Measurement cast (qc channel, P2) | Measure and project; implicit casts warn | `measure q -> c` |
-    | 3 | `q.theta += delta` | Channel primitive | Amplitude rotation Ry(delta) | `ry(delta) q` |
-    | 4 | `q.phi += delta` | Channel primitive | Phase rotation Rz(delta) | `rz(delta) q` |
-    | 5 | `when(q) do … end` | Quantum control binder | Lift body to a channel controlled on `q` | controlled gates |
+    | # | Surface form | Role |
+    |---|--------------|------|
+    | 1 | `QBool(p)` / `QBool(b)` / phase literal (D1) | preparation cast (cq) |
+    | 2 | `Bool(q)`, `Int(x)` — **consuming** | measurement cast (qc) |
+    | 3 | `a ⊻= b`, `not!(a)`, P8 mixed forms | flips / entanglement |
+    | 4 | `dual(q)` | conjugate view (Pontryagin) |
+    | 5 | `when(q) do … end` | coherent control |
+    | 6 | `cases` / `@cases` | classical branching on outcomes |
+    | 7 | `oracle(f, x)` | Bennett bridge |
 
-    **The one named exception is `not!`** — the Julia bang-suffix companion to `!` (since no-cloning forbids the rebinding form `b = !b`). On `QBool` it lowers to `q.φ += π; q.θ += π`. CNOT is `when(a) do; not!(b); end`. The library `a ⊻= b` operator is convenience sugar for the same composition.
+    There are NO rotation primitives on the surface. There is no CNOT
+    gate: entanglement is composed (`a ⊻= b`, `when` + body). CZ is
+    `dual(q) ⊻= r`. Conjugate-basis measurement is `Bool(dual(q))`.
+    Draper addition is `dual(x) += a`. Angles live in the kernel
+    (process values: `U2` quaternion+phase, `Perm`, `UnitaryDAG`) and are
+    reached only through library HOFs. **If your program reads like a
+    circuit diagram, it is wrong. If it mentions a gate, a rotation angle,
+    or a process value, it is not surface code.**
 
-    Every gate in `src/gates.jl` is built from this surface. Every new algorithm must do the same. A subagent that constructs a gate from a raw matrix is WRONG. **If your program reads like a circuit diagram, it is wrong** — classical-looking code stays classical; reach for `q.θ += δ` / `q.φ += δ` only when the operation is genuinely quantum.
+12. **FULL PIPELINE TESTS WITH VERIFICATION.** Every algorithm: construct
+    via DSL → execute on EagerContext → compare against the
+    mathematically expected result. For channels, compare at the channel
+    level (Choi/diamond), not output marginals — marginals passed v0.1's
+    broken teleportation.
 
-12. **FULL PIPELINE TESTS WITH VERIFICATION.** Every quantum algorithm must have end-to-end tests: construct circuit via DSL primitives -> execute on EagerContext -> compare output statevector/measurement statistics against the mathematically expected result. Not "does it run without errors." The test must verify the actual output against a known-correct answer.
+13. **NO DUPLICATED PRIMITIVES — USE THE DSL.** Before implementing ANY
+    quantum subroutine, check what the kernel and library already provide.
+    If it exists, import it. If it doesn't, add it once in the right place.
 
-13. **NO DUPLICATED PRIMITIVES — USE THE DSL.** Before implementing ANY quantum subroutine, check what `src/gates.jl` and `src/library/patterns.jl` already provide. If it exists, import it. If it doesn't, add it once in the right place.
+14. **THE NINE AXIOMS ARE AXIOMS.** P1–P9 as restated in PRD-v2 §6 are
+    non-negotiable. Highlights that bite daily:
+    - P1: functions are channels; scope is the Stinespring boundary
+      (§3.9) — locals are environment, traced at region exit.
+    - P2: the boundary is a cast; casts consume; implicit casts warn.
+      qc∘cq = id, cq∘qc = pinching — both are required tests.
+    - P4: quantum control is an operation on **process values**, never on
+      channels (theorem — PRD-v2 §1.1). Surface `when`; kernel `ctrl`;
+      guardrails (§3.5) are part of the axiom.
+    - P5: no gates in surface code. The kernel may hold definite
+      unitaries; an IR is not a user language.
+    - P7: dimension-agnostic by parametricity — a register type declares
+      (Hilbert space, symmetry structure, conjugate structure).
+    - P9: registers are numeric types; generic code rides P8 overloads;
+      typed functions go through `oracle`. NO catch-all on `Function`.
 
-14. **THE NINE DESIGN PRINCIPLES ARE AXIOMS.** P1-P9 from the PRD (§1) are non-negotiable. If an implementation choice violates any principle, the implementation is wrong. In particular:
-    - P1: Functions are channels. No separate "channel" wrapper the programmer must use.
-    - P2: No `measure()` function. The quantum→classical boundary is a **cast** — exactly like `Float64 → Int64`, with implied information loss. Only explicit casts: `Bool(q)`, `Int(qi)`. Implicit assignment to a classical annotation without an explicit cast expression (`x::Bool = q`) MUST emit a compiler warning — same discipline as implicit float-to-int truncation.
-    - P4: `if` is classical. `when` is quantum. `if q::QBool` NEVER auto-lifts to coherent control. Julia's `if x` is defined for `x::Bool`; `QBool → Bool` is P2 measurement. A user who writes `if q … end` without an explicit cast gets the P2 implicit-cast warning (measurement, then classical branch), never silent `when(q) do … end`. Coherent control is spelled `when(q) do … end` — always and only. Auto-lifting `if` would be the catch-all-on-`Function` mistake again (see P9): collapsing two distinct channels (post-measurement branch vs. controlled unitary) into one syntactic form, with type-dependent meaning that the source does not disclose. Specifically: if `f` contains an `if`, then `oracle(f, q)` compiles the `if` as an in-circuit reversible branch (Bennett), which is a third distinct semantics; auto-lifting would make the meaning of `if` inside user code depend on whether it is called classically, cast-then-branched, or lifted via `oracle` — a type lie.
-    - P5: No gates, no qubits in user-facing code. Registers and primitives.
-    - P7: Dimension-agnostic across the **entire** Hilbert spectrum — finite qudits, **anyons** (fusion categories), AND **infinite-dimensional** systems (Gaussian CV / quantum optics at minimum; arbitrary infinite-d, Fock space, bosonic codes ideally). Adding any of these must NOT require changes to the channel algebra, tracing, `when()`, the P2 cast rules, or the P8 promotion rules. v0.1 is d=2 only, but no design decision may foreclose higher finite, topological, OR infinite d.
-    - P8: Classical values auto-promote to quantum in mixed operations (`QInt{8}(42) + 17`). No `promote_rule`; direct method overloads. Context extracted from quantum operand.
-    - P9: Quantum registers are a numeric type for Julia's dispatch. **Generic** Julia functions — `f(x) = x^2 + 3x + 1` — work on `QInt`/`QBool` the same way they work on `Float64` or `Complex`: via operator overloading (P8), not via a catch-all on `Function`. **Type-restricted** classical functions (`g(x::Int) = …`) MethodError on quantum args, *exactly as they MethodError on `Float64`*; this is the type contract, not a bug. The bridge for typed functions is explicit: `oracle(f, q)` (Bennett.jl: LLVM IR → reversible circuit, auto-dispatched memory + arithmetic strategies, cached on `(f, argtypes, strategy_kwargs)`); the opt-in sugar `@quantum_lift` adds a specific `f(::QInt{W})` method wrapping `oracle`; `quantum(f)` pre-compiles. Do NOT add a catch-all on `Base.Function` — Julia forbids it (`cannot add methods to builtin function Function`, Julia 1.12), and it would violate the same type contract. Autodiff analogue: P8 + generic path = `ForwardDiff.Dual` (rides generic code via operator overloads); `oracle`/`quantum`/`@quantum_lift` = `Enzyme.gradient` (explicit handle for typed/transformed code). Every path auto-controls inside `when()` via the existing control stack.
+## Phase Discipline (replaces v0.1's "Global Phase and Universality")
 
-## Global Phase and Universality
+The v0.1 doctrine ("the DSL lives in SU(2); H!² = −I is a feature; do not
+fix it") is **dissolved** — it was an artifact of the condemned rotation
+surface, not physics. The v2 rules:
 
-**The two rotation primitives generate all single-qubit channels (CPTP maps), not all unitaries.** Ry and Rz have determinant 1 (SU(2)), so no product of them can produce a unitary with determinant ≠ 1 (e.g., the standard Hadamard has det = -1). Every derived gate is defined up to a global phase: H! = -i·H, Z! = -i·Z, etc.
-
-**This is physically correct.** In operational quantum mechanics, the fundamental objects are channels, not unitaries. A unitary U and e^{iα}U define the same channel ρ → UρU†. Global phases are not physical — this is not an approximation but a theorem. The DSL lives in SU(2), and SU(2) + entanglement (composed via `when(a) do; not!(b); end`) generates all channels on n qubits.
-
-**Consequence: H!² = -I, not I.** This is correct. The states |ψ⟩ and -|ψ⟩ are physically identical. No experiment can distinguish them. Future agents: do NOT attempt to "fix" H!² = -I. It is a feature, not a bug.
-
-**Where phases DO matter: controlled gates.** When a gate is used inside `when()`, its global phase becomes a relative phase between the ctrl=|0⟩ and ctrl=|1⟩ branches, which IS observable. The controlled-Rz(π) gate (from `when(c) { t.φ += π }`) is NOT the same channel as controlled-Z. Use `_cz!()` from `src/library/patterns.jl` for the correct CZ gate. This distinction caused the "Session 8 bug" in the Python sturm project and was rediscovered during Grover implementation.
+- The kernel works in **U(2)** (quaternion + phase). X, Z, H are exact.
+- The phase quotient is crossed **exactly once**, at application, by
+  Ad's kernel (PRD-v2 §4.3) — never by convention in library code.
+- `ctrl` is a homomorphism on process values and **the single choke
+  point** that constructs controlled lowerings, system-wide (§4.2). No
+  other code path may build a controlled decomposition. This is the
+  structural invariant that Cirq/Qiskit/pytket lacked.
+- Views unwrap; processes compose (§3.3). `dual(dual(x)) === x`
+  structurally; but F² = parity as a *process*. An implementation that
+  lowers `dual` by applying F is wrong — the signature of the bug is
+  integer negation under double duals.
 
 ## Channel IR vs Unitary Methods — HALLUCINATION RISK
 
-**CRITICAL FOR ALL AGENTS**: Sturm.jl's DAG IR represents **channels** (CPTP maps), NOT unitaries. The DAG contains non-unitary nodes:
-
-- `ObserveNode` — measurement (projective, irreversible)
-- `CasesNode` — classical branching (creates mixtures)
-- `DiscardNode` — partial trace (reduces dimension)
-
-**Most optimization methods from the literature assume unitary circuits.** They will produce WRONG RESULTS if applied to a DAG containing measurements, discards, or classical branching. Specifically:
-
-- **Phase polynomials** (TPAR, TODD) are undefined for non-unitary subcircuits
-- **ZX-calculus** completeness holds for pure QM only; mixed-state ZX is incomplete for Clifford+T
-- **SAT synthesis** (Clifford, exact) encodes stabilizer tableaux — unitaries only
-- **DD equivalence checking** (QMDD) represents unitary matrices, not channels
-- **MCGS compute graph** nodes are unitaries — measurement channels have no single unitary
-
-**MANDATORY PROTOCOL for all optimization passes:**
-
-1. **Partition the DAG at measurement barriers.** Every `ObserveNode` and `DiscardNode` creates a barrier. The DAG between barriers is a unitary subcircuit.
-2. **Apply unitary-only methods ONLY to unitary blocks.** Never apply phase polynomial extraction, ZX rewriting, or SAT synthesis across a measurement barrier.
-3. **Channel-level optimizations** (deferred measurement, classicalise) operate on the FULL DAG including non-unitary nodes. These are the only passes that may touch ObserveNode/CasesNode.
-4. **Equivalence checking** for channels requires the Choi matrix or diamond norm, NOT unitary comparison.
-5. **Resource estimation** for channels with measurement-controlled gates must account for the DISTRIBUTION of gate counts across measurement outcomes (worst-case or expected).
-
-**Future agents: do NOT apply a unitary optimization method to a channel DAG without first partitioning at measurement barriers. This is not optional.**
-
-**HOWEVER**: There is an active research direction (Sturm.jl-d99) to extend phase polynomials to channels via the Choi-Jamiołkowski representation. If the Choi phase polynomial structure survives for channels with measurements, the barrier partitioning becomes unnecessary for phase polynomial methods — they would work natively on the full channel DAG. This would be a major simplification. Check the status of Sturm.jl-d99 before implementing barrier partitioning.
+Sturm's IR represents **channels** (CPTP maps), NOT unitaries. When the
+DAG returns to the v2 codebase it will contain non-unitary nodes
+(measurement, classical branching, discard). Most optimization methods
+from the literature assume unitary circuits and will produce WRONG
+RESULTS on a channel DAG. MANDATORY: partition at measurement barriers;
+apply unitary-only methods (phase polynomials, ZX, SAT synthesis, DD
+equivalence) ONLY to unitary blocks — in v2 these carry an explicit
+unitarity witness (PRD-v2 §4.1); channel-level equivalence is Choi/diamond,
+never unitary comparison. See `Sturm-PRD.md` for the full protocol; it
+carries over verbatim.
 
 ## Julia Conventions
 
-1. **Module name is `Sturm`.** `using Sturm` brings the public API into scope.
-2. **Mutation convention.** Functions that mutate quantum state end with `!` (e.g., `H!`, `swap!`, `depolarise!`). The rotation primitives (`q.θ += δ`, `q.φ += δ`) and the cast forms (`QBool(p)`, `Bool(q)`, `Int(q)`) are exceptions — they use operator / constructor syntax. `not!` is the named exception (Julia bang-suffix companion to `!`, since no-cloning forbids `b = !b`).
-3. **Type stability.** Functions should be type-stable. Use `@code_warntype` to check hot paths.
-4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan (via `ccall`). No Qiskit, no Cirq, no other quantum frameworks. Only `Test` in extras.
-5. **Width as type parameter.** `QInt{W}` carries width in the type. Julia specialises on it. Use `where {W}` dispatch, not runtime branching on width.
-6. **Context propagation via task-local storage.** `current_context()` reads from `task_local_storage(:sturm_context)`. The `@context` macro sets it.
+1. **Module name is `Sturm`.**
+2. **Mutation convention.** State-mutating functions end with `!`
+   (`not!`, `swap!`, `ptrace!`). Casts use constructor syntax
+   (`QBool(p)`, `Bool(q)`, `Int(x)`). Views are lazy wrappers in the
+   `transpose` idiom (`dual(q)`, kernel `view(V, q)`), borrow rather than
+   own, and unwrap involutively.
+3. **Type stability.** Check hot paths with `@code_warntype`.
+4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan
+   (via `ccall`). Only `Test` in extras.
+5. **Width as type parameter.** `QInt{W}` carries width in the type; use
+   `where {W}` dispatch, not runtime branching.
+6. **Context propagation via task-local storage.** `current_context()`
+   reads `task_local_storage(:sturm_context)`; `@context` sets it and
+   performs deterministic scope cleanup at exit (PRD-v2 §3.9 — regions,
+   never GC finalizers).
+7. **Julia idiomaticity is paramount** (standing preference from Tobias).
+   If a construct fights the host language, the construct is wrong.
 
 ## Orkan FFI
 
-Sturm.jl calls Orkan via `ccall` to a shared library (`liborkan.so` / `liborkan.dylib`). The FFI layer lives in `src/orkan/`. Julia manages the DSL, type system, and DAG. Orkan manages the state vector and density matrix.
+Sturm.jl calls Orkan via `ccall` to `liborkan.so`/`.dylib`. The FFI layer
+lives in `src/orkan/`. Julia allocates/frees Orkan state handles; every
+`ccall` is wrapped in a Julia function with error checking; pointers are
+owned by the context and freed via the context's deterministic cleanup.
+The v2 ccall surface (general 1q-unitary entry point vs Euler ZYZ triple)
+is open — PRD-v2 D7; the ZYZ chart singularity at θ≈0/π is handled at
+this boundary and only here. DSL-level checks (aliasing with register
+identity, PRD-v2 §8.4) fire BEFORE the FFI shim's index checks.
 
-Key boundary: Julia allocates/frees Orkan state handles. Every `ccall` is wrapped in a Julia function with proper error checking. The Orkan pointer is owned by the context and freed in a finalizer.
-
-```
-Julia (Sturm.jl)                    C (Orkan)
-─────────────────                   ─────────
-QBool, QInt, types                  -
-CompilationContext, DAG             -
-when(), not!, .θ+=, .φ+=,           -
-QBool()/Bool()/Int() casts
-EagerContext          ──ccall──►    orkan_state_create()
-  apply_ry!()         ──ccall──►    orkan_gate_ry()
-  apply_rz!()         ──ccall──►    orkan_gate_rz()
-  apply_cx!()         ──ccall──►    orkan_gate_cx()
-  measure!()          ──ccall──►    orkan_measure()
-```
-
-## File Structure
+## File Structure (target — nothing exists yet; build in this order)
 
 ```
 Sturm.jl/
-  Project.toml
+  Project.toml           # milestone 0: scaffold
   src/
-    Sturm.jl              # module definition, exports
-    orkan/                 # FFI bindings to liborkan (PURE + MIXED_PACKED)
-    types/                 # WireID, QBool, QInt, QMod, QCoset, QRunway
-    context/               # AbstractContext, EagerContext, DensityMatrixContext, TracingContext, compact_state!
-    primitives/            # preparation, rotation, entangle, boundary
-    control/               # when, cases / @cases (mid-circuit measurement)
-    noise/                 # depolarise, dephase, amplitude_damp, classicalise
-    channel/               # Channel struct, trace, compose, OpenQASM, draw (ASCII + PNG)
-    passes/                # deferred_measurement, gate_cancel, clifford_simp
-    qecc/                  # AbstractCode, Steane [[7,1,3]]
-    library/               # patterns (superpose, interfere, fourier_sample, phase_estimate),
-                           #   shor (impl A/B/C/D/D-semi), windowed arithmetic, ...
-    bennett/               # Bennett.jl bridge: oracle, oracle_table, quantum, @quantum_lift
-    block_encoding/        # block-encoding primitives for QSVT/QSP
-    qsvt/                  # quantum singular value transformation
-    simulation/            # Trotter-Suzuki, Ising, Heisenberg evolve!
-    hardware/              # HardwareContext, IdealisedSimulator, transport (TCP/IPC), protocol
-    gates.jl               # convenience gates built from rotation primitives + when + not!
-  test/
-    runtests.jl            # ~60 test files across all subsystems
+    Sturm.jl             # module definition, exports
+    kernel/              # process values: U2 (quat+phase), Perm,
+                         #   UnitaryDAG; ∘ ⊗ adjoint ctrl; views; Ad
+    types/               # WireID, QBool, QInt{W}, QMod{d}, ... (+ x[i])
+    context/             # AbstractContext, EagerContext, DM, Tracing;
+                         #   regions & scope cleanup (§3.9)
+    orkan/               # FFI bindings
+    surface/             # casts, ⊻=/not!, dual, when, cases (§3.8)
+    library/             # evolve!, amplify, phase_estimate, arithmetic …
+    bennett/             # oracle bridge (Perm values)
+    qecc/                # encode(ch, code)
+  test/                  # law tests first: §3.2, §4.2, §3.9
+  docs/physics/          # distillations (PRD-v2 §9 list) — before code
 ```
+
+The v0.1 tree (for reference while quarrying) is on `v0.1-deprecated`.
 
 ## Build & Test
 
 ```bash
-# Run tests
-julia --project -e 'using Pkg; Pkg.test()'
-
-# Quick REPL check
+julia --project -e 'using Pkg; Pkg.test()'   # once milestone 0 lands
 julia --project -e 'using Sturm; ...'
-
-# Activate and develop
-julia --project
-]test
 ```
 
 ## License
 
 AGPL-3.0. Every file.
 
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see
+full workflow context and commands.
 
 ```bash
 bd ready              # Find available work
@@ -192,35 +256,28 @@ bd update <id> --claim  # Claim work
 bd close <id>         # Complete work
 ```
 
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+Rules: use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate,
+or markdown TODO lists. Run `bd prime` for the session close protocol. Use
+`bd remember` for persistent knowledge — do NOT use MEMORY.md files.
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, complete ALL steps. Work is NOT complete
+until `git push` succeeds.
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+1. **File issues for remaining work**
+2. **Run quality gates** (if code changed)
+3. **Update issue status**
+4. **PUSH TO REMOTE** (mandatory):
    ```bash
    git pull --rebase
    bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+5. **Clean up** — stashes, stale branches
+6. **Verify** — all changes committed AND pushed
+7. **Hand off** — context for next session
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+CRITICAL: never stop before pushing; never say "ready to push when you
+are" — YOU push. If push fails, resolve and retry until it succeeds.
