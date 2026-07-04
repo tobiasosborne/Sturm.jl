@@ -186,7 +186,11 @@ carries over verbatim.
    (`not!`, `swap!`, `ptrace!`). Casts use constructor syntax
    (`QBool(p)`, `Bool(q)`, `Int(x)`). Views are lazy wrappers in the
    `transpose` idiom (`dual(q)`, kernel `view(V, q)`), borrow rather than
-   own, and unwrap involutively.
+   own, and unwrap involutively. Named exceptions: `not!` (no-cloning
+   forbids `b = !b`) and the register `Base.xor` methods, which mutate
+   their first argument and return the same handle — that is what makes
+   `a ⊻= b` and `b ⊻= oracle(f, x)` physical operations rather than
+   rebinds (PRD-v2 §3.4).
 3. **Type stability.** Check hot paths with `@code_warntype`.
 4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan
    (via `ccall`). Only `Test` in extras.

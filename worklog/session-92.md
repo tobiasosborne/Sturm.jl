@@ -1,5 +1,47 @@
 # Session 92 — 2026-07-04 — PRD-v2 refinement round 2: evidence-backed revision
 
+## Round 5 — D1/D2/D9 RESOLVED (Julia-idiom research round, bead fcco)
+
+Tobias's protocol (now in bd memories): no strong feeling on open design
+questions ⇒ Sonnet agents research Julia idioms, then rule as a senior
+Julia engineer would. Three agents, three rulings, all in the PRD:
+
+- **D1**: `QBool(p::Real, φ::Real=0.0)` — positional default on the
+  `Complex(x,y)`/`Complex(x)` pattern; DomainError outside [0,1] (free
+  via real sqrt/asin — do NOT widen to Complex); `plus()`/`minus()`/
+  `magic_T()` sugar; `QBool(β::Complex)` interop runner-up (Riemann
+  ratio rejected — pole at QBool(true)). NOT generalized to QMod/CV
+  (amplitude-tuple design later; Base's numeric tower is bespoke per
+  type too). Pole-degeneracy + Bool-dispatch required tests listed.
+- **D2**: ruling (i) define-and-throw — `dual(x)[i]` is a defined method
+  throwing descriptive ArgumentError (Symmetric/UpperTriangular
+  setindex! precedent; avoids the gcd(pi,pi) MethodError smell #51673;
+  hasmethod stays honest); dual(x) construction total (LinearMaps
+  lesson: reject at point of use). `x[i]` = getindex sugar over the
+  kernel view mechanism returning a TYPED wire-handle wrapper (not bare
+  QBool) — SubArray-split precedent + dataids/mightalias-style aliasing
+  hook kills the §8.5 desync class structurally. Involution =
+  dispatch-time unwrap (adjtrans.jl:280); cautionary cite
+  JuliaLang#20978 (ctranspose=conj∘transpose by fiat — same bug
+  category as lowering dual by applying F).
+- **D9**: `b ⊻= oracle(f, x)` — Perm-RHS Base.xor method, target-
+  accumulating. Gate-level verification from v0.1-deprecated bridge:
+  Bennett circuits are NOT/CNOT/Toffoli target-accumulators that never
+  read the output wire as control ⇒ any initial target state gives
+  target ⊕= f(x) by linearity (N&C §1.4.4) ⇒ kickback is ordinary
+  surface code. v0.1's fresh-|0⟩ oracle() was caller-side choice;
+  accumulate idiom existed in qrom_lookup_xor!. v0.1 never built
+  ancilla-kickback DJ at all (tests hand-wrote phase closures). DJ
+  worked example added as PRD §7.4.
+- **Corrections forced along the way**: D5 bullet overstated — leading
+  superpose! does NOT collapse into a view (materialization, §5, joins
+  Grover's H^⊗n; uniform-superposition literal deferred); new §3.4
+  caveat: generic-f XOR-folds allocate un-uncomputed intermediates ⇒
+  scope-exit trace correctly reports decohered survivors — steer
+  multi-step classical logic through oracle/Bennett; Base.xor
+  mutate-no-bang registered as a named convention exception (PRD §3.4 +
+  CLAUDE.md convention 2).
+
 ## Round 4 — THE REBOOT (same session, Tobias's call)
 
 **v0.1 is deprecated wholesale. Main begins at zero.**

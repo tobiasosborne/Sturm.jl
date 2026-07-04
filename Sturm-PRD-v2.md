@@ -8,8 +8,9 @@ porting experiment **executed** (results in §9), the §8 defect list
 re-verified at file:line against main, and — same day, after argument —
 views de-magicked (`view(V, q)` mechanism with `dual` as the type-derived
 instance, §3.3) plus the scope discipline added (§3.9: scope is the
-Stinespring boundary; traces have no backaction and are silent). It
-supersedes the
+Stinespring boundary; traces have no backaction and are silent). D1, D2,
+and D9 were RESOLVED the same day via the Julia-idiom research round
+(rulings in §9; DJ worked example in §7.4). It supersedes the
 primitive-layer sections of `Sturm-PRD.md` (the θ/φ rotation surface) and
 restates the affected axioms. Everything not explicitly changed here —
 contexts, Orkan FFI, the Bennett bridge, QECC-as-HOF, promotion, the
@@ -153,8 +154,11 @@ what operations exist.
 ### 3.2 Casts and the boundary algebra
 
 - **Preparation (cq):** `QBool(p::Real)` allocates at √(1−p)|0⟩ + √p|1⟩;
-  `QBool(b::Bool)` is the definite-bit cast. The full quantum literal
-  `QBool(p, φ)` (relative phase) is **open decision point D1** (§9).
+  `QBool(b::Bool)` is the definite-bit cast. The full quantum literal is
+  **`QBool(p::Real, φ::Real = 0.0)`** (relative phase; positional default
+  on the `Complex(x, y)`/`Complex(x)` pattern — ruling and required tests
+  in D1, §9). `DomainError` for p ∉ [0,1]; named library constants
+  (`plus()`, `minus()`, `magic_T()`) are sugar on this constructor.
 - **Measurement (qc):** `Bool(q)` / `Int(x)` are **consuming** casts. The
   register handle dies at the cast: after collapse the information is
   classical, and a live quantum handle to it would be a type lie. Implicit
@@ -250,9 +254,15 @@ Pontryagin's canonical double-dual identification ev : G → Ĝ̂ (no antipode
 in it), and precisely Julia's `transpose(transpose(A)) === A`: structural
 identity, while physically permuting a copy twice costs two passes.
 Generic stacked views compose (`view(V, view(W, q)) == view(W ∘ V, q)`);
-`dual` specifically unwraps. This distinction is normative — an
-implementation that lowers `dual` by *applying* F is wrong, and the
-signature of the error is integer negation under double duals.
+`dual` specifically unwraps — implemented as a dispatch-time unwrap on
+the wrapper's nominal type (`dual(v::DualView) = v.parent`, Base's exact
+`adjtrans.jl` pattern), never by evaluating the represented transform.
+This distinction is normative — an implementation that lowers `dual` by
+*applying* F is wrong, and the signature of the error is integer negation
+under double duals. Julia has made this same category of mistake before
+and repaired it at cost: JuliaLang/julia#20978, where pre-0.7
+`ctranspose = conj ∘ transpose` by fiat forced `transpose` recursive and
+broke non-numeric matrices.
 
 **`dual` composes with `when`:** `when(dual(q)) do … end` is coherent
 control in the conjugate basis, lowered by conjugating the control wire of
@@ -291,6 +301,31 @@ lowering with controlled phases in place of phases. And note that `+=` on
 a dual view is honest where `q.θ +=` was not: modular addition and its
 dual modulation genuinely commute (an abelian group acting on itself); the
 θ-increment notated a commutativity SU(2) does not have.
+
+**`⊻=` also applies `Perm` values (D9 ruling, §9):** `b ⊻= oracle(f, x)`
+lowers the Bennett `Perm` target-accumulatingly into `b` —
+|x⟩|b⟩ → |x⟩|b ⊕ f(x)⟩ for *any* initial state of `b`, which is what
+makes phase kickback ordinary surface code (§7.4). `a ⊻= b` is the W=1,
+f=identity case of this same method family, not a separate construct.
+
+**Named convention exception (alongside `not!`):** Sturm's `Base.xor`
+methods on registers mutate their first argument in place and return the
+same handle — that is what makes `a ⊻= b` (which Julia lowers to
+`a = xor(a, b)`) a physical operation rather than a rebind. A no-bang
+Base function that mutates is a deviation from both Base convention and
+Sturm's own rule 2; it is deliberate, and this paragraph is its
+registration.
+
+**Caveat on the generic-f path (P8/P9):** `b ⊻= f(x)` with a hand-written
+generic `f` is safe only if `f` is written accumulate-in-place. A naive
+XOR-fold (`reduce(⊻, …)` style) allocates fresh intermediates that are
+never uncomputed; they leave scope entangled, and the silent boundary
+trace (§3.9) then correctly reports a decohered survivor — the
+interference the algorithm needed is already gone (the computation did
+it, not the trace). For multi-step classical logic, use
+`oracle(f, x)` — Bennett's compute-copy-uncompute guarantees garbage-free
+ancillae by construction. This is the quantum contract of §3.9 applied to
+P9's generic path.
 
 ### 3.5 `when` — control flow, with theorem-shaped guardrails
 
@@ -630,8 +665,11 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   diffusion conjugates live, entangled registers by H^⊗n — a basis change
   as a process, not a view. This is the answer to D4: rarely, but
   definitely; the kernel value `H` wrapped by a library name, never
-  surface vocabulary. The executed D5 port confirms Grover is the only
-  one of the five algorithms that needs it.
+  surface vocabulary. `superpose!(x)` is the second customer (D9 round):
+  preparing a QInt's uniform superposition is H^⊗W applied to |0⟩ — a
+  real operation, not a reinterpretation — and it stays a library
+  materialization (a uniform-superposition *literal* is deliberately
+  deferred until call-site pressure demands one).
 - QSVT and block-encoding internals are declared first-class kernel
   territory: Remez/Weiss-derived phase sequences, PREPARE's Grover–Rudolph
   rotation tree, and SELECT's Y-basis conjugations are continuous,
@@ -723,6 +761,33 @@ dual(x) += a        # v0.1: add_qft!(x, a) — 100 lines of phase bookkeeping
 dual(q) ⊻= r        # ≡ dual(r) ⊻= q — controlled-Z, symmetric by notation
 ```
 
+### 7.4 Deutsch–Jozsa over an arbitrary Julia function (D9)
+
+```julia
+"""
+    deutsch_jozsa(f, ::Val{N}) -> Bool
+
+`f` is an ordinary Julia function on N-bit integers, promised constant or
+balanced; compiled to a reversible `Perm` by the Bennett bridge. Returns
+`true` iff `f` is constant. One oracle query — that is the theorem.
+"""
+function deutsch_jozsa(f, ::Val{N}) where {N}
+    x = QInt{N}(0)
+    superpose!(x)            # library materialization (§5): H^⊗N on |0⟩
+    b = minus()              # |−⟩ literal: QBool(0.5, π)  (D1)
+
+    b ⊻= oracle(f, x)        # Perm applied target-accumulatingly (§3.4):
+                             # |x⟩|−⟩ → (−1)^f(x) |x⟩|−⟩ — kickback on x
+
+    return Int(dual(x)) == 0 # Fourier-sample x; all-zero ⇔ constant.
+                             # b goes out of scope: traced, silently (§3.9)
+end
+```
+
+No gates, no angles, one new `⊻=` method. The ancilla needs no explicit
+`ptrace!` — scope is the Stinespring boundary and the trace has no
+backaction. Every construct is from the §3.8 table.
+
 ---
 
 ## 8. v0.1 soundness fixes — independent of the redesign
@@ -759,28 +824,78 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
 
 ## 9. Open decision points and research steps
 
-- **D1 — quantum literals (half-settled).** §3.7 *entails* a phase-bearing
-  literal: without one the surface generates only real stabilizer
-  operations and universality fails (§3.7 entailment). What remains open
-  is only the spelling: `QBool(p, φ)` (two-real chart with opinions),
-  `QBool(z::Complex)` (amplitude literal), or named magic literals in the
-  library. Decide by porting taste, not principle — the principle is
-  settled.
+- **D1 — quantum literals: RESOLVED (2026-07-04, Julia-idiom research
+  round).** §3.7 *entails* a phase-bearing literal (real stabilizer ops
+  cannot manufacture e^{iπ/4}); the spelling is now ruled:
+  **`QBool(p::Real, φ::Real = 0.0)`** — one positional-default method,
+  on Base's own two-real-DOF constructor pattern (`Complex(x, y)` /
+  `Complex(x)`, `base/complex.jl`; likewise `Rational`). `QBool(0.5)`
+  call sites are untouched. `p ∉ [0,1]` throws `DomainError` (Base's
+  convention for continuous-domain violations — and it falls out of the
+  real `sqrt`/`asin` lowering for free, provided the implementation never
+  widens to `Complex`). φ is unrestricted. Named library constants
+  (`plus() = QBool(0.5)`, `minus() = QBool(0.5, π)`,
+  `magic_T() = QBool(0.5, π/4)`) are thin sugar on the constructor —
+  Base's `im = Complex(false, true)` pattern. `QBool(β::Complex)` may be
+  added later as an amplitude-interop method (runner-up; the
+  Riemann-ratio reading is rejected — it has a pole at `QBool(true)`).
+  Why this is not a Bloch relapse: the dispositive test is whether a
+  form supports `+=`/composition (the killed primitive) or single-shot
+  construction only (a literal names a point); and (p, φ) are
+  operational — Born probability and relative phase — not bare
+  geometric angles. Deliberately NOT generalized: `QMod{d}`/CV literals
+  get their own amplitude-tuple design (Base's numeric tower has no
+  uniform N-ary constructor scheme either — `Complex`, `Rational`,
+  `Quaternion` are each bespoke); `(p, φ)` is the d=2 chart, full stop.
+  Required tests: `QBool(1, φ) == QBool(1, φ′) == QBool(true)` (chart
+  degenerates at the poles — a fact about literals, made once);
+  dispatch check `QBool(true)` hits the `Bool` method
+  (`Bool <: Integer <: Real`, more-specific wins); `Float64(φ)` before
+  the ccall boundary for `Irrational` args.
 - **D2 — `dual` and sub-registers: a semantic fork, not "IR care".**
   `dual(x)` for `x::QInt{W}` is Fourier on ℤ_{2^W}; the per-wire duals are
   Fourier on (ℤ₂)^W — different groups on the same wires, provably
   different unitaries (the QFT has maximal operator entanglement across
   every register cut: Chen–Stoudenmire–White, arXiv:2210.08468; Qwerty
   states the same fact as `fourier[N] ≠ pm^⊗N`). So `dual(x[3])` must NOT
-  mean "wire 3 of `dual(x)`" — no such local object exists. Ruling
-  needed: (i) slicing does not commute with `dual` — `dual(x[i])` is the
-  ℤ₂ dual of the slice and `dual(x)[i]` is a loud error; or (ii) ban
-  indexing dual views entirely. Prerequisite, surfaced by the D5 port:
-  v0.1 has NO public indexing form at all — all five algorithms reach
-  wires via a private constructor that bypasses cast discipline and
-  aliasing checks. v2 must ship `x[i]` as a checked aliasing view with
-  defined §4.5/§3.9 semantics (views borrow, never own; returning a view
-  of a dying local) before any library port begins.
+  mean "wire 3 of `dual(x)`" — no such local object exists.
+  **RESOLVED (2026-07-04): ruling (i), define-and-throw.**
+  - `dual(x[i])` is legal — the ℤ₂ dual of the slice. `dual(x)[i]` is a
+    **defined method that throws a descriptive `ArgumentError`** (never a
+    bare MethodError): the Base idiom for "in-bounds index, mathematically
+    forbidden operation" is `Symmetric`/`Hermitian` `setindex!` on
+    off-diagonal entries and `UpperTriangular` `setindex!` into the zero
+    triangle (`stdlib/LinearAlgebra/src/symmetric.jl:267`,
+    `triangular.jl:270` — `@noinline` throw-helper pattern). Leaving it
+    undefined would be the `gcd(pi, pi)` MethodError smell
+    (JuliaLang/julia#51673): the call *looks* well-formed precisely
+    because `dual(x[i])` and `x[i]` both are. Defining-to-throw keeps
+    `hasmethod` honest. The message must state the group-mismatch reason
+    and suggest `dual(x[i])`. No custom exception type (YAGNI —
+    `NotImplementedError` has sat unmerged in JuliaLang/julia#50196 for
+    years; `ArgumentError` + message is the ecosystem answer).
+    Construction stays total: `dual(x)` itself never throws — rejection
+    lives at the point of use (the LinearMaps.jl `adjoint(::FunctionMap)`
+    lesson).
+  - `x[i]` ships as **`getindex` sugar for the kernel view mechanism**,
+    returning a distinguishable wire-handle wrapper — NOT a bare `QBool`.
+    Aliasing getindex is idiomatic for reference types (`Dict` returns
+    the stored object; wires are no-clone, hence reference-like), but the
+    `SubArray`-vs-`Array` type split is the model: a typed wrapper gives
+    Sturm a `Base.dataids`/`mightalias`-style dispatchable aliasing hook
+    at the DSL level (owner id + wire index), structurally eliminating
+    the consumed-flag desync class of §8.5 instead of re-deriving it from
+    a side table. Views borrow, never own (§3.9); returning a view of a
+    dying local is a loud error.
+  - Involution is a **dispatch-time unwrap on the wrapper's nominal
+    type** (`dual(v::DualView) = v.parent`), exactly Base's
+    `adjtrans.jl:280` pattern; generic views compose by wrapping.
+    Cautionary precedent to cite in the docstring: JuliaLang/julia#20978
+    ("Taking matrix transposes seriously") — pre-0.7 Julia defined
+    `ctranspose = conj ∘ transpose` by fiat and broke; defining one
+    operation as the *evaluation* of a composition, rather than
+    structurally, is the same category of bug as lowering `dual` by
+    applying F (§3.3: F² = parity, integer negation).
 - **D3 — dynamic lifting.** What `Bool(q)` returns under `TracingContext`:
   leading candidate a `ClassicalBit` token; `if token` MethodErrors
   pointing to `cases`. (v0.1's hardcoded-`false` `ClassicalRef` is
@@ -800,8 +915,11 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
   = 0 for all five. Highlights: Grover's `_multi_controlled_z!`
   Toffoli-cascade-with-ancilla dissolves into nested `when` +
   `not!(dual(·))` — exact, because CZ's angle is π and kernel `ctrl` is
-  closed; DJ's `superpose!`/`interfere!` sandwich collapses into
-  `Int(dual(x))`; Draper is `dual(x) += a` with the O(L) angle emission
+  closed; DJ's *trailing* `interfere!`+measure collapses into
+  `Int(dual(x))` (correction from the D9 round: the *leading*
+  `superpose!` does NOT collapse — H^⊗W on |0⟩ is a materialization,
+  §5, not a reinterpretation; a uniform-superposition literal is
+  deliberately deferred); Draper is `dual(x) += a` with the O(L) angle emission
   moving into the lowering, and the coset layer inherits the same
   one-liner. Library-internal escapes concentrate exactly where §5 now
   licenses them: Grover's diffusion (D4), the control-scope reassociation
@@ -827,13 +945,26 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
 - **D8 — migration & deprecation.** θ/φ proxies: deprecate with loud
   warnings for one release, or remove atomically? `gates.jl` and
   `patterns.jl` rewrite order; test-suite migration strategy.
-- **D9 — Bennett `oracle` × `dual` composition (research step).** The D5
-  port left one composition unspecified: phase-kickback algorithms with a
-  generic compiled oracle (Deutsch–Jozsa over arbitrary `f` via
-  `oracle(f, x)` against a `dual`-prepared ancilla). `Perm` values
-  conjugated by views are well-defined in the kernel; the surface
-  spelling and the promotion path are not written down. Write the
-  DJ-with-arbitrary-f example before freezing §3.3.
+- **D9 — Bennett `oracle` × `dual` composition: RESOLVED (2026-07-04).**
+  The spelling is **`b ⊻= oracle(f, x)`** — one new method on the
+  existing `Base.xor` family (`xor(b::QBool, p::Perm)` and the multi-bit
+  analogue), applying the `Perm` value target-accumulatingly into `b`.
+  No eighth vocabulary item: `a ⊻= b` (CNOT) is literally the W=1,
+  f=identity case of the same law. Physics verified at the gate level
+  against the v0.1 bridge (`v0.1-deprecated:src/bennett/bridge.jl`):
+  Bennett-compiled circuits are built from NOT/CNOT/Toffoli, all
+  target-accumulating, and never read the designated output wire as a
+  control — so feeding a |−⟩ (or any) initial target implements
+  `target ⊕= f(x)` by linearity (Nielsen–Chuang §1.4.4), which is
+  exactly phase kickback. v0.1's `oracle(f, x)` fresh-|0⟩ convention was
+  a caller-side choice on top of `apply_oracle!`, not a gate constraint;
+  the accumulate idiom already existed in the QROM path
+  (`qrom_lookup_xor!`). Rejected: `oracle!(f, x, b)` (an eighth
+  construct, reads like a gate call); `apply(oracle(f), (x, b))`
+  (mentions a process value — banned from surface by §2; it is the
+  *lowering* of the `⊻=` method, not a spelling). Worked example: §7.4.
+  Note v0.1 never actually built ancilla-kickback DJ (its tests
+  hand-wrote phase closures) — this is new, normative design.
 - **D10 — region spelling for eager code.** Functions run *as channels*
   get the §3.9 boundary from their signature; plain eagerly-executed
   helpers have no exit hook in Julia and inherit the enclosing region.
