@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name = "Sturm"
+uuid = "fcbab5b2-4b8e-43e2-8ec6-8804d7a8d72e"
+authors = ["Tobias Osborne <tobias.j.osborne@gmail.com>"]
+version = "0.2.0-dev"
+
+[compat]
+julia = "1.11"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
