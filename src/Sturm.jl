@@ -35,12 +35,23 @@ module Sturm
 # export QBool, not!, dual, when, cases, oracle, ...
 
 # --- Kernel layer (public, not exported; CLAUDE.md convention 8) ---
-# Process values (U2, Perm, UnitaryDAG) and the choke-point combinators
-# (ctrl, view, Ad) are internal machinery: documented and reachable as
-# `Sturm.ctrl` etc., but never dumped into `using Sturm`. This stanza is
-# populated starting M1 (U2/ctrl) — `public` is a Julia 1.11 keyword, so
-# leave it commented until there is something real to mark.
+# Process values and the choke-point combinators are internal machinery:
+# documented and reachable as `Sturm.U2`, `Sturm.ctrl`, `Sturm.X`, …, but
+# never dumped into `using Sturm`. `public` is a Julia 1.11 keyword.
 #
-# public U2, Perm, ctrl, view, Ad, ...
+# Include order is dependency-respecting (numerics → u2 → perm → ctrl →
+# algebra → constants); see each file's header. `ctrl.jl` (the single
+# choke point) precedes `algebra.jl`, so the `Tensor`/`Seq` STRUCTS are
+# defined in `u2.jl` (their rich methods stay in `algebra.jl`).
+include("kernel/numerics.jl")
+include("kernel/u2.jl")
+include("kernel/perm.jl")
+include("kernel/ctrl.jl")
+include("kernel/algebra.jl")
+include("kernel/constants.jl")
+
+public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
+    ctrl, ⊗, denoted_matrix, nwires,
+    X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase
 
 end # module Sturm

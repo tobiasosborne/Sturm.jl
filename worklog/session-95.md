@@ -1,4 +1,69 @@
-# Session 95 — 2026-07-10 — M0 shipped + M1 distillations + 3+1 kernel round launched (orchestrated)
+# Session 95 — 2026-07-10 — M0 + M1 kernel SHIPPED + Orkan ABI audit (orchestrated)
+
+## M1 kernel SHIPPED (c52g + puig) — 12,752 tests green
+
+Full 3+1 round: 2 independent Opus proposers → orchestrator adjudication →
+Opus implementer → orchestrator review (1 real defect found + fixed).
+
+**Design synthesis** (proposals preserved at `docs/design/m1-kernel-proposal-{A,B}.md`):
+base = A (laws-first: denoted matrix IS the semantics, fast paths are
+fuzz-anchored optimizations; largest-magnitude sign pivot; circdist;
+renorm inside ∘ at 2^-40; checked ctor + unchecked `_u2`), from B:
+same-k `Ctrl∘Ctrl` fusion (§4.2 homomorphism made executable), **NO ctrl
+catch-all** (a generic fallback would silently wrap future non-unitary
+channel nodes — P4 forbids control-on-measurement; MethodError is correct),
+plain `Matrix{ComplexF64}` (no Mat2, no StaticArrays). Both proposers
+independently derived IDENTICAL gate-constant tables and independently
+chose flat-count `Ctrl{V}` + variable-arity MCX ({X,CX,CCX} is NOT closed
+under ctrl — plan baseline was wrong there).
+
+**Orchestrator review catch (the +1 earning its keep):** the fast
+quaternion-level `≈` had a rare FALSE NEGATIVE — two float representations
+of the same element whose top-two quaternion components are nearly tied
+with opposite signs can pick different `_signfix` pivots and land in
+different ℤ₂ representatives (e.g. `(c+δ, −(c−δ),0,0,0.2)` vs its mirror
+`(−(c−δ), c+δ,0,0,0.2+π)`, c=1/√2: verdict was `false`). Fix: fall back to
+denoted-matrix comparison when the fast path rejects (sound fast path +
+exact fallback = complete predicate). Regression test `T-canon-tie`;
+pre-fix failure verified empirically. Random fuzz would essentially never
+hit this — constructed adversarial cases are load-bearing.
+
+**Implementer gotchas (verbatim-worthy):**
+1. Julia 1.12.5 Base provides matrix `*`, `kron`, `isapprox(::AbstractArray)`
+   WITHOUT LinearAlgebra — only identity (`I`) needs it; hand-rolled `_eye`
+   keeps src/ dependency-free.
+2. Include-order vs choke-point-lint collision: `ctrl(::Tensor)/(::Seq)`
+   must live in ctrl.jl (they call `_ctrl`), so `Tensor`/`Seq` STRUCTS are
+   defined in u2.jl, methods in algebra.jl.
+3. `rem2pi(Float64(π), RoundNearest)` may return ±π; both denote −I and
+   circdist absorbs it — never assume +π.
+4. The `|φ|≤2π` invariant lets ∘ use one conditional subtract
+   (`_foldphase`) instead of rem2pi (Payne–Hanek, too slow per-product);
+   rem2pi confined to circdist + public ctor.
+5. `@allocated` at global scope reports phantom ~96B for `U2∘U2`; inside a
+   typed function the 10^6-compose chain is 0 bytes (isbits).
+
+## M2 pre-step: Orkan ABI audit DONE (qmes → docs/design/orkan-abi-audit-m2.md)
+
+- **D7 answered:** pure statevector path has NO general-1q entry — ZYZ
+  (rz;ry;rz + p, 3 ccalls) is forced; the θ≈0/π singularity branch lives at
+  the FFI boundary exactly as §4.1/D7 mandate. `single_from_mat` exists but
+  is HEADER-PRIVATE + tiled-DM-only + coupled to compile-time LOG_TILE_DIM
+  — DO NOT BIND (no header diff would reveal its drift).
+- **24/24 v0.1 ccalls VERIFIED-STILL-CURRENT** (0 drifted, 0 removed);
+  struct layouts byte-identical. v0.1 FFI shapes re-portable as-is.
+- **Controlled ops: only CX/CY/CZ/CCX native** — all Ctrl{U2}/MCX/MCU
+  decomposition is kernel-side (confirms single-choke-point architecture;
+  no Orkan shortcut exists).
+- **Orkan errors are fatal exit()** (qs_error_t is decorative) — every
+  wrapper MUST validate Julia-side pre-ccall or a bad index kills the
+  process. No C-side RNG/measurement — sampling stays Julia-side (prefer
+  bulk unsafe_wrap over per-amplitude state_get). Threading env-var-only
+  (OMP_NUM_THREADS, ceiling 16 on this device).
+
+---
+
+# (earlier the same session)
 
 Orchestrated session: main agent coordinating subagents (1 implementer for
 M0, 4 researchers for distillations, then 2 independent proposers + 1
