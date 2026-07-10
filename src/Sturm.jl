@@ -73,6 +73,15 @@ include("context/regions.jl")
 include("types/qbool.jl")
 include("surface/casts.jl")
 
+# --- M4: views, dual, the action family (bead Sturm.jl-3nld) ----------
+# `kernel/views.jl` lives under kernel/ (LAYERING: view machinery is `public`,
+# not surface) but is included HERE, in dependency order: `_dual_transform(::QBool)`
+# and `dual(::QBool)` need `QBool` (M3) and the kernel `H`/`∘` (M1). No M1/M2/M3
+# logic is edited — a view is never an `apply!` argument; each surface view-op
+# computes a concrete process value + parent WireIDs and calls the landed `apply!`.
+include("kernel/views.jl")
+include("surface/actions.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -81,6 +90,12 @@ export @context, region, ptrace!
 # `convert(Bool, q)` are Base method extensions (no new name to export).
 export QBool, plus, minus, magic_T
 
+# --- Surface action family + view (exported; PRD-v2 §3.3/§3.4/§3.8, M4) -
+# `dual` (construct 4) and `not!` (construct 3). The `⊻=` forms and
+# `Bool(dual(q))` are `Base.xor`/`Base.Bool` method extensions on our own types
+# (no new name to export; `⊻`/`Bool(…)` are host syntax).
+export dual, not!
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -88,6 +103,8 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     WireID, AbstractContext, EagerContext, DensityMatrixContext,
     eager, density, current_context, apply!, allocate!, deallocate!,
     q, consumed, mark_consumed!, is_consumed, live_wires, teardown!,
-    statevector, density_matrix, apply_channel!, sqrt_u2
+    statevector, density_matrix, apply_channel!, sqrt_u2,
+    # M4 view machinery (kernel `public`, reachable as `Sturm.view`, not dumped)
+    view, View, DualView
 
 end # module Sturm

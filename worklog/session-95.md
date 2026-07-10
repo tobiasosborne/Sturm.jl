@@ -1,4 +1,40 @@
-# Session 95 — 2026-07-10 — M0 + M1 + M2 + M3 SHIPPED (orchestrated)
+# Session 95 — 2026-07-10 — M0 + M1 + M2 + M3 + M4 SHIPPED (orchestrated)
+
+## M4 SHIPPED (3nld) — 13,772 tests green; TELEPORTATION WORKS
+
+**The wm28 bug class is dead.** §7.1 teleport (zero gates: casts + ⊻= +
+dual + Julia-Bool corrections) transcribed verbatim; Eager statistical
+full-channel gate over {|0⟩,|1⟩,|+⟩,|−⟩,|i⟩}, N=1024 each: PERFECT
+recovery on every probe — the |i⟩ Y-basis probe reads 1024/1024 where a
+diagonal-only (wm28) teleport reads ≈512. CZ symmetry + X↔Z swap verified
+at Choi level (harness extended to nin=2).
+
+3+1 highlights: both proposers converged (two nominal wrapper types, zero
+kernel edits, _conj(V,g)=adjoint(V)∘g∘V via M1 ∘, |+⟩↦false free);
+RATIFIED teleport split — M4 = Eager statistical probes, M5 = one-run
+Choi(teleport_deferred) §7.1b (DM Bool throws by M3 design; no M4 path).
+
+### M4 gotchas (spec-grade)
+1. **Immutable-struct `===` is structural in Julia — the adjtrans pattern
+   does NOT deliver `dual(q) !== dual(q)`** (Base's transpose(A)===transpose(A)
+   is true!). Honoring §3.3's normative identity claim requires
+   `mutable struct DualView`; field never reassigned, mutability purely
+   for identity. ALL future register views (x[i], QInt duals, M6) must be
+   mutable for the same reason. PRD §3.3's "adjtrans pattern" wording
+   conflates the two — flag for Tobias / next PRD pass.
+2. The `\bcontrolled\b` choke-point lint fires on lowercase prose in
+   surface docstrings — reword to "CZ"/"ctrl(…)"; the word is reserved
+   under kernel/+orkan/.
+3. `_conj(H,X)` lands on exactly Z (phase and all) → ctrl(Z) hits the
+   native cz fast path: the conjugation route emits ONE Orkan call.
+4. Implementer added `_here` cross-context guard to the action family
+   (proposals had missed it — same hole QBool.ctx exists to close).
+5. Teleport gate asserts hits==N exactly (recovery is exact) — stronger
+   than the directive's ±3σ.
+
+---
+
+# (earlier: M0–M3 + audit)
 
 ## M3 SHIPPED (77m2) — 13,711 tests green, ~25s
 

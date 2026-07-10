@@ -72,7 +72,12 @@ supports `nin = 1` (all boundary-law channels are 1-in/1-out). `cap` gives
 that allocates its output without consuming its input needs > 2·nin live slots).
 """
 function choi(f, nin::Int = 1; cap::Int = 2 * nin + 2)
-    nin == 1 || error("choi: M3 harness supports nin=1 (got $nin); multi-input arrives with M4")
+    nin == 1 && return _choi1(f; cap = cap)
+    nin == 2 && return _choi2(f; cap = cap)
+    error("choi: harness supports nin ∈ {1,2} (got $nin); higher arities not needed by M4")
+end
+
+function _choi1(f; cap::Int)
     density(cap) do ctx
         sys = allocate!(ctx)
         ref = allocate!(ctx)
@@ -84,6 +89,65 @@ function choi(f, nin::Int = 1; cap::Int = 2 * nin + 2)
         keep = (q(ctx, qout.wire), q(ctx, ref))     # (output MSB, ref LSB) — slots, recycle-robust
         return _ptrace_keep(ρ, keep, cap)
     end
+end
+
+"""
+    _choi2(f; cap) -> 16×16 Matrix{ComplexF64}
+
+The (normalized) Choi matrix of a 2-in/2-out channel `f(q1, q2) -> (o1, o2)`
+(M4 extension, for the CZ-symmetry law, §7.3). Two independent Bell pairs
+`(sys₁,ref₁),(sys₂,ref₂)`; the combined maximally-entangled input is
+`|Ω⟩ = ½ Σ_{i,j} |ij⟩_sys |ij⟩_ref`. Wraps both system halves, calls `f`, and
+reduces over the kept slots `(o₁, o₂, ref₁, ref₂)` with `o₁` the MSB — the
+basis `|o₁ o₂⟩ ⊗ |ref₁ ref₂⟩` matching `analytic_choi2(U)` below. `cap` needs
+`4` Bell wires plus any scratch (CZ needs none); default `2·nin+2 = 6`.
+"""
+function _choi2(f; cap::Int)
+    density(cap) do ctx
+        sys1 = allocate!(ctx); ref1 = allocate!(ctx)
+        sys2 = allocate!(ctx); ref2 = allocate!(ctx)
+        apply!(ctx, H, (sys1,)); apply!(ctx, ctrl(X), (sys1, ref1))   # pair 1
+        apply!(ctx, H, (sys2,)); apply!(ctx, ctrl(X), (sys2, ref2))   # pair 2
+        q1 = Sturm._adopt_qbool(ctx, sys1)
+        q2 = Sturm._adopt_qbool(ctx, sys2)
+        (o1, o2) = f(q1, q2)
+        ρ = density_matrix(ctx)
+        keep = (q(ctx, o1.wire), q(ctx, o2.wire), q(ctx, ref1), q(ctx, ref2))
+        return _ptrace_keep(ρ, keep, cap)
+    end
+end
+
+"""
+    analytic_choi2(U::Matrix) -> 16×16 Matrix{ComplexF64}
+
+Analytic normalized Choi of the 2-qubit unitary channel `Ad_U`, in the harness
+basis `|o₁o₂⟩ ⊗ |ref₁ref₂⟩` (sys = MSB block). `J = (U⊗I₄)|Ω⟩⟨Ω|(U⊗I₄)†` with
+`|Ω⟩ = ½ Σ_i |i⟩_sys|i⟩_ref` — the reference for `_choi2`.
+"""
+function analytic_choi2(U::AbstractMatrix)
+    d = size(U, 1)                       # 4
+    Ω = zeros(ComplexF64, d * d)
+    for i in 0:(d - 1)
+        Ω[i * d + i + 1] = 1 / sqrt(d)   # |i⟩_sys ⊗ |i⟩_ref, sys = MSB
+    end
+    v = kron(Matrix{ComplexF64}(U), Matrix{ComplexF64}(I, d, d)) * Ω
+    return v * v'
+end
+
+"""
+    analytic_choi1(U::Matrix) -> 4×4 Matrix{ComplexF64}
+
+Analytic normalized Choi of a 1-qubit unitary channel, in the `(out, ref)` basis
+(out = MSB) — the reference for the X↔Z view-swap law (§3.3).
+"""
+function analytic_choi1(U::AbstractMatrix)
+    d = size(U, 1)                       # 2
+    Ω = zeros(ComplexF64, d * d)
+    for i in 0:(d - 1)
+        Ω[i * d + i + 1] = 1 / sqrt(d)
+    end
+    v = kron(Matrix{ComplexF64}(U), Matrix{ComplexF64}(I, d, d)) * Ω
+    return v * v'
 end
 
 # --- Channels under test (the boundary-algebra denotations) --------------

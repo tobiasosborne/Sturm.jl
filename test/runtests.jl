@@ -231,4 +231,8 @@ end
         include("choi.jl")            # the Choi harness + channel-level boundary laws
         include("test_m3_qbool.jl")   # state/value-level + error-taxonomy laws
     end
+
+    @testset "M4 — views, dual, the action family, teleportation" begin
+        include("test_m4_views.jl")   # §3.3/§3.4/§7.1 laws (reuses the choi.jl above)
+    end
 end
