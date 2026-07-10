@@ -1357,8 +1357,12 @@ as found on v0.1:
 - **D2 — `dual` and sub-registers: a semantic fork, not "IR care".**
   `dual(x)` for `x::QInt{W}` is Fourier on ℤ_{2^W}; the per-wire duals are
   Fourier on (ℤ₂)^W — different groups on the same wires, provably
-  different unitaries (the QFT has maximal operator entanglement across
-  every register cut: Chen–Stoudenmire–White, arXiv:2210.08468; Qwerty
+  different unitaries (the QFT is not a tensor product across any
+  register cut — its core carries small but nonzero cross-cut
+  entanglement: Chen–Stoudenmire–White, arXiv:2210.08468, Thm 1/Cor 1;
+  the *maximality* of the standard QFT's operator entanglement is a
+  bit-reversal artifact and is due to Tyson quant-ph/0306144 / Nielsen
+  et al. quant-ph/0208077, per the review-r6 citation ruling; Qwerty
   states the same fact as `fourier[N] ≠ pm^⊗N`). So `dual(x[3])` must NOT
   mean "wire 3 of `dual(x)`" — no such local object exists.
   **RESOLVED (2026-07-04): ruling (i), define-and-throw.**
