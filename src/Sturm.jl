@@ -82,6 +82,15 @@ include("surface/casts.jl")
 include("kernel/views.jl")
 include("surface/actions.jl")
 
+# --- M5: `when` — streaming coherent control (bead Sturm.jl-o5yh) ------
+# Control-stack push/pop + `_act!` (the control-aware apply! sibling) + the three
+# §3.5 guardrails + the §3.9 clean-ancilla exit witness. Included AFTER actions.jl
+# (whose action-family methods now call `_act!`, forward-referenced — resolved at
+# call time) and after the M2 context/region layer it reads (`control_stack`,
+# `_trace_and_free!`, `_marginal_p1`, `_density`). No new ctrl-lowering code:
+# nested `when` ⇒ flat `ctrl^k` ⇒ the existing ad.jl lowering.
+include("surface/when.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -95,6 +104,11 @@ export QBool, plus, minus, magic_T
 # `Bool(dual(q))` are `Base.xor`/`Base.Bool` method extensions on our own types
 # (no new name to export; `⊻`/`Bool(…)` are host syntax).
 export dual, not!
+
+# --- Surface coherent control (exported; PRD-v2 §3.5/D13, M5) ----------
+# `when` (construct 5). The control stack, `_act!`, the guardrail helpers, and
+# the clean-ancilla witness stay INTERNAL (machinery, not layer API).
+export when
 
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,

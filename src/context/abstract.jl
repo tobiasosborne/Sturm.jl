@@ -49,6 +49,14 @@ the idiomatic alternative). Fields:
 - `fusion` — per-wire 1q `U2` accumulator, flushed at any entangling/measure/
   trace/readout boundary (a `U2∘U2` fuse is exact — Hamilton product).
 - `region_stack` — per-region owned-wire frames (§3.9 exit trace).
+- `control_stack` — the M5 `when` coherent-control frames (PRD-v2 §3.5/D13): a
+  FLAT `Vector{WireID}` of the live control wires (parent-resolved). Depth `k`
+  ⇒ the action family lowers each op as `ctrl^k` via `_act!` (surface/when.jl);
+  nested controls commute (Delorme Eq 14) so a flat vector IS the faithful
+  normal form. Consulted at three funnels: `_act!` (wrap + guardrail 2),
+  `_assert_no_control` (guardrail 1: cast/trace/noise under control), and
+  `_trace_and_free!` (the §3.9 clean-ancilla witness). Rides the ctx object
+  into `Threads.@spawn` children exactly as `region_stack` does.
 - `parent`, `strict` — the D10 lost-binding detector hooks (detector lands M6;
   inert while `parent` is empty).
 - `wire_counter` — monotone id source for fresh `WireID`s (never reused).
@@ -66,6 +74,7 @@ mutable struct ContextCore
     consumed::Set{WireID}
     fusion::Dict{WireID,U2}
     region_stack::Vector{Vector{WireID}}
+    control_stack::Vector{WireID}
     parent::Dict{WireID,WireID}
     strict::Bool
     wire_counter::Int
@@ -74,8 +83,8 @@ end
 
 function ContextCore(state::OrkanStateRaw, storage::Cint, capacity::Int; rng=nothing, strict::Bool=false)
     return ContextCore(state, storage, capacity, 0, Int[], Dict{WireID,Int}(),
-        Set{WireID}(), Dict{WireID,U2}(), Vector{WireID}[], Dict{WireID,WireID}(),
-        strict, 0, rng)
+        Set{WireID}(), Dict{WireID,U2}(), Vector{WireID}[], WireID[],
+        Dict{WireID,WireID}(), strict, 0, rng)
 end
 
 """
@@ -144,6 +153,54 @@ live_wires(ctx::AbstractContext) = collect(keys(_core(ctx).wire_to_slot))
 consumed(ctx::AbstractContext) = _core(ctx).consumed
 is_consumed(ctx::AbstractContext, w::WireID) = w in _core(ctx).consumed
 mark_consumed!(ctx::AbstractContext, w::WireID) = (push!(_core(ctx).consumed, w); nothing)
+
+# --- Control stack (M5 `when`, §3.5/D13) --------------------------------
+#
+# The push/pop machinery `when` (surface/when.jl) drives, mirroring
+# `region_stack`. `_act!` (the control-aware apply! sibling), the guardrail-1
+# assertion, and the clean-ancilla witness all read `control_stack`; see
+# surface/when.jl for the semantics and the physics licenses. INTERNAL.
+
+"`true` iff a `when` control frame is live (the action family must control ops)."
+_under_control(ctx::AbstractContext) = !isempty(_core(ctx).control_stack)
+
+"Push a (parent-resolved) control wire; `when` pairs this with a `finally` pop."
+_push_control!(ctx::AbstractContext, w::WireID) = (push!(_core(ctx).control_stack, w); nothing)
+
+"""
+    _pop_control!(ctx, w)
+
+Pop the control frame, asserting LIFO integrity (`last === w`). A fired assert
+means a `try`/`finally` nesting bug corrupted the stack — a fail-loud tripwire,
+never a silent `pop!` (CLAUDE.md #1).
+"""
+function _pop_control!(ctx::AbstractContext, w::WireID)
+    cs = _core(ctx).control_stack
+    (!isempty(cs) && last(cs) === w) ||
+        error("control-stack LIFO violation popping $w (top = $(isempty(cs) ? "∅" : last(cs))) — a `when` try/finally nesting bug")
+    pop!(cs)
+    nothing
+end
+
+"""
+    _assert_no_control(ctx, what)
+
+Guardrail 1 (§3.5): a non-unitary effect (`what`) attempted while a `when`
+control frame is live is a LOUD error, thrown BEFORE any backaction. Control on
+a measurement / trace / noise channel is unrepresentable by axiom P4 (§4.4);
+the body must trace to a unitary-witnessed value (Yuan–Villanyi–Carbin Thm 4.4
+No-Embedding; Bădescu–Panangaden reversibility Condition III, p.35). This is the
+v0.1 §8.1 "most dangerous hole", promoted from a lint to a semantic law.
+"""
+function _assert_no_control(ctx::AbstractContext, what::AbstractString)
+    _under_control(ctx) && error(
+        "$what is forbidden inside a `when` body (guardrail 1, §3.5 / §4.4): a " *
+        "control frame is live, and control on a non-unitary effect (measurement, " *
+        "trace, noise) is unrepresentable by axiom P4 — the body must trace to a " *
+        "unitary-witnessed value (Yuan–Villanyi–Carbin Thm 4.4; Bădescu–Panangaden " *
+        "Condition III, p.35). This is the v0.1 §8.1 regression, closed by law.")
+    nothing
+end
 
 # --- RNG / teardown -----------------------------------------------------
 
@@ -233,7 +290,16 @@ to FAIL-LOUD).
 function _trace_and_free!(ctx::AbstractContext, w::WireID)
     core = _core(ctx)
     haskey(core.wire_to_slot, w) || error("cannot trace wire $w: not live in this context")
-    trace_wire!(ctx, w)
+    if isempty(core.control_stack)
+        trace_wire!(ctx, w)                 # measure-and-discard (Eager) / exact ptrace (DM)
+    else
+        # A body-owned ancilla leaving a `when` region: it must be a clean,
+        # DISENTANGLED |0⟩ (the §3.9 compute–uncompute witness). Asserted while
+        # the control is still on the stack; a clean ancilla is freed WITHOUT
+        # measuring (it is certified |0⟩, so tracing would be a no-op that only
+        # spends an RNG draw). Dirty ⇒ loud error. See surface/when.jl.
+        _clean_ancilla_assert!(ctx, w)
+    end
     slot = core.wire_to_slot[w]
     delete!(core.wire_to_slot, w)
     _return_slot!(core, slot)

@@ -63,7 +63,7 @@ EXACT `X` (U(2), not `Ry(π)`; §4.1), returning the same handle. `not!` is now
 specialness dissolves into the action family (§3.4). No-cloning forbids `q = !q`,
 which is why in-place mutation with a `!` name is the registered idiom.
 """
-not!(q::QBool) = (apply!(_here(q), X, (q.wire,)); q)
+not!(q::QBool) = (_act!(_here(q), X, (q.wire,)); q)
 
 """
     not!(v::DualView) -> v
@@ -75,7 +75,7 @@ translation↔modulation pair.
 """
 function not!(v::DualView)
     p = v.parent
-    apply!(_here(p), _conj(_dual_transform(p), X), (p.wire,))
+    _act!(_here(p), _conj(_dual_transform(p), X), (p.wire,))
     return v
 end
 
@@ -99,7 +99,7 @@ doubled `WireID` (§8.4).
 """
 function Base.xor(a::QBool, b::QBool)
     ctx = _here(a); _here(b)
-    apply!(ctx, ctrl(X), (b.wire, a.wire))   # (control, target) = (b, a)
+    _act!(ctx, ctrl(X), (b.wire, a.wire))   # (control, target) = (b, a)
     return a
 end
 
@@ -109,7 +109,7 @@ end
 Mixed form (P8/D12): a classical RHS flips `q` in place via the kernel's EXACT `X`
 (never `Ry(π)` — the §3.4/audit-8.3 fix), or is a no-op for `false`. Returns `q`.
 """
-Base.xor(q::QBool, b::Bool) = (b && apply!(_here(q), X, (q.wire,)); q)
+Base.xor(q::QBool, b::Bool) = (b && _act!(_here(q), X, (q.wire,)); q)
 
 """
     xor(b::Bool, r::QBool) -> fresh QBool     # `c = false ⊻ b`
@@ -123,8 +123,8 @@ the result is the Bell pair Φ⁺ on `(r, c)`.
 function Base.xor(b::Bool, r::QBool)
     ctx = _here(r)
     f = QBool(false)                       # fresh |0⟩ in the active context
-    b && apply!(ctx, X, (f.wire,))
-    apply!(ctx, ctrl(X), (r.wire, f.wire))  # control = r, target = f
+    b && apply!(ctx, X, (f.wire,))          # fresh-PREP: uncontrolled (§3.9 alloc)
+    _act!(ctx, ctrl(X), (r.wire, f.wire))   # ENTANGLE: control-wrapped under a `when`
     return f
 end
 
@@ -141,7 +141,7 @@ one-line `dual(q) ⊻= r` is NOT writable Julia (D11); bind first (`q̂ = dual(q
 function Base.xor(v::DualView, r::QBool)
     p = v.parent
     ctx = _here(p); _here(r)
-    apply!(ctx, ctrl(_conj(_dual_transform(p), X)), (r.wire, p.wire))  # ctrl(Z) = CZ
+    _act!(ctx, ctrl(_conj(_dual_transform(p), X)), (r.wire, p.wire))  # ctrl(Z) = CZ
     return v
 end
 
@@ -164,6 +164,10 @@ trajectory, §3.8) — the channel statement uses the Choi harness.
 function Base.Bool(v::DualView)
     p = v.parent
     ctx = _here(p)
+    # Guardrail 1 (§3.5): conjugate-basis measurement under a live `when` control
+    # is a loud error — checked at the TOP, before the H basis-change is emitted,
+    # so no backaction precedes the throw.
+    _assert_no_control(ctx, "conjugate-basis measurement cast Bool(dual(q))")
     apply!(ctx, _dual_transform(p), (p.wire,))   # basis change; fuses (M2)
     return Bool(p)                               # M3 consuming qc; consumes p
 end

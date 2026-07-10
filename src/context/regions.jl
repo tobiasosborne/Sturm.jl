@@ -140,6 +140,12 @@ consumed on the single-sourced set. Silent, no backaction (§3.9). The single-
 argument form uses `current_context()`.
 """
 function ptrace!(ctx::AbstractContext, w::WireID)
+    # Guardrail 1 (§3.5): an EXPLICIT trace inside a `when` body is a loud error
+    # (control on a forgetful map is unrepresentable). This is distinct from the
+    # IMPLICIT region-exit trace of a body-owned ancilla, which is the sanctioned
+    # clean-ancilla path (`_trace_and_free!` asserts, does not measure) — same
+    # mechanism, branched on the caller's intent.
+    _assert_no_control(ctx, "explicit ptrace!")
     _trace_and_free!(ctx, w)
     mark_consumed!(ctx, w)
     nothing

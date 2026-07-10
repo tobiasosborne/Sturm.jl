@@ -70,6 +70,9 @@ function Base.Bool(q::QBool)
             "(Handles store their owning context precisely to catch this: WireIDs " *
             "are per-context, so id collisions across contexts would otherwise " *
             "silently target the wrong qubit.)"))
+    # Guardrail 1 (§3.5): measurement under a live `when` control is a loud error
+    # BEFORE any backaction — measurement-under-ctrl is unrepresentable (§4.4).
+    _assert_no_control(ctx, "measurement cast Bool(q)")
     _assert_live(ctx, q.wire)
     b = _measure_wire!(ctx, q.wire)     # Eager: sample+collapse+retire; DM: throws
     mark_consumed!(ctx, q.wire)         # single-sourced set (§4.5) — reached only on Eager success

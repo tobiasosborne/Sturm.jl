@@ -1,4 +1,42 @@
-# Session 95 — 2026-07-10 — M0 + M1 + M2 + M3 + M4 SHIPPED (orchestrated)
+# Session 95 — 2026-07-10 — M0 through M5 SHIPPED (orchestrated)
+
+## M5 SHIPPED (o5yh) — 13,822 tests green; §8.1 CLOSED; deferred teleport one-run Choi PASSES
+
+First genuine 3+1 architectural split: A = control-choke inside apply!;
+B = `_act!` ABOVE apply! (action family only; preps + view sandwiches
+uncontrolled). RULED FOR B — Delorme Eq 16 licenses the uncontrolled
+sandwich (both = C(VWV†); 3 vs ~10 emissions), uncontrolled prep = §3.9
+alloc=|e_G⟩ clean-ancilla entry, zero edits to frozen apply!/ad.jl.
+Adopted from A: three-funnel guardrail completeness proof (embedded as
+the 11-entry table in when.jl) + clean-ancilla necessity/sufficiency.
+
+Gate: `choi(teleport_deferred,1) ≈ J(id)` ONE DM run, J[1,4]=0.5
+(coherent — wm28-diagonal ruled out structurally). Guardrails live:
+cast/ptrace under control = loud error (the §8.1 NAMED regression);
+guard-externality sees through views both sides; clean-ancilla witness =
+FULL |1⟩ marginal (implementer deviation, CORRECT — A's proof was full-
+marginal; strictly safer, catches uncontrolled non-|0⟩ prep in the
+control-0 branch); when opens its own region so body ancillas get the
+witness while the control is still stacked.
+
+### M5 gotchas
+1. The 6 lint-reserved tokens (`Ctrl(`, `_ctrl(`, `\bcontrolled\b`,
+   `orkan_cx`, `ccall`, `single_from_mat`) fire in COMMENT PROSE too —
+   "uncontrolled" is safe (no word boundary), " controlled" is not.
+2. `_act!` closes the §8.1 fusion hole BY CONSTRUCTION (ctrl-wrap before
+   apply! ⇒ always ≥2 wires ⇒ never the 1q fusion path under control).
+3. ptrace! has no QBool method (WireID only) — future surface wiring note.
+4. Double-throw masking accepted (body error hidden by witness error in
+   finally; both fail-loud).
+5. Guardrail messages differentiate naturally: Bool(control) hits G1 at
+   the cast; not!(control) hits G2 in _act! — no special-casing.
+6. IOUs: M7 must prove MBU-exclusion-under-ctrl + when-controlled oracle;
+   M8 must wire cases/noise into _assert_no_control + the streaming≡
+   materialized law test (hooks + comments in place).
+
+---
+
+# (earlier: M0–M4 + audit)
 
 ## M4 SHIPPED (3nld) — 13,772 tests green; TELEPORTATION WORKS
 

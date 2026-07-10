@@ -235,4 +235,8 @@ end
     @testset "M4 — views, dual, the action family, teleportation" begin
         include("test_m4_views.jl")   # §3.3/§3.4/§7.1 laws (reuses the choi.jl above)
     end
+
+    @testset "M5 — when: streaming control, guardrails, deferred teleport" begin
+        include("test_m5_when.jl")    # §3.5/§3.4/§3.9/§7.1b laws (reuses the choi.jl above)
+    end
 end
