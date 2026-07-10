@@ -10,9 +10,21 @@ views de-magicked (`view(V, q)` mechanism with `dual` as the type-derived
 instance, §3.3) plus the scope discipline added (§3.9: scope is the
 Stinespring boundary; traces have no backaction and are silent). D1, D2,
 and D9 were RESOLVED the same day via the Julia-idiom research round
-(rulings in §9; DJ worked example in §7.4). It supersedes the
-primitive-layer sections of `Sturm-PRD.md` (the θ/φ rotation surface) and
-restates the affected axioms. Everything not explicitly changed here —
+(rulings in §9; DJ worked example in §7.4). Revised again 2026-07-10
+(**review round 6** — `Sturm-PRD-v2-review-r6.md`, beads `la0y`/`8fte`):
+every surface form was fed to the Julia 1.12.5 parser and the call-LHS
+op-assign spellings (`dual(x) += a`, `dual(q) ⊻= r`) died — D11
+(bind-the-view mutation idiom), D12 (the value-world/action-world
+arithmetic registry), and D13 (`when` operational semantics) are ruled
+in their place; the Draper table row was corrected (the view op-assign
+is *modulation*, not addition — §3.3, the review's B2); D3 and D10 were
+resolved; the citation set survived a second audit with one inversion
+fixed (Chen–Stoudenmire–White, §9) and the §3.9/§4.2 positioning
+hardened against Silq, current Q#, and "Control as a Constructor"
+(arXiv:2508.21756). Normative code blocks in this document are
+doctest-linted from milestone 0 (bead `hn90`) — round 6's meta-lesson.
+It supersedes the primitive-layer sections of `Sturm-PRD.md` (the θ/φ
+rotation surface) and restates the affected axioms. Everything not explicitly changed here —
 contexts, Orkan FFI, the Bennett bridge, QECC-as-HOF, promotion, the
 channel-IR passes discipline — carries over from v0.1.
 
@@ -45,9 +57,11 @@ Two theorem-grade facts, surfaced during the re-evaluation, show that v0.1's
 - **Controlled-U cannot be constructed from black-box access to U**
   (Araújo–Feix–Costa–Brukner, arXiv:1309.7976, the original single-exact-
   query no-go; strongest form Gavorová–Seidel–Touati, arXiv:2011.10031 — a
-  topological obstruction, Borsuk–Ulam via their "Topological Lemma", that
-  survives approximation, postselection, and relaxed causal order — all
-  three literal in the paper). Control requires a *phase-fixed
+  topological obstruction, their homogeneous-function Lemma 1, an
+  elementary winding/homotopy argument (Borsuk–Ulam supplies only the
+  even-dimensional intuition), that survives approximation,
+  postselection, and relaxed causal order — all three literal in the
+  paper). Control requires a *phase-fixed
   representative* — in our gloss, a section of U(d) → PU(d); the papers
   phrase it as the non-existence of a continuous phase choice. The flip
   side is the constructive half of the argument: Araújo et al. themselves
@@ -138,7 +152,9 @@ theorem forbids collapsing them (§1.1).
 The test for surface code is unchanged from v0.1 in spirit and finally
 achievable in practice: **if your program reads like a circuit diagram, it
 is wrong.** The v2 corollary: if your program mentions a gate, a rotation
-angle, or a process value, it is not surface code.
+angle, or a process value, it is not surface code. And the converse —
+the acceptance bar the D5 port actually used: **if it reads like
+ordinary Julia with a few casts and views, it is probably right.**
 
 ---
 
@@ -174,10 +190,15 @@ what operations exist.
 - **Positioning.** Linear consumption at measurement is anticipated at the
   type level — Silq (PLDI 2020) rejects reuse statically; Twist (POPL 2022,
   arXiv:2205.02287) has a T-Measure rule that removes the qubit from the
-  typing context, exactly our consumed set. Spelling consumption as the
-  host language's own *cast syntax* appears to be unprecedented. Sturm
-  enforces at runtime (§4.5) — deliberately between Q#'s convention-only
-  stance and Silq/Twist's static rejection; the P2 warning is the static
+  typing context, exactly our consumed set; Guppy (arXiv:2510.13082)
+  moves ownership at `measure(q: qubit @owned)`. Spelling consumption as
+  the host language's own *cast syntax* appears to be unprecedented —
+  OpenQASM 3 is the near-miss that proves the gap: it has both a
+  classical cast system and a `measure` keyword, never merged. Sturm
+  enforces at runtime (§4.5) — deliberately between Q# (no linear
+  *typing* by design, though the modern QDK does runtime-enforce clean
+  release at `use`-block exit — see §3.9's landscape table) and
+  Silq/Twist/Guppy's static rejection; the P2 warning is the static
   shadow of the runtime rule.
 
 ### 3.3 `dual` — the conjugate view (the one new quantum concept)
@@ -193,15 +214,40 @@ dual(q)    # conjugate-basis view; lazy, zero-cost, involutive: dual(dual(q)) ==
 `transpose(A)` / `adjoint(A)`: not an operation on the data, a different way
 of addressing it. Operations on the view dispatch through the
 reinterpretation (kernel-level conjugation by the basis-change
-representative). Semantics table:
+representative). Semantics table (spellings per the D11/D12 rulings, §9):
 
 | Surface expression | Meaning | v0.1 spelling it replaces |
 |---|---|---|
 | `Bool(dual(q))` | conjugate-basis measurement | `H!(q); Bool(q)` |
-| `not!(dual(q))` | phase flip | `q.φ += π` |
-| `dual(q) ⊻= r` | phase-entanglement (CZ); **symmetric, and the notation shows it**: `dual(q) ⊻= r` ≡ `dual(r) ⊻= q` | `_cz!(q, r)` folklore |
-| `dual(x::QInt) += a` | Draper addition — arithmetic in the view where it is cheap | `add_qft!` (100 lines of per-wire phase bookkeeping) |
+| `not!(dual(q))` | phase flip (Z = the ℤ₂ **modulation**) | `q.φ += π` |
+| `q̂ = dual(q); q̂ ⊻= r` — or `when(r) do not!(dual(q)) end` | phase-entanglement (CZ); symmetric **by theorem** (required test): `q̂ ⊻= r` ≡ `r̂ ⊻= q` | `_cz!(q, r)` folklore |
+| `x̂ = dual(x); x̂ += a` | **modulation** — an honest `+=` on the dual register: `Int(dual(x))` shifts by `a`; the phase-kick program under phase estimation and Draper's own inner loop | hand-rolled per-wire phase loops |
+| `add!(x, a)` (construct 3, §3.4) | **addition** — translation of x; the kernel lowers it through the dual picture (Draper: F† ∘ phases ∘ F) or as a ripple adder, its choice | `add_qft!` (100 lines of per-wire phase bookkeeping) |
 | `Int(dual(x))` | Fourier sampling | `fourier_sample` plumbing |
+
+**Spelling rule (D11).** Julia's op-assignment demands an assignable
+location (a variable, field, or index) — `dual(x) += a` is a syntax
+error ("invalid assignment location"; a fifteen-year language
+invariant, julialang #227/#249/#3217), and `dual(x) = y` inside a
+function body silently *defines a local method* shadowing `dual` for
+the whole body. The idiom is therefore **bind the view, then work in
+the picture**: `x̂ = dual(x); x̂ += a; x̂ += b` — which also makes
+batching visible (one F-sandwich, not two; the view-fusion pass, §4.2).
+Translation-family operators on a *bound view* mutate the viewed
+register in place and return the same view (the §3.4 registration,
+extended); `dual`'s docstring must name both parser traps.
+
+**Correction registered (review r6, B2).** An earlier draft's table row
+read "`dual(x) += a` = Draper addition". That was backwards: under this
+section's own lowering rule, translating the *dual* label is a
+**modulation** of x — F†T_aF = M_∓a, the intertwining theorem — so the
+view spelling kicks phases and leaves `Int(x)` unchanged, while
+*addition* is spelled as addition (`add!`, or value-world `x + a`) and
+Draper is the kernel's business. The QBool rows always obeyed the
+correct rule (`not!` ↦ X is the ℤ₂ translation; `not!(dual(·))` ↦ Z is
+the ℤ₂ modulation); the row had been reverse-engineered from the v0.1
+function name rather than derived. The moral improved: **addition is
+addition — Draper is how the kernel does it.**
 
 **`dual` is Pontryagin duality, not an analogy.** Every register type
 carries an underlying locally compact abelian group G of computational
@@ -216,12 +262,19 @@ and the basis change is the Fourier transform on G:
 | CV mode | ℝ | x↔p | Fourier (the original) |
 
 The semantics table's separate facts are corollaries of this one theorem:
-involutivity `dual(dual(q)) === q` is Pontryagin's duality theorem;
-`dual(x) += a` = Draper addition is translation-in-G ↔ modulation-in-Ĝ
-(the Fourier intertwining relation); the CZ symmetry
-`dual(q) ⊻= r ≡ dual(r) ⊻= q` is the symmetry of the pairing
-G × Ĝ → U(1). This is P7 achieved *by the surface*: one theorem covers
-every abelian register. Anyons are the honest exception — fusion
+involutivity `dual(dual(q)) === q` is Pontryagin's duality theorem; the
+view **swaps translation and modulation** (the Fourier intertwining
+relation: a conjugated translation *is* a modulation — so `x̂ += a`
+kicks phases on x, `add!(x, a)` read in the dual picture *is* the
+per-wire phase program, and for `QBool` the swap is the familiar pair
+`not!` ↦ X, `not!(dual(·))` ↦ Z); the CZ symmetry `q̂ ⊻= r ≡ r̂ ⊻= q`
+is the symmetry of the pairing G × Ĝ → U(1). This is P7 achieved *by
+the surface*: one theorem covers every abelian register. The
+sign-fixing **Pontryagin unit test** (required) pins every "fixed-once"
+convention at once: `superpose!(x); x̂ = dual(x); x̂ += a;
+Int(dual(x)) == a` — modulation shifts the dual outcome by exactly `a`
+(phase estimation in one line); its translation twin is
+`add!(x, 1)` on |0⟩ ⇒ `Int(x) == 1`, not `2^W − 1`. Anyons are the honest exception — fusion
 categories are not groups, so whether a useful `dual` exists there is
 genuinely open (D6), exactly as the process-first kernel predicts: braid
 process values exist regardless; characters may not.
@@ -245,6 +298,19 @@ for `view(V, q)` freely — QSVT's SELECT conjugates by the Y-axis value
 this way; the executed D5 port (§9) confirms such conjugations arise only
 inside `src/simulation`/`src/qsvt` internals, never in algorithm code.
 Users never see a `V`.
+
+**Registers are numbers; views are addressing modes.** Views do NOT
+ride P9: no ring operations (`*`, `^`, `&`) exist on a view, so generic
+numeric code handed one MethodErrors honestly — the same wall as
+`g(x::Int)` in the P9 section — and the mutate-in-place convention on
+views (D11) can never leak into generic value code. A view supports
+exactly the casts, the translation family, and `when`; nothing else.
+Wrapper identity is not view identity: each `dual(q)` call constructs a
+fresh wrapper (`dual(dual(q)) === q` by unwrap, but
+`dual(q) === dual(q)` is `false`), so consumed-set and aliasing
+bookkeeping key on (parent wire, transform) — a Sturm-owned hook
+*shaped like* Base's `dataids`/`mightalias` protocol (which is
+documented but not public API; do not call Base's internals).
 
 **Views unwrap; processes compose.** As a *process*, the Fourier value
 satisfies F² = parity (x ↦ −x mod 2^W), F⁴ = 1: if `dual` were sugar for
@@ -274,11 +340,17 @@ a seam in the surface.
 **Prior art.** The nearest neighbour is Qwerty (Adams et al.,
 arXiv:2404.12603): first-class basis values (`std`, `pm`, `fourier[N]`)
 and Fourier-basis measurement as a primitive — but its basis translation
-`>>` is explicitly a value-changing *synthesized unitary*; its authors
-considered and rejected the view reading. The zero-cost, involutive,
-`transpose`-idiom view — reinterpretation dispatching through kernel
-conjugation, never synthesis — appears to be novel. The distillation must
-cite Qwerty; the differentiator is the whole point.
+`>>` is compiled to a *synthesized circuit* (its companion compiler
+paper, ASDF arXiv:2501.13262, names "synthesizing circuits from basis
+translations" as the core compilation problem), and Qwerty never treats
+a basis change as a passive view. Structurally it cannot: `>>` maps
+between *arbitrary* user-named bases — a strictly more general
+construct — and only `dual`'s narrowing to the one canonical
+character-group dual makes a pure reinterpretation possible. The
+zero-cost, involutive, `transpose`-idiom view — reinterpretation
+dispatching through kernel conjugation, never synthesis — appears to be
+novel. The distillation must cite Qwerty *and* ASDF; the
+canonicity-buys-the-view point is the differentiator.
 
 **Where H went:** nowhere — it was never a process in this picture. H is
 the change of description between the two views, and surface code only ever
@@ -287,45 +359,103 @@ operation on an existing entangled register — is applying the view's
 unitary as a process value: processes compose, views unwrap. Grover's
 diffusion is the canonical customer (§5, D4).
 
-### 3.4 Entanglement and flips
+### 3.4 The action family: translations, flips, entanglement (D12)
 
-`a ⊻= b` (CNOT-composition), `not!` (now *derivable* — the kernel's X is
-exact in U(2), see §4.1 — but kept as the idiomatic surface flip),
-`swap!` (library sugar: three `⊻=`), and the P8 mixed forms. Normative fix
-carried into v2: the mixed `xor(a::QBool, b::Bool)` must lower to the
-kernel's exact X, not `Ry(π)` (v0.1 latent phase bug at `qbool.jl:154`).
+Surface construct 3 is one P7-parametric family — **the register's
+group acting on itself, and its dual**: `not!(q)` (translation by 1 on
+ℤ₂), `add!(x, ±a)` / `sub!` (translation on ℤ_{2^W}; the kernel lowers
+via Draper or ripple, §3.3), `a ⊻= b` (translation in (ℤ₂)^W by a
+register), the bound-view forms (`x̂ += a` — Ĝ-modulation; `q̂ ⊻= r` —
+CZ), and the Perm form below. All are bijections of the register —
+that is *why* they may mutate in place — plus `swap!` (library sugar:
+three `⊻=`) and the P8 mixed forms. `not!` is now *derivable* (the
+kernel's X is exact in U(2), §4.1) but kept as the idiomatic flip.
+Normative fix carried into v2: the mixed `xor(a::QBool, b::Bool)` must
+lower to the kernel's exact X, not `Ry(π)` (v0.1 latent phase bug at
+`qbool.jl:154`).
 
-The P8 mixed forms extend to views: `dual(y) += x` with `x::QInt` is the
-quantum-addend Draper adder (v0.1's `add_qft_quantum!`) — the same
-lowering with controlled phases in place of phases. And note that `+=` on
-a dual view is honest where `q.θ +=` was not: modular addition and its
-dual modulation genuinely commute (an abelian group acting on itself); the
-θ-increment notated a commutativity SU(2) does not have.
+The P8 mixed forms extend to views, with the corrected (r6/B2) reading:
+`ŷ += x` with `x::QInt` and `ŷ = dual(y)` is **controlled modulation**
+ω^{xy} — the cross-phase kernel inside QFT-multiplication and phase
+estimation (v0.1 had no honest spelling for it); quantum-addend
+*addition* |x⟩|y⟩ → |x⟩|y+x⟩ is `add!(y, x)` — in-place, bijective,
+same lowering family with controlled phases in place of phases. And
+note that `+=` on a *bound dual view* is honest where `q.θ +=` was not:
+it translates the dual register's own label (an abelian group acting on
+itself); the θ-increment notated a commutativity SU(2) does not have.
 
 **`⊻=` also applies `Perm` values (D9 ruling, §9):** `b ⊻= oracle(f, x)`
 lowers the Bennett `Perm` target-accumulatingly into `b` —
 |x⟩|b⟩ → |x⟩|b ⊕ f(x)⟩ for *any* initial state of `b`, which is what
 makes phase kickback ordinary surface code (§7.4). `a ⊻= b` is the W=1,
 f=identity case of this same method family, not a separate construct.
+`oracle(f, x)` itself returns an *opaque query value*: the only surface
+operation on it is `⊻=` application (binding it to a variable is legal;
+there is nothing else to do with it), and applying it leaves `x` live —
+the Perm reads the argument wires control-like and consumes nothing.
 
-**Named convention exception (alongside `not!`):** Sturm's `Base.xor`
-methods on registers mutate their first argument in place and return the
-same handle — that is what makes `a ⊻= b` (which Julia lowers to
-`a = xor(a, b)`) a physical operation rather than a rebind. A no-bang
-Base function that mutates is a deviation from both Base convention and
-Sturm's own rule 2; it is deliberate, and this paragraph is its
-registration.
+**Named convention exception (alongside `not!`), with its risk
+registered honestly:** Sturm's `Base.xor` methods on registers — and
+the D11 translation-family methods on *bound views* — mutate their
+first argument in place and return the same handle; that is what makes
+`a ⊻= b` (which Julia lowers to `a = xor(a, b)`) and `x̂ += a` physical
+operations rather than rebinds. Julia's core team spent 2011–2016
+rejecting mutating update-operators for the general language
+(julialang #249/#3217) precisely because they trap generic code
+("`x += y` … you expect this to have no effect on the caller's value");
+we adopt the pattern *knowing that*, on two grounds: no-cloning means
+there is no value reading a caller could legitimately have expected for
+the entangler, and the exception is scoped to the bijective action
+family — it is **never generalized to ring ops** (see the two-world
+registry below). Note the mixed-direction asymmetry, both directions
+wanted: `q ⊻= true` flips `q` in place (kernel X); `c = false ⊻ b`
+promotes the classical side to a *fresh* |0⟩ register and entangles it
+(the Bell-pair idiom of §7.1).
 
-**Caveat on the generic-f path (P8/P9):** `b ⊻= f(x)` with a hand-written
-generic `f` is safe only if `f` is written accumulate-in-place. A naive
-XOR-fold (`reduce(⊻, …)` style) allocates fresh intermediates that are
-never uncomputed; they leave scope entangled, and the silent boundary
-trace (§3.9) then correctly reports a decohered survivor — the
-interference the algorithm needed is already gone (the computation did
-it, not the trace). For multi-step classical logic, use
-`oracle(f, x)` — Bennett's compute-copy-uncompute guarantees garbage-free
-ancillae by construction. This is the quantum contract of §3.9 applied to
-P9's generic path.
+**The two-world registry (D12 ruling).** Julia's syntax makes
+`x += a` ≡ `x = x + a` non-negotiable, so the arithmetic surface splits
+by physics:
+
+| Form | World | Effect |
+|---|---|---|
+| `s = a + b`, `p = a * b`, generic P9 code | **value** | fresh output register; inputs stay live (reversible dataflow); garbage discipline via `oracle` |
+| `a ⊻= b`, `not!(a)`, `add!(x, a)`, `b ⊻= oracle(f, x)` | **action** (registered) | in-place bijection; handle stable |
+| `x̂ += a`, `x̂ ⊻= r` on a bound view | **action** (registered, D11) | in-place translation/modulation through the view |
+| `x += a` on a *bare register* | value **rebind** | legal but it is the lost-binding pattern: the old register is silently traced at region exit and, if it was superposed, the adder has already entangled it with the survivor — the sum decoheres. D10's strict mode flags exactly this (§3.9); the docs teach `add!` or the view idiom instead |
+
+Ring operations between quantum values are value-world by force: an
+in-place `x*y` or `x^2` is not even a bijection of the register
+(irreversible), and a mutating `+` would silently clobber inputs under
+generic read-reuse code — P9 is a pillar, so `+` allocates.
+
+**Caveat on the generic-f path (P8/P9), mechanism corrected (r6):**
+`b ⊻= f(x)` with a hand-written generic `f` is unsafe for multi-step
+logic either way the operators could have been defined. Under the
+registered action-world `⊻`, a fold like `x[1] ⊻ x[2] ⊻ x[3]`
+accumulates *into wire 1 in place* — corrupting the input register
+rather than allocating garbage; under value-world arithmetic, the
+intermediates are fresh registers that leave scope entangled and the
+silent boundary trace (§3.9) then correctly reports a decohered
+survivor — the interference the algorithm needed is already gone (the
+computation did it, not the trace). Consequence for P9's generic-path
+promise: it is scoped to **arithmetic and comparison operators**;
+generic *bitwise* logic does not have value semantics on registers and
+goes through `oracle(f, x)`, where Bennett's compute-copy-uncompute
+restores value semantics *by construction*. This is the quantum
+contract of §3.9 applied to P9's generic path.
+
+**Bennett strategy selection is control-aware (normative).** The
+bridge's cost model may choose measurement-based uncompute (MBU) —
+measure ancillas, branch classically, fix up. MBU's *composite channel*
+equals the unitary uncompute, but it is not a process value, and §4.4
+makes measurement under `ctrl` unrepresentable. Therefore: under a
+nonzero control stack (or inside a traced `when` body), MBU-flavored
+strategies are **excluded** from selection; outside, they remain
+available. This is §1.1's theorem walking — two implementations equal
+*as channels* are distinguishable *under control* — and it is the
+cleanest live illustration of why the channel/process-value
+stratification exists. Without this rule, the first `when`-wrapped QROM
+oracle ships a soundness bug.
 
 ### 3.5 `when` — control flow, with theorem-shaped guardrails
 
@@ -351,13 +481,62 @@ inside a `cases` branch is fine — each branch is an ordinary
 post-measurement channel. Nesting composes (`ctrl` is closed). The control
 register participates as input *and* output (kickback is physics).
 
+**Operational semantics (D13 ruling).** The definition above ("trace,
+then apply ctrl(V)") is the *semantics*; the §4.2 homomorphism law
+`ctrl(g ∘ h) == ctrl(g) ∘ ctrl(h)` is the license to implement it
+**streamingly** — applying `ctrl(op)` op-by-op as the body executes.
+That is v0.1's control stack, now justified by a law instead of an
+accident, and it fixes the enforcement story per context:
+
+- **Eager (streaming):** guardrail 1 is a runtime law — any
+  cast/`ptrace!`/`cases`/noise attempt while the control stack is
+  nonempty is a loud error (v0.1 defect §8.1's fix, promoted to
+  semantics). Guardrail 2 is a per-op aliasing check that **sees
+  through views** (`when(q) do not!(dual(q)) end` is aliased — views
+  resolve to parent wires). Clean-ancilla exit (§3.9): assert the
+  ancilla's |1⟩-block norm is exactly 0 before dealloc — cheap on a
+  statevector. Streaming soundness for alloc-inside-`when` is the
+  compute–uncompute lemma: alloc (uncontrolled) → ctrl(U) → dealloc
+  (uncontrolled) equals ctrl(dealloc ∘ U ∘ alloc) *provided* U cleans
+  the ancilla in the control=1 branch — the §3.9 witness is exactly
+  that proviso, and an unclean ancilla under a superposed control would
+  decohere the control, which is why the unwitnessed case errs loudly.
+- **Tracing (materialize):** the body traces to a `UnitaryDAG` with
+  witness; guardrails are checked on the DAG; materialization is what
+  enables the §4.2 reassociation pass and ctrl-of-DAG fusion.
+- **Required law test:** streaming and materialized execution of the
+  same body denote the same channel (Choi-compared on small instances).
+
+Two semantic footnotes, stated so users don't discover them: *classical*
+side effects in a `when` body (printing, pushing to a Julia array) are
+stream/trace-time effects, not controlled effects — a wart every
+embedded circuit DSL shares; and the body's closure runs exactly once
+under either strategy. Anti-control has no dedicated form: the idiom is
+the `not!` sandwich (`not!(q); when(q) do … end; not!(q)`) or `cases`
+after measurement — blessed here so Grover-style zero-reflections don't
+go hunting for an `unless`.
+
 ### 3.6 `cases` — the classical branch (Kleisli layer)
 
 Unchanged in role: branching on measurement outcomes is `cases`/`@cases`,
 the operational shadow of dynamic lifting (Proto-Quipper, POPL 2023
-arXiv:2204.13041). What `Bool(q)` returns under `TracingContext` is **open
-decision point D3** (§9): the leading candidate is a `ClassicalBit` token on
-which `if` MethodErrors loudly, pointing to `cases`.
+arXiv:2204.13041). **D3 is RESOLVED (r6):** under `TracingContext`,
+`Bool(q)` returns a `ClassicalBit` token and `Int(x)` a `ClassicalInt`
+token — Proto-Quipper's *parameter* (circuit-generation-time value) as
+opposed to a *state* (execution-time value); `if token` / `token && …`
+throw a descriptive error pointing to `cases`. The shipped precedent is
+qrisp's Jasp (a measured value is a dynamic tracer; the host `if` is
+refused; branching goes through a dedicated construct), with
+Proto-Quipper-Dyn as the type-theoretic backing. **`cases` does not
+scale to 2^W branch tables and is not asked to:** the blessed pattern
+for wide outcomes is *measure → (traced) classical computation →
+classically-parameterized circuit* — a `ClassicalInt` flows through
+ordinary Julia arithmetic/indexing, and only *branching* on it is
+diverted to `cases`. Under Eager this is literally ordinary code; under
+Tracing it is dynamic lifting at full width, again the Jasp model
+(dynamic loop bounds and indices, compiled once, no 2^W table). The
+QROM measurement-based-uncompute case that motivated the worry lowers
+this way.
 
 ### 3.7 Universality of the surface (claim, with proof obligation)
 
@@ -365,9 +544,9 @@ which `if` MethodErrors loudly, pointing to `cases`.
 measurement casts, classical control} is computationally universal.
 
 **Argument:** one-bit teleportation makes H a *gadget*, not a gate:
-prepare |+⟩ (a cast), entangle with CZ (`dual(q) ⊻= r`), measure in the
-conjugate basis, correct with Pauli flips — the MBQC elementary-wire
-identity (Raussendorf–Browne–Briegel, quant-ph/0301052 §II; note this is
+prepare |+⟩ (a cast), entangle with CZ (`q̂ ⊻= r` after `q̂ = dual(q)`,
+or `when` + `not!(dual(·))`), measure in the conjugate basis, correct
+with Pauli flips — the MBQC elementary-wire identity (Raussendorf–Browne–Briegel, quant-ph/0301052 §II; note this is
 NOT the Zhou–Leung–Chuang gadget, which is CNOT + Z-measurement — the
 earlier draft conflated them). Non-Clifford power enters by magic-state
 injection (Bravyi–Kitaev, quant-ph/0403025) with the Zhou–Leung–Chuang
@@ -386,9 +565,14 @@ remains open (D1).
 
 **Proof obligation (research step, rule 8):** write it up properly in
 `docs/physics/` with the citations above before v2 implementation begins.
-In practice, continuous operations reach users through library HOFs
-compiled to the kernel; the universality claim is about *closure*, not
-about hand-writing T-gadgets.
+Implementer caveat verified in review r6: the T-gadget's correction (S)
+is a **non-Pauli Clifford**, so Pauli-frame tracking alone cannot close
+the ladder — the correction needs live classical feedback (available in
+the generating set) or a recursive S-gadget; {H, X, Z, CNOT} are all
+real matrices, which is *why* S must be injected and the complex unit
+enters only through literals. In practice, continuous operations reach
+users through library HOFs compiled to the kernel; the universality
+claim is about *closure*, not about hand-writing T-gadgets.
 
 ### 3.8 The v2 surface vocabulary (normative table)
 
@@ -397,17 +581,47 @@ superseded by:
 
 | # | Surface form | Role | Lowering (kernel) |
 |---|---|---|---|
-| 1 | `QBool(p)` / `QBool(b)` / phase literal (D1) | preparation cast (cq) | allocate + literal `U2` |
+| 1 | `QBool(p, φ=0)` / `QBool(b)` (D1) | preparation cast (cq) | allocate + literal `U2` |
 | 2 | `Bool(q)`, `Int(x)` — consuming | measurement cast (qc) | instrument; consumes handle |
-| 3 | `a ⊻= b`, `not!(a)`, P8 mixed forms | flips / entanglement | kernel X / `ctrl(X)` |
-| 4 | `dual(q)` | conjugate view (Pontryagin) | conjugation by F_G |
-| 5 | `when(q) do … end` | coherent control | trace body → `ctrl(V)` |
-| 6 | `cases` / `@cases` | classical branching | Kleisli / dynamic lifting |
+| 3 | `a ⊻= b`, `not!(a)`, `add!(x, ±a)`, P8 mixed forms | the action family: translations / flips / entanglement (D12) | kernel X / T_a / `ctrl(X)` |
+| 4 | `dual(q)`; bound-view actions `q̂ ⊻= r`, `x̂ += a` | conjugate view (Pontryagin) + Ĝ-modulations (D11) | conjugation by F_G |
+| 5 | `when(q) do … end` | coherent control | trace/stream body → `ctrl(V)` (D13) |
+| 6 | `cases` / `@cases` | classical branching | Kleisli / dynamic lifting (D3) |
 | 7 | `oracle(f, x)` | Bennett bridge | `Perm` value |
 
 Everything quantum a user writes is these seven; arithmetic and generic
-Julia code ride P8/P9 as before. If a program needs an angle, it needs the
-library; if a library function needs an angle, it builds a process value.
+Julia code ride P8/P9 as before (generic path scoped to
+arithmetic/comparison — §3.4). Rows 3–4 are one family seen twice:
+G-translations and their Ĝ-duals, with views as the addressing mode
+(registers are numbers; views are not). If a program needs an angle, it
+needs the library; if a library function needs an angle, it builds a
+process value.
+
+**Context portability (normative table).** Exactly one row of the
+surface is context-sensitive:
+
+| Construct | Eager | DM | Tracing | Hardware |
+|---|---|---|---|---|
+| casts, action family, `dual`, `when`, `oracle` | ✓ | ✓ | ✓ | ✓ |
+| `if` / `&&` on a measured outcome | ✓ | ✓ | ✗ token error → use `cases` (D3) | ✓ |
+| `cases` / `@cases` | ✓ | ✓ (exact, both branches) | ✓ (`CasesNode`) | ✓ |
+
+**DensityMatrixContext executes channels, not trajectories
+(normative).** Measurement and `cases` on the DM context apply the full
+instrument — all branches evolve, weighted, block-accumulated (each
+branch's local ancillae traced to the common output signature first;
+Born weights ride in the unnormalized branches). One run therefore
+yields the *exact* channel, which is what makes the Choi-level test
+discipline (rule 12) cheap: `Choi(teleport) ≈ Choi(id)` is a
+deterministic one-run assertion, no shot averaging. Trajectory sampling
+remains available as an explicit shot API. Harness note: the Choi state
+of a W-wire channel needs 2W wires, so Orkan's 30-qubit cap tests
+channels up to 15 wires — ample for every law test. Two test-design
+rules bought with review-r6 derivations: the cq∘qc pinching test must
+probe a *coherent* input (pinching and identity coincide on diagonal
+inputs), and teleport-class channel tests must probe a Z-*sensitive*
+state (|i⟩ or |+⟩) — the X-outcome-labeling bug class turns teleport
+into a Z-error channel invisible to Z-basis probes (wm28's family).
 
 ### 3.9 Scope is the Stinespring boundary
 
@@ -415,12 +629,15 @@ Registers obey a scope discipline that is not a convenience feature but
 the P1 denotation itself:
 
 - **Entry: allocation is initialization.** A fresh register comes into
-  existence in the canonical state of its type — |e_G⟩, the basis state
-  of the declared group's identity element (|0⟩ for `QBool`/`QInt`/`QMod`,
-  the vacuum for CV, the trivial charge for anyons). There is no
-  uninitialized register and no bare-allocation surface form; `QBool(p)`
-  builds from |e_G⟩ by construction, and the choice is the quantum
-  computational model's, not ours. (A fresh |0⟩ read through `dual` is
+  existence in the canonical state its type declares — |e_G⟩, the basis
+  state of the group identity, for finite G (|0⟩ for
+  `QBool`/`QInt`/`QMod`); the vacuum for CV (which is *not* a
+  group-basis state — |x=0⟩ is non-normalizable, so the finite-G
+  phrasing deliberately does not generalize); the trivial charge for
+  anyons. There is no uninitialized register and no bare-allocation
+  surface form; `QBool(p)` builds from the canonical state by
+  construction, and the choice is the quantum computational model's,
+  not ours. (A fresh |0⟩ read through `dual` is
   uniformly random — complementarity working as specified, not a bug.)
 - **Exit: unconsumed owned locals are traced.** At a region boundary,
   every register the region allocated and neither consumed nor returned
@@ -444,20 +661,83 @@ language does not nag about it. The normative warning rule, stated once:
 collapses); implicit operations without backaction are silent (traces).**
 Explicit `ptrace!` remains available to close a register early.
 
+**Why not Silq-style auto-uncompute? (positioning, owned explicitly.)**
+Silq (PLDI 2020) *uncomputes* `qfree`/`lifted` temporaries at scope
+exit — running the classical-reversible computation backwards — and
+rejects dropping anything else as a type error; a forgotten
+Grover-oracle ancilla is thus *repaired* in Silq and *silently mixes
+the survivors* in Sturm. We accept that trade deliberately, on four
+grounds: (i) qfree-scope is narrow — genuinely quantum locals
+(discarded syndromes, environment modes, anything non-classically-
+reversible) are *rejected* by Silq's discipline and correctly traced by
+Sturm's, and discard-as-trace is the honest general denotation;
+(ii) auto-uncompute silently ~doubles a block's gate cost — Sturm makes
+the expensive thing (uncompute) explicit and the free thing (trace)
+implicit, Silq the reverse, and cost transparency is a design value
+here; (iii) purity-on-demand already exists *by construction* through
+Bennett's `oracle` (compute-copy-uncompute); (iv) the opt-in strict
+mode below catches the forgotten-uncompute *bug* without making the
+*semantics* nag. The design space's newest point, Qurts
+(arXiv:2411.10835, affine types + lifetimes for uncomputation), sits on
+Silq's side of the trade. The end-of-scope landscape, for honesty about
+how contrarian this is:
+
+| Language | End-of-scope discipline |
+|---|---|
+| Q# (current QDK) | must-be-clean: runtime error unless |0⟩ at `use`-exit |
+| ProjectQ | must-be-clean: simulator raises on superposed dealloc |
+| Guppy | must-be-consumed: implicit discard is a compile error |
+| Silq / Qurts | auto-uncompute lifted values; reject the rest |
+| Quipper | explicit: assertive termination or explicit discard |
+| QWIRE / Proto-Quipper | explicit `discard` = partial trace (the denotation, at the call site) |
+| **Sturm** | **automatic, silent trace = the P1 denotation at region exit** |
+
+The discard-equals-trace *denotation* is standard (QWIRE); making it
+automatic, silent, and the meaning of scope itself is the departure —
+it inverts the dominant "superposed at scope exit = probable bug"
+stance, because under P1 it is not a bug, it is a channel.
+
 Mechanics, in order of the frictions they resolve:
 
 - **Regions, not GC.** Julia finalizers are nondeterministic; the trace
   is part of the denotation and must sit at a definite circuit position
   (on `TracingContext` the DAG would otherwise depend on GC timing).
   Region boundaries are explicit: `@context` blocks (deterministic
-  cleanup shipped in v0.1, bead `sv3` — `src/context/abstract.jl`, whose
-  comment already rejects finalizers as unsafe), functions executed *as
+  cleanup — v0.1 shipped this in bead `sv3`; v2 builds it on
+  `Base.ScopedValues.with`, see below), functions executed *as
   channels* (traced bodies, `oracle`, `Channel` invocation — the
-  signature names the outputs), `when` bodies, and a do-block region form
-  for manual scoping (spelling: D10). Plain eagerly-executed helper
-  functions have no exit hook in Julia and inherit the enclosing region;
-  a GC finalizer may at most *detect* a lost handle in debug builds,
-  never trace it.
+  signature names the outputs), `when` bodies, and the manual form
+  **`region() do … end` (D10 ruling)** — a bare-noun do-block in Base's
+  own resource idiom (`open`, `lock`, `mktempdir`); "scope" was
+  rejected as doubly claimed in Julia (lexical scope +
+  `Base.ScopedValues`). Plain eagerly-executed helper functions have no
+  exit hook in Julia and inherit the enclosing region — and this is
+  *provably harmless*, not a compromise: traces have no backaction, so
+  trace *timing* is denotationally invisible; where a region boundary
+  falls is purely a resource/DAG-shape question. (Corollary for the
+  test discipline: the pure-context measure-and-discard lowering
+  advances the RNG, so *seeded* tests must never assert trace
+  placement — statistics are invariant, streams are not.) A GC
+  finalizer may at most *detect* a lost handle in debug builds, never
+  trace it.
+- **Context propagation is `ScopedValue`-based.** `current_context()`
+  reads a `Base.ScopedValue` (stdlib since 1.11), not
+  `task_local_storage`: ScopedValue bindings inherit into
+  `Threads.@spawn`/`@async` children (TLS does not — verified, a
+  silent-missing-context bug class deleted outright), and
+  `with(sv => ctx) do … end` is a genuine `try`/`finally` — exactly the
+  deterministic exit a region needs. Julia 1.12's own NEWS migrates
+  Base the same way. The binding is immutable per scope (correct for
+  propagation); v2's concurrency assumption until a real story is
+  designed: one region, one task.
+- **Strict mode (D10 ruling): the lost-binding detector.** The `x += a`
+  rebind trap (§3.4), the generic-f fold trap, and "a handle survived
+  to teardown" are one defect signature: *at region exit, a traced
+  register that is an entangling-op parent of a surviving register*.
+  Debug/strict mode tracks one parent edge per fresh-output op and
+  flags exactly that — as a **classical** programming error (a lost
+  binding), never as quantum nagging. The default remains silent; the
+  doctrine above is untouched.
 - **`ptrace!` ≠ reset.** Tracing forgets a wire; making it fresh again is
   a physical channel (measure-and-flip, or active reset). The allocator
   invariant "fresh = |e_G⟩" is maintained by reset-on-recycle. No
@@ -507,17 +787,39 @@ element — data, not denotation. One abstract type, trait-stratified:
   drifting complex 2×2 — and a Hamilton product is 16 real multiplies
   against ~50 for complex matrix product, so fusion gets cheaper as well
   as exacter. Euler/ZYZ extraction happens ONCE, at the Orkan boundary;
-  the θ≈0/π coordinate singularity of any three-angle chart (Stuelpnagel
-  1964 — a topological fact, not a convention choice) is confined to that
+  the θ≈0/π coordinate singularity of any three-angle chart (cf.
+  Stuelpnagel 1964 — a topological fact about SO(3), extending
+  immediately to SU(2); not a convention choice) is confined to that
   single extraction site, while composition itself stays chart-free.
+  **Equality is double-cover equality (normative — review r6/M2).** The
+  5-float representation is 2-to-1 onto U(2): (q, φ) ~ (−q, φ+π) are
+  the *same* element, and exact H satisfies H² = (−1_quat, π) — the
+  *other* representative of +I — so the law test `H ∘ H == I` fails
+  naive tuple equality. Process-value equality is therefore mod that
+  ℤ₂ (canonicalize, compare both representatives, or compare the
+  denoted matrices e^{iφ}R(q)), with two guardrails: the quotient must
+  **never merge +I with −I** — `Ry(2π) = (1_quat, π) = −I` is physics
+  (spinor 4π-periodicity) and ctrl(−I) is a real CZ-grade operation, so
+  a test asserting `Ry(2π) == I` is *wrong* and "fixing" H² by
+  quotienting the global sign would re-import the SU(2)-section disease
+  at the equality predicate; and float laws compare with ≈ — the
+  "exact" claims here are group-structural (X, Z, H land on exact
+  elements; no section residue), never claims about float arithmetic.
   Prior art: no surveyed compiler or simulator uses quaternion+phase as
-  its persistent 1q IR (Qiskit's `Quaternion` class is a narrow
-  Euler-reordering utility; Fraxis/FQS quaternions parameterize VQE
-  ansätze) — the combination appears novel.
+  its persistent 1q IR (surveyed: Qiskit's `OneQubitEulerDecomposer` /
+  narrow `Quaternion` utility, tket's `EulerAngleReduction`
+  fuse-to-matrix, VOQC/SQIR matrix semantics, staq, quartz, queso;
+  Fraxis/FQS quaternions parameterize VQE ansätze) — the quaternion↔
+  SU(2) identification itself is textbook (cite Wharton–Koch,
+  arXiv:1411.4999); the novelty is the *persistent-IR-with-quaternion-
+  composition* engineering choice.
 - `Perm` — reversible permutation (every Bennett.jl artifact). Canonical
-  0/1 matrices: **no phase freedom at all** — the classical-reversible
-  corner is the best-behaved under control, as befits a Bennett-centric
-  language.
+  0/1 matrices: **no phase freedom at all** — and closed under control:
+  **ctrl(Perm) is a Perm** (a controlled permutation is a permutation),
+  so controlled oracles never leave the zero-phase-freedom corner. The
+  classical-reversible corner is the best-behaved under control, as
+  befits a Bennett-centric language, and that one-line closure fact is
+  the proof.
 - `UnitaryDAG` — a `Channel`-style DAG carrying a unitarity witness
   (produced by tracing `when` bodies and library circuits).
 - Future per-register-type structures (P7): SU(d) values for `QMod{d}`,
@@ -530,10 +832,14 @@ declares its arithmetic. The kernel is parametric in it.
 
 ### 4.2 The algebra (normative laws = required tests)
 
-`∘` (composition), `⊗` (parallel), `adjoint`, `ctrl`. Laws:
+`∘` (composition), `⊗` (parallel), `adjoint`, `ctrl`. Convention,
+stated once: `∘` is right-to-left matrix composition ("apply the right
+operand first"), so `V ∘ W ∘ V†` means V·W·V†. Laws (equalities are
+U(2)-quotient equalities per §4.1, ≈ on floats):
 
 - `Ry(a) ∘ Ry(b) == Ry(a+b)` — dynamics as a representation of (ℝ, +),
-  now a testable identity on quaternions;
+  now a testable identity on quaternions (and `Ry(2π) == −I ≠ I`:
+  the double cover is physics, §4.1);
 - `ctrl(g ∘ h) == ctrl(g) ∘ ctrl(h)` — `ctrl` is a group homomorphism
   U(d) → U(2d), **not** a channel map (it distinguishes `g` from
   `e^{iα}g`; that is its job);
@@ -548,13 +854,23 @@ Two further normative constraints, both bought with other people's bugs:
 - **`ctrl` is the only constructor of controlled lowerings in the entire
   system.** Cirq, Qiskit, and pytket each carry a dedicated global-phase
   field, and each shipped controlled-decomposition phase bugs for years
-  anyway (Cirq #1161/#4275; Qiskit #7167 plus the `.control()`
-  AttributeError cluster; pytket ≤0.17's QControlBox) — because the bug
-  lives at whichever call site builds the controlled circuit, and there
-  were many. The representation alone does not fix this class; a single
+  anyway (Cirq #1161/#4275; Qiskit #4949 — diagonal gate's phase wrong
+  precisely when used in a *controlling* circuit — and #7167's
+  general phase-tracking cluster plus the `.control()` AttributeError
+  family; pytket's QControlBox, buggy < 0.17.0) — because the bug lives
+  at whichever call site builds the controlled circuit, and there were
+  many. The representation alone does not fix this class; a single
   choke point, total on process values, does. (Tang–Wright,
-  arXiv:2508.00055 Thm 1.1, is the formal statement of why control makes
-  global phase physical.)
+  arXiv:2508.00055 Thm 1.1, is the formal statement of why control
+  makes global phase physical.) The *concept* now has categorical prior
+  art — "Control as a Constructor" (arXiv:2508.21756: control functors
+  extending props to controlled props, with a ≤3-qubit completeness
+  payoff) — which supports rather than competes: Sturm's contribution
+  is the *implementation instantiation*, one total code path on
+  phase-fixed values, where the mainstream's per-gate `.controlled()`
+  entries are many (even Qiskit 2.3's `control(annotated=true)`
+  transpiler deferral centralizes only partially, per gate entry, not
+  total on phase-carrying values).
 - **Control-scope reassociation is a kernel law, not folklore:**
   `(1 ⊗ V) ∘ ctrl(W) ∘ (1 ⊗ V†) == ctrl(V ∘ W ∘ V†)` when `V` acts only
   on the body's wires. v0.1 hand-proves and hand-codes this identity at
@@ -562,9 +878,17 @@ Two further normative constraints, both bought with other people's bugs:
   control-stack surgery, the QSVT reflector) to avoid controlling whole
   circuit bodies. In v2 it is (a) a tested law on process values, (b) the
   kernel pass that narrows control scope automatically, and (c) a named
-  combinator for library authors (`conjugated_by(V) do … end` — name
-  open). The most-repeated non-trivial idiom in the v0.1 library must not
-  remain hand-rolled.
+  combinator for library authors: **`within(V) do … end`** (ruled — the
+  name is Q#'s own `within…apply`, the one mainstream construct that
+  matches a v2 kernel law exactly; the distillation cites it as
+  precedent). A second pass rides the same machinery: **view-fusion** —
+  lazy views lower per-operation, so adjacent same-picture operations
+  emit F† … F pairs that must cancel (on Tracing, a kernel pass; on
+  Eager, a per-wire "current picture" tag flushed at basis-crossing
+  ops — v0.1's `add_qft!` batching, generalized). Without it,
+  `x̂ += a; x̂ += b` costs four Fourier sandwiches instead of two. The
+  most-repeated non-trivial idiom in the v0.1 library must not remain
+  hand-rolled.
 
 ### 4.3 Application: the adjoint representation
 
@@ -702,7 +1026,13 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   channel algebra, casts, `dual`, `when`/`ctrl`, and promotion never
   mention dimension. Finite d, CV, and (via discrete symmetry structures)
   anyons are instances, not extensions.
-- **P8 / P9 — Promotion; registers are numeric types.** Unchanged.
+- **P8 / P9 — Promotion; registers are numeric types.** Unchanged in
+  mechanism, *scoped* in promise (D12): the generic path covers
+  arithmetic and comparison operators (value world — fresh outputs,
+  inputs live); bitwise logic on registers is action-world (`⊻`
+  mutates — the registered exception) and generic bitwise code goes
+  through `oracle`, where Bennett restores value semantics by
+  construction. Views are not numeric and do not ride P9 at all.
 
 ---
 
@@ -749,17 +1079,75 @@ sharpest single piece of evidence in this document that the v0.1 surface
 was too poor to state what the algorithm means. (Bug filed:
 `Sturm.jl-wm28`, independent of v2's schedule.)
 
-### 7.2 Draper addition is addition
+**Convention pin and portability.** The X-readout labeling is forced:
+|+⟩ ↦ `false` (it falls out of the instrument lowering F†P_kF);
+reversing it turns this listing into a *Z-error channel that Z-marginal
+tests cannot see* — wm28's failure class reproduced from the convention
+side — so the required Choi test probes |i⟩ or |+⟩, never just Z
+states. And the `&&`-corrections make this listing **Eager/DM/Hardware
+only**: under Tracing, measurement returns a token (D3) and the
+branching must be `cases` — or use the deferred variant below, which is
+fully context-portable.
+
+### 7.1b Teleportation, deferred — the same channel, no branching
 
 ```julia
-dual(x) += a        # v0.1: add_qft!(x, a) — 100 lines of phase bookkeeping
+"""
+    teleport_deferred(ψ::QBool) -> QBool
+
+The deferred-measurement variant: corrections run coherently BEFORE any
+cast, so there is no classical branching and the listing traces as-is.
+Denotes the same identity channel (a free second Choi test). Note what
+does NOT appear: no casts at all — ψ and b are simply not returned, so
+the region traces them (§3.9), which is exactly measure-and-discard.
+"""
+function teleport_deferred(ψ::QBool)
+    b = QBool(0.5)
+    c = false ⊻ b                # Bell pair on (b, c)
+    b ⊻= ψ
+
+    when(b) do                   # deferred X-correction
+        not!(c)
+    end
+    when(dual(ψ)) do             # deferred Z-correction: control read in the
+        not!(dual(c))            # conjugate basis — |−⟩⟨−| ⊗ Z, exactly
+    end
+    return c                     # ψ, b: owned, unreturned — traced, silently
+end
 ```
 
-### 7.3 CZ symmetry is visible
+### 7.2 Addition is addition (Draper is how the kernel does it)
 
 ```julia
-dual(q) ⊻= r        # ≡ dual(r) ⊻= q — controlled-Z, symmetric by notation
+add!(x, a)          # in-place x ← x + a (mod 2^W); the kernel lowers via the
+                    # dual picture (Draper) or a ripple adder — its choice
+s = x + a           # value world: fresh output register, x stays live (D12)
 ```
+
+v0.1's `add_qft!` was 100 lines of per-wire phase bookkeeping; those
+lines still die — inside the kernel's lowering of T_a, which is where
+"no gates in surface code" wanted them all along. The dual-*view*
+op-assign is a different (and also indispensable) operation — an honest
+`+=` on the dual register (§3.3, r6/B2):
+
+```julia
+x̂ = dual(x)
+x̂ += a              # modulation: Int(dual(x)) shifts by a; Int(x) unchanged —
+                    # the phase-kick program under phase estimation
+```
+
+### 7.3 CZ symmetry is a theorem, and both spellings are writable
+
+```julia
+q̂ = dual(q); q̂ ⊻= r    # controlled-Z: X through q's dual view, control r
+r̂ = dual(r); r̂ ⊻= q    # the SAME channel — symmetry of the pairing G × Ĝ
+                        # (two CZs in sequence = identity: the lines above are
+                        #  alternative spellings, and running both proves it)
+```
+
+Equivalently `when(r) do not!(dual(q)) end`. The symmetry
+`q̂ ⊻= r ≡ r̂ ⊻= q` is a required Choi-level test; the one-line
+`dual(q) ⊻= r` of earlier drafts is not writable Julia (D11).
 
 ### 7.4 Deutsch–Jozsa over an arbitrary Julia function (D9)
 
@@ -788,11 +1176,120 @@ No gates, no angles, one new `⊻=` method. The ancilla needs no explicit
 `ptrace!` — scope is the Stinespring boundary and the trace has no
 backaction. Every construct is from the §3.8 table.
 
+**Why the ℤ_{2^N} dual decides DJ** (worth one sentence, because it is
+a coincidence with a boundary): the k=0 row of the QFT *is* the
+uniform-average row of H^⊗N, and DJ interrogates only that
+component — outcome 0 has amplitude (1/2^N)Σ_x(−1)^{f(x)} = ±1
+(constant) / 0 (balanced), insensitive even to the F-vs-F† direction
+*for outcome 0 alone*. **The pattern does not port**: for any protocol
+reading nonzero outcomes — Bernstein–Vazirani first among them — the
+register dual and the per-wire duals are inequivalent (D2), and §7.5 is
+the required counter-example.
+
+### 7.5 Bernstein–Vazirani — the per-wire duals (D2 made operational)
+
+```julia
+"""
+    bernstein_vazirani(f, ::Val{N}) -> Int
+
+`f(x) = s·x mod 2` for a secret s; one query recovers s exactly. The
+readout is the PER-WIRE duals — the (ℤ₂)^N Fourier basis. The §7.4
+pattern `Int(dual(x))` would NOT recover s: the register dual is
+Fourier on ℤ_{2^N}, a provably different unitary (D2) — for N=3, s=5
+its outcome distribution is {1: 0.073, 3: 0.427, 5: 0.427, 7: 0.073},
+spread and tied. Copy-pasting §7.4 here is the canonical D2 bug.
+"""
+function bernstein_vazirani(f, ::Val{N}) where {N}
+    x = QInt{N}(0)
+    superpose!(x)                           # H^⊗N materialization (§5)
+    b = minus()
+    b ⊻= oracle(f, x)                       # (−1)^{s·x} kickback (§3.4)
+
+    bits = [Bool(dual(x[i])) for i in 1:N]  # ℤ₂ dual of each wire — legal
+                                            # under D2; consumes x wire-wise
+    return evalpoly(2, bits)                # s, LSB-first; b traced (§3.9)
+end
+```
+
+### 7.6 Magic-state injection — `cases`, literals, and the ladder
+
+§3.7's universality argument as running code: the literal is the
+resource, `cases` is the adaptive step, and the correction ladder
+terminates on native Z. (`@cases m …` measures `m` — consuming it — and
+runs the branch on outcome 1; under Tracing it captures both branches,
+§3.6.)
+
+```julia
+function inject_S!(ψ::QBool)
+    m = QBool(0.5, π/2)       # |i⟩ — the S resource is a literal (D1)
+    m ⊻= ψ                    # entangle: CNOT, target m, control ψ
+    @cases m begin
+        not!(dual(ψ))         # outcome 1: Z-correction — native (§3.3)
+    end
+    return ψ
+end
+
+function inject_T!(ψ::QBool)
+    m = QBool(0.5, π/4)       # magic_T() — the T resource
+    m ⊻= ψ
+    @cases m begin
+        inject_S!(ψ)          # outcome 1: S-correction — the ladder recurses,
+    end                       # and inject_S!'s own correction is native Z
+    return ψ
+end
+```
+
+The T-gadget's correction is a **non-Pauli** Clifford (S) — this
+example is precisely why the surface needs live classical adaptivity
+and not just Pauli-frame bookkeeping (§3.7).
+
+### 7.7 Order finding (Shor) — the capstone composition
+
+```julia
+"""
+    shor_order(a, N, ::Val{W}) -> Int
+
+Order finding for a mod N: oracle-grade modular arithmetic, coherent
+control, Fourier sampling, and classical post-processing — nothing but
+the seven constructs and library verbs. (Sketch: the production version
+uses the semiclassical iQFT and coset registers, both ported on paper
+in D5.)
+"""
+function shor_order(a, N, ::Val{W}) where {W}
+    k = QInt{2W}(0)
+    superpose!(k)                    # phase register
+    y = QMod{N}(1)                   # work register ≡ 1 (mod N)
+
+    c = a % N
+    for j in 1:2W                    # classical loop, quantum body (P8/P9)
+        when(k[j]) do                # wire-handle control (D2)
+            mulmod!(y, c)            # library: in-place y ← c·y (mod N) —
+        end                          # bijective (gcd(c, N) = 1), action world
+        c = powermod(c, 2, N)
+    end
+
+    r = Int(dual(k))                 # Fourier-sample the phase register;
+                                     # y is traced silently at exit (§3.9) —
+                                     # that trace is WHY order finding works
+    return denominator(rationalize(r / 4^W; tol = 1 / (2N^2)))
+end
+```
+
 ---
 
-## 8. v0.1 soundness fixes — independent of the redesign
+## 8. The v0.1 defect ledger (evidence base → named v2 regression tests)
 
-To be fixed on main regardless of v2's schedule (each is a verified defect):
+*(Reframed post-reboot, review r6/M6: main was gutted in round 4, so
+"fix on main" is moot — the file:line references below resolve on
+branch `v0.1-deprecated`. The ledger's job now is (a) evidence for the
+v2 design decisions and (b) a list of **named regression tests v2 must
+ship**: 8.1 → the §3.5 runtime guardrail test; 8.2 → gone with the
+surface; 8.3 → §3.4's exact-X law test; 8.4 → DSL-level aliasing with
+register identity, incl. through views; 8.5 → the single-sourced
+consumed set + wire-handle tests (D2); 8.6 → typed-register library
+APIs from day one; 8.7 → kernel `ctrl` is total, no control-count cap;
+8.8 → §7.1's Choi test on a Z-sensitive probe.)* Each verified defect,
+as found on v0.1:
 
 1. `Bool(q)` inside `when()` silently performs unconditional global
    collapse, including of the control. Must be a loud error
@@ -847,6 +1344,11 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
   get their own amplitude-tuple design (Base's numeric tower has no
   uniform N-ary constructor scheme either — `Complex`, `Rational`,
   `Quaternion` are each bespoke); `(p, φ)` is the d=2 chart, full stop.
+  Future note (r6): if a compact *multi-qubit named-state* literal is
+  ever wanted, the precedented route is a string macro
+  (QuantumClifford.jl's `S"XXX ZZI"`) — discrete vocabularies suit
+  string macros; the continuous (p, φ) chart does not. Recorded so the
+  next research round doesn't reopen it.
   Required tests: `QBool(1, φ) == QBool(1, φ′) == QBool(true)` (chart
   degenerates at the poles — a fact about literals, made once);
   dispatch check `QBool(true)` hits the `Bool` method
@@ -896,15 +1398,27 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
     operation as the *evaluation* of a composition, rather than
     structurally, is the same category of bug as lowering `dual` by
     applying F (§3.3: F² = parity, integer negation).
-- **D3 — dynamic lifting.** What `Bool(q)` returns under `TracingContext`:
-  leading candidate a `ClassicalBit` token; `if token` MethodErrors
-  pointing to `cases`. (v0.1's hardcoded-`false` `ClassicalRef` is
-  unacceptable.) Scale constraint from the D5 port: the QROM
-  measurement-based uncompute branches on a W-bit outcome through a
-  2^W-entry classical table — `cases` must either scale past two-way
-  branches, or the PRD blesses "measure, compute classically, apply a
-  classically-parameterized circuit" as ordinary code (it is, under
-  Eager; under Tracing it is dynamic lifting at full width).
+  - **Additions from review r6:** (i) *partial consumption is a loud
+    error* — after `Bool(dual(x[3]))` consumes wire 3, `Int(x)` errors
+    ("register partially consumed: wire 3 of x is dead; measure the
+    remaining wires explicitly"); a set-intersection check on the
+    single-sourced consumed set, never a silent reinterpretation of
+    `Int`. (ii) *Wrapper identity is not view identity* — bookkeeping
+    keys on (parent wire, transform); the aliasing hook is Sturm-owned,
+    shaped like Base's `dataids`/`mightalias` (documented but
+    non-public — do not call Base's internals). (iii) The worked
+    counter-example for the two-groups theorem is §7.5 (BV), a required
+    test.
+- **D3 — dynamic lifting: RESOLVED (2026-07-10, review r6).** Ruling in
+  §3.6: `ClassicalBit`/`ClassicalInt` tokens under `TracingContext`
+  (Proto-Quipper's *parameter* vs *state*); `if token` errors
+  descriptively toward `cases`; and the 2^W scale question is answered
+  by **blessing measure → traced classical computation →
+  classically-parameterized circuit as ordinary code** — `cases` is for
+  branching, never for outcome tables. Shipped precedent: qrisp's Jasp
+  (dynamic tracer + `control()`, width-scalable traced classical
+  feedback, no 2^W table); type-theoretic backing: Proto-Quipper-Dyn.
+  (v0.1's hardcoded-`false` `ClassicalRef` remains unacceptable.)
 - **D4 — materializing views: resolved by counterexample.** Grover's
   diffusion conjugates live entangled registers by H^⊗n — a view
   materialized as a process. Answer: kernel value + library wrap (§5).
@@ -919,9 +1433,10 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
   `Int(dual(x))` (correction from the D9 round: the *leading*
   `superpose!` does NOT collapse — H^⊗W on |0⟩ is a materialization,
   §5, not a reinterpretation; a uniform-superposition literal is
-  deliberately deferred); Draper is `dual(x) += a` with the O(L) angle emission
-  moving into the lowering, and the coset layer inherits the same
-  one-liner. Library-internal escapes concentrate exactly where §5 now
+  deliberately deferred); Draper is `add!(x, a)` with the O(L) angle
+  emission moving into the kernel lowering (correction from review
+  r6/B2: the *view* op-assign is modulation, §3.3), and the coset layer
+  inherits the same one-liner. Library-internal escapes concentrate exactly where §5 now
   licenses them: Grover's diffusion (D4), the control-scope reassociation
   idiom (now a §4.2 law), QSVT phase sequences, PREPARE's rotation tree,
   SELECT's Y-basis change. Open residue: D2 (indexing), D9 (oracle ×
@@ -942,9 +1457,11 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
   decomposition (3 calls); measure before choosing. Note the ZYZ chart
   singularity at θ≈0/π lives at this boundary and only here (§4.1); the
   ccall shape decides where that branch gets written.
-- **D8 — migration & deprecation.** θ/φ proxies: deprecate with loud
-  warnings for one release, or remove atomically? `gates.jl` and
-  `patterns.jl` rewrite order; test-suite migration strategy.
+- **D8 — migration & deprecation: RESOLVED BY THE REBOOT (round 4).**
+  There is no in-place migration: v0.1 lives whole on
+  `v0.1-deprecated`, main rebuilt from zero, reimport only through the
+  v2 gates (CLAUDE.md reimport policy). Deprecation warnings, rewrite
+  order, and test-suite migration are all moot.
 - **D9 — Bennett `oracle` × `dual` composition: RESOLVED (2026-07-04).**
   The spelling is **`b ⊻= oracle(f, x)`** — one new method on the
   existing `Base.xor` family (`xor(b::QBool, p::Perm)` and the multi-bit
@@ -965,35 +1482,96 @@ To be fixed on main regardless of v2's schedule (each is a verified defect):
   *lowering* of the `⊻=` method, not a spelling). Worked example: §7.4.
   Note v0.1 never actually built ancilla-kickback DJ (its tests
   hand-wrote phase closures) — this is new, normative design.
-- **D10 — region spelling for eager code.** Functions run *as channels*
-  get the §3.9 boundary from their signature; plain eagerly-executed
-  helpers have no exit hook in Julia and inherit the enclosing region.
-  Open: the do-block region form's name (`region() do … end`?
-  `@scope begin … end`?), and whether a debug/strict mode should flag
-  handles surviving to `@context` teardown. Careful with the second: the
-  quantum contract (§3.9) says traces are silent — but a handle that
-  reaches context teardown unreferenced usually means a *lost binding*,
-  not a chosen trace, and a lost binding is a classical programming
-  error, not a quantum one. If flagged at all, flag it as such.
-- **Citations TODO (rule 4).** Before implementation, `docs/physics/`
-  distillations for: Bădescu–Panangaden 1511.01567 (incl. their §1
-  Conditions I–III — primary source for §3.5's guardrails); Gavorová et
-  al. 2011.10031 (mark the U(d)→PU(d) "section" phrasing as our gloss —
-  the paper speaks of continuous phase functions); Araújo et al.
-  1309.7976 (the single-query no-go AND the 1⊕U possibility — the kernel
-  argument); Yuan–Villanyi–Carbin 2304.15000 (OOPSLA 2024, not POPL:
-  Thm 4.4, Def 4.7, Thms 4.8/4.9); Ying–Yu–Feng 1402.5172 (cite ONLY for
-  guard-externality, Def 2.1(4) — its general framework deliberately
-  admits non-unitary branches); Fu–Kishida–Ross–Selinger 2204.13041
-  (dynamic lifting); Hietala et al. 1912.02250 (VOQC §3.3 — quote their
-  abstract-vs-concrete-qubits framing); Raussendorf–Browne–Briegel
+- **D10 — region spelling & strict mode: RESOLVED (2026-07-10, review
+  r6).** Rulings folded into §3.9: the manual form is
+  **`region() do … end`** (Base's bare-noun do-block resource idiom;
+  "scope" rejected — doubly claimed by Julia's lexical scope and
+  `Base.ScopedValues`); eager helpers inheriting the enclosing region
+  is *provably harmless* (trace timing is denotationally invisible —
+  no backaction); and the debug/strict mode is the **lost-binding
+  detector** — at region exit, flag a traced register that is an
+  entangling-op parent of a surviving register, as a *classical* error
+  (one mechanism catches the `x += a` rebind trap, the generic-f fold
+  trap, and lost handles). `@context` propagation itself moves to
+  `Base.ScopedValues` (inherits into spawned tasks; `try`/`finally`
+  exit; Julia ≥ 1.11).
+- **D11 — spelling of view mutation: RESOLVED (2026-07-10, review r6).**
+  Julia's op-assign needs an assignable location; call-LHS forms are
+  unwritable (and `dual(x) = y` is a local-method-definition trap).
+  Ruling in §3.3: **bind the view, then op-assign the binding**
+  (`x̂ = dual(x); x̂ += a`) — translation-family operators on bound
+  views mutate the register in place and return the same view (the
+  §3.4 registration, extended); **views are addressing modes, not
+  numbers** (no ring ops; views don't ride P9). Runner-up recorded for
+  history: `q[dual]` selector-indexing (Colon-style token; same
+  `setindex!` machinery as D2) — rejected because `[]` would then mean
+  both part-selection and chart-reinterpretation on one type, and
+  Julia spells reinterpretation as a function (`transpose(A)`, not
+  `A[transpose]`).
+- **D12 — the arithmetic registry: RESOLVED (2026-07-10, review r6).**
+  Ruling in §3.4: the **two-world registry** — value world (ring ops
+  allocate fresh outputs; P9 generic code, scoped to arithmetic/
+  comparison) vs action world (the bijective G-translation/
+  Ĝ-modulation family + `⊻` + bound-view ops, registered in-place with
+  the julialang #249/#3217 risk acknowledged). `x += a` on a bare
+  register is legal but is the lost-binding pattern (D10 strict mode
+  flags it). Construct 3 is the action family; `not!` is its ℤ₂ case.
+- **D13 — `when` operational semantics: RESOLVED (2026-07-10, review
+  r6).** Ruling in §3.5: streaming execution licensed by the `ctrl`
+  homomorphism law (Eager: runtime guardrails — cast-under-control is
+  a loud error, aliasing sees through views, clean-ancilla asserted at
+  |1⟩-norm 0; Tracing: materialize `UnitaryDAG` + witness, enabling
+  reassociation and fusion). Required law test: streaming ≡
+  materialized at the Choi level.
+- **D14 — the BennettVM contract (OPEN — needs Tobias).** The project
+  pairs Sturm with Bennett.jl *and* BennettVM.jl, but this document
+  never states the execution contract: what artifact crosses the
+  boundary (a `Perm` value? a compiled reversible program?), who owns
+  replay, whether BennettVM is a context or a lowering target, and how
+  the control-aware strategy rule (§3.4, MBU exclusion under `ctrl`)
+  is communicated across it. One normative paragraph wanted, from the
+  author of BennettVM.
+- **Citations TODO (rule 4; audited twice — r6 corrections baked in).**
+  Before implementation, `docs/physics/` distillations for:
+  Bădescu–Panangaden 1511.01567 (Conditions I/III ↔ guardrails 2/1 —
+  the mapping is verified; the conditions are invoked across the paper,
+  so soften any "§1" locator); Gavorová et al. 2011.10031 (the
+  obstruction is their homogeneous-function **Lemma 1**, an elementary
+  winding argument — Borsuk–Ulam is even-d intuition only; mark the
+  U(d)→PU(d) "section" phrasing as our gloss); Araújo et al. 1309.7976
+  (the single-query no-go AND the 1⊕U possibility — the kernel
+  argument); Yuan–Villanyi–Carbin 2304.15000 (OOPSLA1 2024: Thm 4.4,
+  Def 4.7, Thms 4.8/4.9 — numbering verified against the published
+  version); Ying–Yu–Feng 1402.5172 (cite ONLY for guard-externality,
+  Def 2.1(4)); Fu–Kishida–Ross–Selinger 2204.13041 (dynamic lifting;
+  the parameter/state vocabulary §3.6 uses); qrisp/Jasp docs (the
+  shipped D3 precedent); Hietala et al. 1912.02250 (VOQC §3.3 —
+  verbatim quote verified); Raussendorf–Browne–Briegel
   quant-ph/0301052 (the H-wire identity — NOT Zhou–Leung–Chuang);
-  Zhou–Leung–Chuang quant-ph/0002039 + Gottesman–Chuang quant-ph/9908010
-  (correction ladder); Bravyi–Kitaev quant-ph/0403025 (injection); Qwerty
-  2404.12603 (nearest prior art for `dual`); Chen–Stoudenmire–White
-  2210.08468 (QFT operator entanglement — D2); Gross quant-ph/0602001 +
-  Appleby quant-ph/0412001 (odd/even d — D6); Tang–Wright 2508.00055
-  (control exposes global phase — §4.2).
+  Zhou–Leung–Chuang quant-ph/0002039 + Gottesman–Chuang
+  quant-ph/9908010 (gate teleportation / correction ladder — the
+  injection circuit is theirs) + Bravyi–Kitaev quant-ph/0403025 (whose
+  headline is *distillation*; cite the ensemble with roles straight);
+  Qwerty 2404.12603 **+ ASDF 2501.13262** (nearest prior art for
+  `dual`; `>>` is synthesized — never claim they "considered and
+  rejected" the view reading, they simply don't discuss it; the
+  canonicity-buys-the-view point is ours); Chen–Stoudenmire–White
+  2210.08468 (**corrected use — the paper shows the QFT's core
+  operator entanglement is SMALL** (bit-reversal artifact aside); cite
+  it for "not a tensor product across any cut", or cite the early
+  results (Tyson 2003; Nielsen et al. 2003) if a maximality claim is
+  ever needed; the small-entanglement reading is *good* news for
+  QFT-based lowerings); Gross quant-ph/0602001 + Appleby
+  quant-ph/0412001 (odd/even d — D6); Tang–Wright 2508.00055 (control
+  exposes global phase — §4.2); **"Control as a Constructor"
+  2508.21756** (categorical prior art for the §4.2 choke point; Sturm
+  = the implementation instantiation); Silq (PLDI 2020) + Qurts
+  2411.10835 (the auto-uncompute pole §3.9 argues against) + Guppy
+  2510.13082 (consuming-measurement neighbor; must-be-consumed pole);
+  Wharton–Koch 1411.4999 (textbook quaternion↔SU(2) — the §4.1 IR
+  claim is "novel as an IR choice", not "novel representation"); cf.
+  Stuelpnagel 1964 (SO(3); the SU(2) extension is standard). Q#'s
+  `within…apply` is the named precedent for §4.2's `within`.
 
 ---
 
@@ -1007,11 +1585,12 @@ non-consuming debate — v2 confirms consuming); `cases`; promotion; QECC;
 
 **Rewritten:** `qbool.jl` surface (BlochProxy deleted); `gates.jl`
 (constants move to kernel); `patterns.jl` / `arithmetic.jl` (shrink onto
-`dual` + kernel `ctrl` — the D5 port sketches the exact shrinkage per
-function); `when` (new lowering); QSVT/block-encoding API (typed
-registers, bead `jlaw`, plus kernel `adjoint` replacing hand-written
-`oracle_adj!` pairs); `test_teleportation.jl` (protocol is wrong today,
-§8.8 — the fix and its Choi-level test land with or before v2).
+the translation family + views + kernel `ctrl` — the D5 port sketches
+the exact shrinkage per function); `when` (new lowering, D13);
+QSVT/block-encoding API (typed registers, bead `jlaw`, plus kernel
+`adjoint` replacing hand-written `oracle_adj!` pairs);
+`test_teleportation.jl` (protocol is wrong on v0.1, §8.8 — v2 ships the
+Choi-level test from day one).
 
 **Deleted concepts:** Bloch-angle mutation; the SU(2)-only doctrine and its
 `H!² = −I` teaching; `_cz!` and controlled-Pauli folklore; the `not!`

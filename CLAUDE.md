@@ -105,22 +105,32 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
     | # | Surface form | Role |
     |---|--------------|------|
-    | 1 | `QBool(p)` / `QBool(b)` / phase literal (D1) | preparation cast (cq) |
+    | 1 | `QBool(p, φ=0)` / `QBool(b)` (D1) | preparation cast (cq) |
     | 2 | `Bool(q)`, `Int(x)` — **consuming** | measurement cast (qc) |
-    | 3 | `a ⊻= b`, `not!(a)`, P8 mixed forms | flips / entanglement |
-    | 4 | `dual(q)` | conjugate view (Pontryagin) |
-    | 5 | `when(q) do … end` | coherent control |
-    | 6 | `cases` / `@cases` | classical branching on outcomes |
+    | 3 | `a ⊻= b`, `not!(a)`, `add!(x, ±a)`, P8 mixed forms | action family: translations / flips / entanglement (D12) |
+    | 4 | `dual(q)`; bound-view actions `q̂ ⊻= r`, `x̂ += a` | conjugate view (Pontryagin) + Ĝ-modulations (D11) |
+    | 5 | `when(q) do … end` | coherent control (D13: streaming licensed) |
+    | 6 | `cases` / `@cases` | classical branching on outcomes (D3: tokens under Tracing) |
     | 7 | `oracle(f, x)` | Bennett bridge |
 
     There are NO rotation primitives on the surface. There is no CNOT
     gate: entanglement is composed (`a ⊻= b`, `when` + body). CZ is
-    `dual(q) ⊻= r`. Conjugate-basis measurement is `Bool(dual(q))`.
-    Draper addition is `dual(x) += a`. Angles live in the kernel
-    (process values: `U2` quaternion+phase, `Perm`, `UnitaryDAG`) and are
-    reached only through library HOFs. **If your program reads like a
-    circuit diagram, it is wrong. If it mentions a gate, a rotation angle,
-    or a process value, it is not surface code.**
+    `q̂ = dual(q); q̂ ⊻= r` or `when(r) do not!(dual(q)) end` — call-LHS
+    op-assign (`dual(q) ⊻= r`) is NOT valid Julia, and `dual(x) = y` is
+    a local-method-definition trap (PRD-v2 D11). Conjugate-basis
+    measurement is `Bool(dual(q))`. Addition is `add!(x, a)` — Draper
+    is the KERNEL's lowering of it; the view op-assign `x̂ += a` is
+    MODULATION (phases), not addition (PRD-v2 §3.3, r6/B2). Arithmetic
+    obeys the two-world registry (PRD-v2 §3.4/D12): ring ops are value
+    world (fresh outputs); the bijective action family is registered
+    in-place; `x += a` on a bare register is a lost-binding trap.
+    Views are addressing modes, not numbers — they do not ride P9.
+    Angles live in the kernel (process values: `U2` quaternion+phase,
+    `Perm`, `UnitaryDAG`) and are reached only through library HOFs.
+    **If your program reads like a circuit diagram, it is wrong. If it
+    mentions a gate, a rotation angle, or a process value, it is not
+    surface code. If it reads like ordinary Julia with a few casts and
+    views, it is probably right.**
 
 12. **FULL PIPELINE TESTS WITH VERIFICATION.** Every algorithm: construct
     via DSL → execute on EagerContext → compare against the
@@ -165,6 +175,18 @@ surface, not physics. The v2 rules:
   structurally; but F² = parity as a *process*. An implementation that
   lowers `dual` by applying F is wrong — the signature of the bug is
   integer negation under double duals.
+- The view SWAPS translation and modulation (Pontryagin): `not!` ↦ X,
+  `not!(dual(·))` ↦ Z; `add!(x, a)` translates, `x̂ += a` modulates.
+  An implementation where the dual-view op-assign changes `Int(x)` is
+  wrong (PRD-v2 §3.3, review r6/B2).
+- **U2 equality is double-cover equality**: (q, φ) ~ (−q, φ+π); exact
+  H² lands on (−1_quat, π) ≡ +I. NEVER merge +I with −I —
+  `Ry(2π) = −I` is physics (spinor periodicity) and `ctrl(−I)` is a
+  real operation. A test asserting `Ry(2π) == I` is WRONG. Float laws
+  compare with ≈ (PRD-v2 §4.1).
+- Bennett strategy selection is control-aware: measurement-based
+  uncompute is EXCLUDED under a nonzero control stack / inside `when`
+  bodies (PRD-v2 §3.4) — measurement under `ctrl` is unrepresentable.
 
 ## Channel IR vs Unitary Methods — HALLUCINATION RISK
 
@@ -183,25 +205,44 @@ carries over verbatim.
 
 1. **Module name is `Sturm`.**
 2. **Mutation convention.** State-mutating functions end with `!`
-   (`not!`, `swap!`, `ptrace!`). Casts use constructor syntax
+   (`not!`, `add!`, `swap!`, `ptrace!`). Casts use constructor syntax
    (`QBool(p)`, `Bool(q)`, `Int(x)`). Views are lazy wrappers in the
    `transpose` idiom (`dual(q)`, kernel `view(V, q)`), borrow rather than
-   own, and unwrap involutively. Named exceptions: `not!` (no-cloning
-   forbids `b = !b`) and the register `Base.xor` methods, which mutate
-   their first argument and return the same handle — that is what makes
-   `a ⊻= b` and `b ⊻= oracle(f, x)` physical operations rather than
-   rebinds (PRD-v2 §3.4).
+   own, and unwrap involutively. Registered exceptions (PRD-v2
+   §3.4/D11/D12 — adopted knowing julialang#249/#3217 rejected the
+   pattern for the general language): `not!` (no-cloning forbids
+   `b = !b`); the register `Base.xor` methods and the
+   translation-family methods on BOUND VIEWS (`x̂ += a`, `q̂ ⊻= r`),
+   which mutate in place and return the same handle — that is what
+   makes `a ⊻= b` and `b ⊻= oracle(f, x)` physical operations rather
+   than rebinds. Scope is the bijective action family ONLY — never
+   ring ops (`+`/`*` between registers allocate fresh outputs; P9).
 3. **Type stability.** Check hot paths with `@code_warntype`.
 4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan
    (via `ccall`). Only `Test` in extras.
 5. **Width as type parameter.** `QInt{W}` carries width in the type; use
    `where {W}` dispatch, not runtime branching.
-6. **Context propagation via task-local storage.** `current_context()`
-   reads `task_local_storage(:sturm_context)`; `@context` sets it and
-   performs deterministic scope cleanup at exit (PRD-v2 §3.9 — regions,
-   never GC finalizers).
+6. **Context propagation via `Base.ScopedValues`** (Julia ≥ 1.11 —
+   NOT task_local_storage, which does not inherit into
+   `Threads.@spawn`/`@async` children; verified on 1.12.5).
+   `current_context()` reads a `ScopedValue`; `@context` binds it via
+   `with(...)` — a genuine `try`/`finally`, which IS the deterministic
+   scope cleanup PRD-v2 §3.9 demands (regions, never GC finalizers).
+   The manual region form is `region() do … end` (D10). Don't re-read
+   `current_context()` in per-op hot loops — pass the context through
+   kernel-internal call chains (ScopedValue access allocates).
 7. **Julia idiomaticity is paramount** (standing preference from Tobias).
    If a construct fights the host language, the construct is wrong.
+8. **Namespace = layering.** Surface constructs are `export`ed; kernel
+   API (`U2`, `Perm`, `ctrl`, `view`, named constants) is marked
+   `public` (Julia 1.11) — documented, reachable as `Sturm.ctrl`, not
+   dumped into `using Sturm`. The §2 layer table gets mechanical
+   enforcement at the namespace level.
+9. **The PRD's examples compile, forever.** `test/test_prd_examples.jl`
+   Meta.parses every fenced Julia block in Sturm-PRD-v2.md at every
+   test run, and executes the §7 examples under EagerContext once the
+   surface exists (bead hn90). Round 6's lesson: five review rounds
+   missed a parse error because normative code lived in prose.
 
 ## Orkan FFI
 
