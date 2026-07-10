@@ -1,4 +1,41 @@
-# Session 95 — 2026-07-10 — M0 + M1 + M2 SHIPPED (orchestrated)
+# Session 95 — 2026-07-10 — M0 + M1 + M2 + M3 SHIPPED (orchestrated)
+
+## M3 SHIPPED (77m2) — 13,711 tests green, ~25s
+
+Full 3+1. Both proposers INDEPENDENTLY put the P2 warning on
+`Base.convert(Bool, ::QBool)` (the compiler-inserted path) with explicit
+`Bool(q)` silent — and B proved `if q` is a TypeError in Julia, never an
+auto-cast, so convert IS the implicit site. Adjudication: B's handle shape
+(QBool stores ctx — WireIDs are per-context monotone, bare-id handles
+would silently cross contexts), B's prep-by-composition (Rz(φ)∘Ry(2asin√p)
+via the fuzz-tested M1 ∘, A's analytic column as the test oracle), A's
+exact-X for QBool(::Bool) (not Ry(π) — latent-phase trap), and the big
+one: **DM Bool(q) THROWS** (A's trajectory-sample position REJECTED —
+DM-executes-channels is r6 doctrine; scalar-on-channel-context is the D3
+token problem, M8). First surface exports: QBool, plus, minus, magic_T.
+
+The wm28 gate is now a live test: `choi(pinch)` on the COHERENT Bell
+probe is diagonal AND ≉ choi(identity) — the class of test that v0.1's
+Z-marginal teleportation test could never be.
+
+### M3 gotchas
+1. QBool NOT parametrized on context (QBool{C} would metastasize into
+   QInt{W,C}); ctx is an abstract field — handles are never hot-loop.
+2. `_measure_wire!` must `_flush_all!` (not flush-one-wire) before
+   collapse — same conservative path as the M2 trace.
+3. Test files using `public`-but-unexported names (eager/density) must
+   import them explicitly — passing only via an earlier include's imports
+   is a trap (made M3 tests self-sufficient).
+4. Choi partial-trace endianness pinned in ONE function (_ptrace_keep,
+   keep[1]=MSB); analytic references written to the same ordering.
+5. P2 warning deliberately NOT maxlog-deduped: collapse is a physical
+   event; per-site dedup also makes @test_logs non-deterministic.
+6. choi harness cap = 2·nin+2 (a channel that allocates its output before
+   consuming its input needs the headroom).
+
+---
+
+# (earlier: M0 + M1 + M2 + audit)
 
 ## M2 SHIPPED (dc6i) — 13,573 tests green, ~20s
 

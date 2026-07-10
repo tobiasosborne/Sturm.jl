@@ -111,3 +111,29 @@ function density_matrix(ctx::DensityMatrixContext)
     _flush_all!(ctx)
     return _density(_core(ctx).state, _core(ctx).capacity)
 end
+
+# The complete-dephasing (pinching) Kraus set {P0, P1} = {|0⟩⟨0|, |1⟩⟨1|}: the
+# CHANNEL denotation of the qc measurement cast with its classical bit traced out
+# (§3.8). CPTP. Distinct from `_RESET_KRAUS`, which resets to |0⟩; the pinch
+# leaves the diagonal in place and kills only the coherences.
+const _PINCH_KRAUS = Matrix{ComplexF64}[
+    ComplexF64[1 0; 0 0],   # |0⟩⟨0|
+    ComplexF64[0 0; 0 1],   # |1⟩⟨1|
+]
+
+"""
+    _instrument!(ctx::DensityMatrixContext, w::WireID)
+
+Apply the pinching (complete-dephasing) channel to wire `w` in place — the
+CHANNEL denotation of the qc measurement cast on a density context (§3.8: DM
+executes channels, so `cq∘qc = pinching` is realized exactly in one pass, no
+sampling). `ρ ↦ Σ_b P_b ρ P_b` kills the off-diagonal (basis) coherences and
+leaves the wire live (NOT consumed, NOT reset). Reuses the M2 1-local
+`_apply_channel_1q!` / `channel_1q`. INTERNAL — the M3 Choi harness reaches it as
+`Sturm._instrument!`; M8's `@cases` will reuse the same denotation.
+"""
+function _instrument!(ctx::DensityMatrixContext, w::WireID)
+    _flush_wire!(ctx, w)
+    _apply_channel_1q!(ctx, _PINCH_KRAUS, q(ctx, w))
+    nothing
+end

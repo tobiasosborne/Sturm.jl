@@ -66,8 +66,20 @@ include("context/eager.jl")
 include("context/density.jl")
 include("context/regions.jl")
 
+# --- M3: QBool, the boundary casts (bead Sturm.jl-77m2) ---------------
+# The FIRST surface vocabulary of the rebuild. `types/qbool.jl` (the register
+# handle + preparation cast) before `surface/casts.jl` (the measurement cast
+# dispatches on QBool); both after the M2 context layer they call into.
+include("types/qbool.jl")
+include("surface/casts.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
+
+# --- Surface casts + literals (exported; PRD-v2 §3.2/§3.8, M3) ---------
+# The preparation cast and its named library constants. `Bool(q)` /
+# `convert(Bool, q)` are Base method extensions (no new name to export).
+export QBool, plus, minus, magic_T
 
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,

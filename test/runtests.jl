@@ -226,4 +226,9 @@ end
         include("test_contexts.jl")
         include("test_regions.jl")
     end
+
+    @testset "M3 — QBool, boundary casts, Choi harness" begin
+        include("choi.jl")            # the Choi harness + channel-level boundary laws
+        include("test_m3_qbool.jl")   # state/value-level + error-taxonomy laws
+    end
 end
