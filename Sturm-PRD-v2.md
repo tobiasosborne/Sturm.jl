@@ -1527,14 +1527,20 @@ as found on v0.1:
   |1⟩-norm 0; Tracing: materialize `UnitaryDAG` + witness, enabling
   reassociation and fusion). Required law test: streaming ≡
   materialized at the Choi level.
-- **D14 — the BennettVM contract (OPEN — needs Tobias).** The project
-  pairs Sturm with Bennett.jl *and* BennettVM.jl, but this document
-  never states the execution contract: what artifact crosses the
-  boundary (a `Perm` value? a compiled reversible program?), who owns
-  replay, whether BennettVM is a context or a lowering target, and how
-  the control-aware strategy rule (§3.4, MBU exclusion under `ctrl`)
-  is communicated across it. One normative paragraph wanted, from the
-  author of BennettVM.
+- **D14 — the BennettVM contract. RESOLVED (2026-07-10, Tobias):
+  ruling (A), circuit-only bridge.** The ONLY artifact that crosses the
+  Bennett→Sturm boundary is a reversible circuit convertible losslessly
+  to a kernel `Perm` (Bennett's NOT/CNOT/Toffoli are the 0/1/2-control
+  cases of `MCX`; see `docs/design/bennett-v2-compat-audit.md`). Sturm
+  owns replay (the M2 `Perm` path). BennettVM is out of scope: a
+  function whose compilation requires the VM (unbounded loops, dynamic
+  memory) makes `oracle(f, x)` a LOUD error naming the limitation —
+  never a silent fallback. The control-aware strategy rule (§3.4) is
+  enforced by the type boundary itself: Bennett has no measurement
+  gate, a `Perm` is unitary by construction, so an MBU artifact cannot
+  cross; if Bennett ever grows MBU it must return a DISTINCT type, not
+  a `ReversibleCircuit`. Revisit as a new decision point if BennettVM
+  matures into a backend candidate (option C of the audit).
 - **Citations TODO (rule 4; audited twice — r6 corrections baked in).**
   Before implementation, `docs/physics/` distillations for:
   Bădescu–Panangaden 1511.01567 (Conditions I/III ↔ guardrails 2/1 —
