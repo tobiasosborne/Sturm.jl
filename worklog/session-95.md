@@ -1,4 +1,53 @@
-# Session 95 — 2026-07-10 — M0 through M6 SHIPPED (orchestrated)
+# Session 95 — 2026-07-10 — M0 through M6 SHIPPED + M7 unblocked (orchestrated)
+
+## HANDOFF — state at session close
+
+**Where we are:** seven milestones shipped in one orchestrated session
+(M0 scaffold → M6 QInt/two-worlds), suite green at **14,711 tests
+(~40-60s)** under `OMP_NUM_THREADS=16 LIBORKAN_PATH=/home/tobias/Projects/orkan/cmake-build-release/src/liborkan.so`.
+Both teleportation gates pass (M4 statistical probes incl. |i⟩
+Y-discriminator; M5 one-run DM Choi ≈ J(id)). All four M6 Pontryagin
+sign pins pass. Every 3+1 round caught a real defect. 14 distillations
+in docs/physics/ (all citation-audited), 12 proposals + rulings + 2
+audits in docs/design/.
+
+**Next step: M7 (Bennett bridge, src/bennett/bridge.jl) — FULLY
+UNBLOCKED.** The pre-work is done and committed:
+- `docs/design/bennett-v2-compat-audit.md` — artifact fits Perm
+  losslessly (NOT/CNOT/Toffoli = MCX 0/1/2-ctrl); MBU-exclusion free
+  (type boundary); D9 accumulate idiom sound by linearity.
+- **D14 RULED by Tobias (option A, in the PRD now): circuit-only
+  bridge** — only Perm-convertible circuits cross; loop-carrying
+  oracle = loud error; Sturm owns replay.
+- ⚠ Biggest M7 risk (audit): the MSB/LSB bit-order remap — Sturm is
+  wire1=MSB kernel-wide; v0.1 treated Bennett as little-endian. Probe
+  Bennett's bit order EMPIRICALLY; verify Perm conversion via
+  denoted_permutation, never marginals (wm28-class silent killer).
+- M7 procedure: 3+1 round (2 proposers → implement → review), gates =
+  DJ §7.4 (one query, exact) + BV §7.5 (per-wire duals + the negative
+  control: register-dual readout does NOT recover s).
+- M8 (Tracing/DAG/cases/passes) may run in parallel per plan (no
+  shared files). M8 owes: cases/noise → _assert_no_control hooks;
+  streaming ≡ materialized law test (the M5 IOU).
+
+**Standing IOUs (all flagged in code comments):** M7 must prove
+when-controlled oracle + MBU-exclusion test; M8 wires cases/noise
+guardrail hooks + the streaming≡materialized Choi law; ptrace! has no
+QBool surface method yet; ctrl(::QFT) is deliberate MethodError; QInt ==
+footgun deferred to M7 comparators; PRD §3.3 "adjtrans pattern" wording
+conflates immutable-struct === with fresh-wrapper identity (DualView is
+mutable — flag for next PRD pass).
+
+**Orchestration pattern that worked (repeat it):** distillations first
+(rule 4, with citation audits — caught 1 inverted + 1 residual-inverted
+citation) → 2 independent Opus proposers (angles: semantics-first vs
+mechanics-first; they converged on physics every round = cross-
+validation) → orchestrator adjudication (commit proposals + ruling to
+docs/design/) → Opus implementer → orchestrator review (re-run suite,
+hand-probe the physics) → worklog + bd close + git push + bd dolt push
+EVERY milestone.
+
+---
 
 ## M6 SHIPPED (80g6) — 14,711 tests green; ALL FOUR SIGN PINS PASS
 
