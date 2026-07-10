@@ -58,6 +58,23 @@ step. See `docs/physics/wharton_koch_quaternion_bloch.md`.
 const U2_NORM_GROSS = 2.0^-20
 
 """
+    CHART_EPS
+
+Threshold (on the `hypot`-scale magnitudes `|sin(β/2)|` / `|cos(β/2)|`) for the
+ZYZ Euler-chart singularity at β≈0 / β≈π, handled ONLY at the Orkan boundary
+(PRD-v2 §4.1/§4.3, D7). The gimbal degeneracy — only `α+γ` (β≈0) or `α−γ`
+(β≈π) is determined — is a topological fact about `SO(3)`/`SU(2)`, not a
+convention (`docs/physics/stuelpnagel_1964_rotation_parametrization.md`). At
+`1e-8`, snapping to the pole discards a rotation of magnitude `< CHART_EPS`, so
+the reconstructed matrix error is `O(CHART_EPS) ≪` any physically meaningful
+gate difference; random quaternions essentially never land this close to a
+pole, so the general (exact) branch handles the fuzz suite at tight tolerance.
+Also the degeneracy floor for the U(2) square root (`sqrt_u2`, ad.jl): only
+`u ≈ −I` (`w≈−1`, vanishing vector part) needs the free-axis branch.
+"""
+const CHART_EPS = 1e-8
+
+"""
     PERM_EQ_MAXW
 
 Wire ceiling for semantic `Perm` equality by materialized permutation

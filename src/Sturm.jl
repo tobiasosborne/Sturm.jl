@@ -50,8 +50,32 @@ include("kernel/ctrl.jl")
 include("kernel/algebra.jl")
 include("kernel/constants.jl")
 
+# --- M2: FFI, Ad application, contexts, regions (bead Sturm.jl-dc6i) ---
+# Dependency-respecting order: wire identity → raw FFI → state lifecycle →
+# context core + primitive emitters → Ad emitter (uses the emitters + kernel
+# values) → concrete contexts (trace lowerings) → regions (resource forms,
+# ScopedValue, @context/region/ptrace!). The `orkan/` layer stays INTERNAL
+# (P5: an FFI is not a language); only `apply!` and the context/region surface
+# cross the visibility wall.
+include("types/wire.jl")
+include("orkan/ffi.jl")
+include("orkan/state.jl")
+include("context/abstract.jl")
+include("orkan/ad.jl")
+include("context/eager.jl")
+include("context/density.jl")
+include("context/regions.jl")
+
+# --- Surface scaffolding (exported; region vocabulary users type) -----
+export @context, region, ptrace!
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
-    X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase
+    X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
+    # M2 kernel/context surface (reachable as `Sturm.X`, not dumped into `using`)
+    WireID, AbstractContext, EagerContext, DensityMatrixContext,
+    eager, density, current_context, apply!, allocate!, deallocate!,
+    q, consumed, mark_consumed!, is_consumed, live_wires, teardown!,
+    statevector, density_matrix, apply_channel!, sqrt_u2
 
 end # module Sturm

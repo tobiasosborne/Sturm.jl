@@ -1,4 +1,51 @@
-# Session 95 — 2026-07-10 — M0 + M1 kernel SHIPPED + Orkan ABI audit (orchestrated)
+# Session 95 — 2026-07-10 — M0 + M1 + M2 SHIPPED (orchestrated)
+
+## M2 SHIPPED (dc6i) — 13,573 tests green, ~20s
+
+Full 3+1: 2 Opus proposers (semantics-first / systems-first, heavy
+convergence: identical ZYZ formulas, ABC+p(φ), one state_t per context,
+no single_from_mat) → synthesis → Opus implementer → orchestrator review
+(hand-probed β≈π fold, sqrt_u2 half-angle, native-fast-path soundness,
+k≥3 clean-ancilla phase placement — no defects). Barenco 1995 distilled
+FIRST (rule 4): real lemma numbering is ABC = 4.3+5.1+5.2+Cor 5.3; the
+"iff W ∈ SU(2)" hinge of Lemma 5.1 IS the v0.1 phase-bug mechanism;
+clean-vs-borrowed ancilla split (phase-carrying MCU needs clean |0⟩ —
+Lemma 7.11; borrowed OK for SU(2)/Perm — Cor 7.4).
+
+Shipped: src/types/wire.jl (minimal WireID), src/orkan/{ffi,state,ad}.jl,
+src/context/{abstract,eager,density,regions}.jl; exports @context/region/
+ptrace!; new boot lints (ccall only under src/orkan/, single_from_mat
+NOWHERE, Ctrl( construction only in kernel/ctrl.jl). Phase-exactness
+verified at denotation level for k∈{1,2,3} incl. gphase and NEG_I≠I2.
+ccall counts: U2=3 (ZYZ), k=1 ctrl-U2=10, k=2=32 (sqrt-V), k=3=14 (ladder).
+
+### M2 gotchas (implementer, verbatim-worthy)
+
+1. **`state_init` ZERO-allocates — does NOT set |0…0⟩**; must state_set(0,0,1).
+   Centralized in `_state_new`. DM likewise needs ρ[0,0]=1.
+2. **ccall library slot cannot be a local variable** — use a global
+   `const Ref{String}` directly: `@ccall LIBORKAN[].f(...)`; set in __init__.
+3. Orkan is little-endian (qubit j = bit j); q(ctx,wire) is a plain slot
+   map, no reversal; X-on-MSB→high-bit regression pins it.
+4. **The choke-point grep-lints read comments too** — the word "controlled"
+   in prose trips them outside kernel/+orkan/; emitters moved into ad.jl
+   and three comments reworded. Feature, not bug (lint = no discussion of
+   controlled lowering outside the sanctioned files).
+5. **Proposal A's β≈π ZYZ fold order was BACKWARDS** (rz;ry) — correct
+   time-order is ry(π);rz(α) (= matrix Rz(α)·Ry(π)); caught by implementer,
+   verified by orchestrator by hand. 3+1 works.
+6. sqrt_u2 free-axis branch must trigger ONLY at essentially-exact −I
+   ((w+1)²+|v|² < CHART_EPS²), else V∘V≈u fails near the pole.
+7. `using LinearAlgebra` in tests passes under include() but fails under
+   Pkg.test()'s clean env until declared in [extras]/[targets].
+8. ctx.rng is an untyped field (::Any): AbstractRNG lives in Random which
+   src/ may not depend on; nothing → Base rand().
+9. DM exact ptrace implemented as the reset channel (Kraus {|0⟩⟨0|,|0⟩⟨1|})
+   via channel_1q — survivors' reduced state is the exact partial trace.
+
+---
+
+# (earlier: M0 + M1 + audit)
 
 ## M1 kernel SHIPPED (c52g + puig) — 12,752 tests green
 

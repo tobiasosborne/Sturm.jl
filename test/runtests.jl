@@ -65,6 +65,25 @@ function find_controlled_lowerings(text::AbstractString)
 end
 
 """
+    find_ccalls(text) -> Vector{String}
+
+Every `ccall` token (`@ccall` and bare `ccall`). Pure string function — the M2
+FFI-confinement lint (M2 directive / proposal B §6): the raw FFI is not a
+language (P5), so `ccall` may appear in `src/` ONLY under `src/orkan/`.
+"""
+find_ccalls(text::AbstractString) = [m.match for m in eachmatch(r"ccall", text)]
+
+"""
+    find_single_from_mat(text) -> Vector{String}
+
+Every `single_from_mat` token. Pure string function — the M2 lint (audit §8.5):
+the header-private, tiled-DM-only, `LOG_TILE_DIM`-coupled matrix entry must
+appear NOWHERE in `src/` (not bound, not even named in code — the biggest M2 ABI
+risk is kept off the critical path entirely).
+"""
+find_single_from_mat(text::AbstractString) = [m.match for m in eachmatch(r"single_from_mat", text)]
+
+"""
     relsrc(root, fname) -> String
 
 `src/…`-relative path of a walked file, with `/` separators, for the
@@ -159,11 +178,52 @@ end
         end
     end
 
+    @testset "M2 FFI-confinement lints" begin
+        @testset "lint functions catch synthetic violations" begin
+            @test find_ccalls("@ccall lib.f()") == ["ccall"]
+            @test find_ccalls("no foreign calls here") == String[]
+            @test find_single_from_mat("single_from_mat(state, t, mat)") == ["single_from_mat"]
+            @test find_single_from_mat("named-gate path only") == String[]
+        end
+
+        @testset "ccall appears only under src/orkan/" begin
+            src_dir = joinpath(REPO_ROOT, "src")
+            for (root, _dirs, files) in walkdir(src_dir)
+                for fname in files
+                    endswith(fname, ".jl") || continue
+                    rel = relsrc(root, fname)
+                    startswith(rel, "src/orkan/") && continue
+                    text = read(joinpath(root, fname), String)
+                    @test isempty(find_ccalls(text))
+                end
+            end
+        end
+
+        @testset "single_from_mat appears nowhere in src/" begin
+            src_dir = joinpath(REPO_ROOT, "src")
+            for (root, _dirs, files) in walkdir(src_dir)
+                for fname in files
+                    endswith(fname, ".jl") || continue
+                    text = read(joinpath(root, fname), String)
+                    @test isempty(find_single_from_mat(text))
+                end
+            end
+        end
+    end
+
     include("test_prd_examples.jl")
 
     @testset "Kernel process values (M1)" begin
         include("test_kernel_u2.jl")
         include("test_kernel_perm.jl")
         include("test_kernel_ctrl.jl")
+    end
+
+    @testset "M2 — Orkan FFI + Ad + contexts + regions" begin
+        include("test_m2_common.jl")
+        include("test_orkan_ffi.jl")
+        include("test_ad.jl")
+        include("test_contexts.jl")
+        include("test_regions.jl")
     end
 end
