@@ -91,6 +91,16 @@ include("surface/actions.jl")
 # nested `when` ⇒ flat `ctrl^k` ⇒ the existing ad.jl lowering.
 include("surface/when.jl")
 
+# --- M6: QInt{W}, wire handles, two arithmetic worlds, QFT (bead Sturm.jl-80g6) ---
+# `kernel/qft.jl` (the F_G process value + P(θ) + the DFT lowering) before
+# `types/qint.jl` (whose `_dual_transform(::QInt)` returns a `QFT`) before
+# `surface/arithmetic.jl` (the two-world method table). qft.jl lives under
+# kernel/ (LAYERING: the DFT lowering is `public`, not surface) but is included
+# HERE in dependency order — it needs M2's `_apply_controlled_u2!`/`_emit_h!`.
+include("kernel/qft.jl")
+include("types/qint.jl")
+include("surface/arithmetic.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -110,6 +120,14 @@ export dual, not!
 # the clean-ancilla witness stay INTERNAL (machinery, not layer API).
 export when
 
+# --- Surface integer registers + arithmetic (exported; §3.3/§3.4/D2/D12, M6) --
+# `QInt` (the width-W register + preparation cast) and the ACTION-family names
+# `add!`/`sub!`/`superpose!`. `Int(x)`, `x[i]`, `x + a`, `x ⊻= y`, `x̂ += a` are
+# Base method extensions on our own types (no new name); `dual`/`not!`/`when`
+# already exported. The `WireRef` slice type, the `QFT` value, and the `P(θ)`
+# phase constant are kernel `public` (reachable as `Sturm.…`, never `using`-dumped).
+export QInt, add!, sub!, superpose!
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -119,6 +137,8 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     q, consumed, mark_consumed!, is_consumed, live_wires, teardown!,
     statevector, density_matrix, apply_channel!, sqrt_u2,
     # M4 view machinery (kernel `public`, reachable as `Sturm.view`, not dumped)
-    view, View, DualView
+    view, View, DualView,
+    # M6 kernel/type surface (kernel `public`, reachable as `Sturm.QFT`, not dumped)
+    QFT, P, WireRef, AbstractQubit
 
 end # module Sturm

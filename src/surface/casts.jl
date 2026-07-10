@@ -62,7 +62,7 @@ density context a scalar outcome is a trajectory (not a channel) and throws
 (ArgumentError, D3/§3.8 — use `@cases`/tokens (M8) or the Choi harness). Explicit
 `Bool(q)` does NOT warn; the implicit `convert(Bool, q)` path does (P2).
 """
-function Base.Bool(q::QBool)
+function Base.Bool(q::AbstractQubit)
     ctx = q.ctx
     ctx === current_context() ||
         throw(ArgumentError("Bool(q): register $(q.wire) belongs to a different " *
@@ -131,7 +131,7 @@ measurement explicit and silence this. Deliberately NOT `maxlog`-deduped: a
 collapse is a physical event and every one is worth naming (CLAUDE.md #1 FAIL
 LOUD), and a per-site dedup makes the warning non-deterministic to test.
 """
-function Base.convert(::Type{Bool}, q::QBool)
+function Base.convert(::Type{Bool}, q::AbstractQubit)
     @warn "implicit measurement of a QBool (P2): a quantum→classical cast " *
           "collapses state — write `Bool(q)` explicitly to silence this"
     return Bool(q)

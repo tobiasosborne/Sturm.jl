@@ -43,7 +43,7 @@ under a different bound context would otherwise silently target the WRONG physic
 qubit — the exact bug `QBool` stores its `ctx` to catch (qbool.jl header; the same
 guard `Bool(q)` runs). ArgumentError (well-formed-but-forbidden, S13).
 """
-@inline function _here(q::QBool)
+@inline function _here(q::AbstractQubit)
     q.ctx === current_context() || throw(ArgumentError(
         "action on register $(q.wire): the handle belongs to a different context " *
         "than the active one — a handle escaped its context/region. WireIDs are " *
@@ -63,7 +63,7 @@ EXACT `X` (U(2), not `Ry(π)`; §4.1), returning the same handle. `not!` is now
 specialness dissolves into the action family (§3.4). No-cloning forbids `q = !q`,
 which is why in-place mutation with a `!` name is the registered idiom.
 """
-not!(q::QBool) = (_act!(_here(q), X, (q.wire,)); q)
+not!(q::AbstractQubit) = (_act!(_here(q), X, (q.wire,)); q)
 
 """
     not!(v::DualView) -> v
@@ -97,7 +97,7 @@ is COMPOSED, not a gate — there is no CNOT in the surface vocabulary. Returns 
 (the in-place rebind no-op). Aliasing `a ⊻= a` fires `_check_wire_aliasing` on the
 doubled `WireID` (§8.4).
 """
-function Base.xor(a::QBool, b::QBool)
+function Base.xor(a::AbstractQubit, b::AbstractQubit)
     ctx = _here(a); _here(b)
     _act!(ctx, ctrl(X), (b.wire, a.wire))   # (control, target) = (b, a)
     return a
@@ -109,7 +109,7 @@ end
 Mixed form (P8/D12): a classical RHS flips `q` in place via the kernel's EXACT `X`
 (never `Ry(π)` — the §3.4/audit-8.3 fix), or is a no-op for `false`. Returns `q`.
 """
-Base.xor(q::QBool, b::Bool) = (b && _act!(_here(q), X, (q.wire,)); q)
+Base.xor(q::AbstractQubit, b::Bool) = (b && _act!(_here(q), X, (q.wire,)); q)
 
 """
     xor(b::Bool, r::QBool) -> fresh QBool     # `c = false ⊻ b`
@@ -120,7 +120,7 @@ control = `r`, target = the fresh wire. This is a FRESH-OUTPUT (value-world) for
 — a plain `=`, returning a NEW handle (`c !== r`); `r` stays live. With `r = |+⟩`
 the result is the Bell pair Φ⁺ on `(r, c)`.
 """
-function Base.xor(b::Bool, r::QBool)
+function Base.xor(b::Bool, r::AbstractQubit)
     ctx = _here(r)
     f = QBool(false)                       # fresh |0⟩ in the active context
     b && apply!(ctx, X, (f.wire,))          # fresh-PREP: uncontrolled (§3.9 alloc)

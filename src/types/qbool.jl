@@ -31,6 +31,21 @@
 # (the PINNED U(2) convention; Ry/Rz gate table, Eq 8).
 
 """
+    AbstractQubit
+
+Supertype of every SINGLE-WIRE quantum handle: `QBool` (an owned register) and
+`WireRef` (a BORROWED slice `x[i]` of a `QInt`, M6 types/qint.jl). Both carry a
+`.ctx` and a `.wire`, so the single-wire surface family — the action family
+(`not!`, `⊻=`), the `dual` view, `when`, and the `Bool`/`convert` measurement
+casts — dispatches on `AbstractQubit` and is written ONCE (the `AbstractArray`
+reuse move; CLAUDE.md #13). The OWN-vs-BORROW distinction is NOT in these shared
+ops — it lives in construction (a `WireRef` never `allocate!`s) and in
+consumption (measuring a `WireRef` consumes the shared wire on the single-sourced
+set, a partial consumption of its parent register — PRD-v2 §4.5/§8.5).
+"""
+abstract type AbstractQubit end
+
+"""
     QBool(p::Real, φ::Real = 0.0) -> QBool
     QBool(b::Bool)                -> QBool
 
@@ -49,7 +64,7 @@ if neither consumed nor returned (§3.9). Two `QBool`s are never structurally
 equal (distinct wires); the boundary laws are state/channel-level, not `==` on
 handles (see D1 pole degeneracy, tested at the state level).
 """
-struct QBool
+struct QBool <: AbstractQubit
     ctx::AbstractContext   # the OWNING context (§4.3: a register is a handle into a context)
     wire::WireID           # the M2 identity core (types/wire.jl)
 end
@@ -121,3 +136,7 @@ by M4 views / M6 slices later. NOT the surface literal — a stray `WireID` can
 never be mistaken for a preparation.
 """
 _adopt_qbool(ctx::AbstractContext, w::WireID) = QBool(ctx, w)
+
+# A returned single-wire handle escapes its region carrying its one wire
+# (regions.jl `_escaped_wires`; the strict-mode survivor set + region re-homing).
+_escaped_wires(q::AbstractQubit) = [q.wire]

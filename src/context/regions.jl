@@ -50,19 +50,43 @@ end
 _enter_region!(ctx::AbstractContext) = (push!(_core(ctx).region_stack, WireID[]); nothing)
 
 """
-    _exit_region!(ctx)
+    _escaped_wires(val) -> Vector{WireID}
 
-Pop the current region frame and SILENTLY trace every wire it owns that is
-still live and unconsumed (the derived form of `ptrace!` — §4.5's region
-boundary is not a third consumption mechanism). Consumed/returned handles are
-skipped for free by the single-sourced consumed set + liveness. Views borrow
-(they register no owned wire), so their death traces nothing.
+The wires a region's RETURN VALUE carries out of the region — its survivors. A
+returned typed handle (`QBool`, `QInt`, `WireRef`, `DualView`, or a `Tuple` of
+them) escapes; anything else (a scalar `Bool` outcome, a bare `WireID` the caller
+extracted, `nothing`) escapes NOTHING. This is what lets `_exit_region!`
+distinguish a handle handed back to the caller (re-homed to the enclosing region,
+NOT traced) from an owned local dropped at scope exit (traced, §3.9). Handles are
+recognised structurally, so a bare `WireID` return (a caller who threw the handle
+away and kept the raw id) is correctly NOT an escape — the id's wire is traced.
 """
-function _exit_region!(ctx::AbstractContext)
+_escaped_wires(::Any) = WireID[]
+_escaped_wires(t::Tuple) = isempty(t) ? WireID[] : reduce(vcat, map(_escaped_wires, t))
+
+"""
+    _exit_region!(ctx, retval = nothing)
+
+Pop the current region frame and SILENTLY trace every wire it owns that is still
+live, unconsumed, and NOT escaped by `retval` (the derived form of `ptrace!` —
+§4.5's region boundary is not a third consumption mechanism). Escaped wires (a
+returned handle's wires) are re-homed to the enclosing region's owned set (they
+outlive this scope), or simply left live if this is the outermost region.
+Consumed/returned handles are skipped for free by the single-sourced consumed set
++ liveness. Views borrow (they register no owned wire), so their death traces
+nothing.
+"""
+function _exit_region!(ctx::AbstractContext, retval = nothing)
     core = _core(ctx)
     frame = pop!(core.region_stack)
-    _strict_check!(ctx, frame)
+    escaped = Set{WireID}(_escaped_wires(retval))
+    _strict_check!(ctx, frame, escaped)
+    enclosing = isempty(core.region_stack) ? nothing : core.region_stack[end]
     for w in frame
+        if w in escaped
+            enclosing === nothing || push!(enclosing, w)   # re-home the survivor
+            continue
+        end
         if haskey(core.wire_to_slot, w) && !(w in core.consumed)
             _trace_and_free!(ctx, w)
         end
@@ -71,20 +95,56 @@ function _exit_region!(ctx::AbstractContext)
 end
 
 """
-    _strict_check!(ctx, frame)
+    _strict_check!(ctx, frame, escaped)
 
-D10 lost-binding detector HOOK (the detector lands M6). The `x += a` rebind
-trap, the generic-`f` fold trap, and "a handle survived to teardown" are one
-signature: at region exit, a traced register that is an entangling-op PARENT of
-a survivor — a CLASSICAL programming error, never quantum nagging. M2 lays the
-hook (the `parent` edge map + `strict` flag); it is INERT while `parent` is
-empty (no fresh-output ops exist before M6's arithmetic). Default stays silent.
+The D10 lost-binding detector (M6). SIGNATURE of the bug: at region exit, a
+register wire being TRACED (owned by this frame, live, unconsumed, not escaped)
+is the value-world entangling PARENT of a wire that SURVIVES (escaped, or owned
+by an enclosing region). That is the `x = x + a` rebind trap — the fresh sum
+survives while the dropped original is torn down, so the sum decoheres — reported
+as a CLASSICAL programming error (a lost Julia binding), never quantum nagging.
+
+Off by default (`strict = false` → immediate return, the §3.9 silent-trace
+doctrine intact) and armed only by `eager(...; strict=true)` / `density(...;
+strict=true)`. FALSE-POSITIVE discipline (each a named negative test): a parent
+that is CONSUMED (measured) is excluded from `traced`, so `s = x + a; Int(x)`
+does not flag; a parent that is ITSELF escaped/returned is never in `traced`, so
+`return (x, s)` (both handles kept) does not flag.
 """
-function _strict_check!(ctx::AbstractContext, frame::Vector{WireID})
+function _strict_check!(ctx::AbstractContext, frame::Vector{WireID}, escaped::Set{WireID})
     core = _core(ctx)
     (core.strict && !isempty(core.parent)) || return nothing
-    # M6: flag any survivor whose entangling parent is in `frame` (being traced).
+    traced = Set{WireID}(w for w in frame
+        if haskey(core.wire_to_slot, w) && !(w in core.consumed) && !(w in escaped))
+    for (child, parents) in core.parent
+        survives = (child in escaped) ||
+            (haskey(core.wire_to_slot, child) && !(child in traced) && !(child in core.consumed))
+        survives || continue
+        bad = filter(p -> p in traced, parents)
+        isempty(bad) || _lost_binding_error(bad, child)
+    end
     return nothing
+end
+
+@noinline _lost_binding_error(parents, child) = error(
+    "lost binding (D10, strict): register wire(s) $(parents) are being traced at " *
+    "region exit, but a fresh value-world output (wire $(child)) derived from them " *
+    "by a ring op (`x + a` / `x + y`) survives and is entangled with them — the sum " *
+    "has decohered. You likely wrote `x = x + a`, which rebinds `x` to the fresh sum " *
+    "and drops the original handle. Use `add!(x, a)` for in-place addition, `x̂ += a` " *
+    "for a dual-view modulation, or keep BOTH handles live (return/consume the input).")
+
+"""
+    _record_parent!(ctx, child::WireID, par::WireID)
+
+Record a value-world entangling edge `child ← par` (child = a fresh-output wire,
+par = a live input wire it copied from). Written ONLY by ring ops (`+`/`-`) and
+ONLY under `strict` — the action family (in-place, no fresh child) records
+nothing. Feeds `_strict_check!`.
+"""
+function _record_parent!(ctx::AbstractContext, child::WireID, par::WireID)
+    push!(get!(() -> WireID[], _core(ctx).parent, child), par)
+    nothing
 end
 
 # --- @context and region() ---------------------------------------------
@@ -102,10 +162,14 @@ macro context(ctx, body)
         local c = $(esc(ctx))
         with(CURRENT_CONTEXT => c) do
             _enter_region!(c)
+            local __ok = false
+            local __val = nothing
             try
-                $(esc(body))
+                __val = $(esc(body))
+                __ok = true
+                __val
             finally
-                _exit_region!(c)
+                _exit_region!(c, __ok ? __val : nothing)
             end
         end
     end
@@ -121,10 +185,14 @@ harmless, since trace timing is denotationally invisible (no backaction, §3.9).
 function region(f)
     c = current_context()
     _enter_region!(c)
+    ok = false
+    val = nothing
     try
-        return f()
+        val = f()
+        ok = true
+        return val
     finally
-        _exit_region!(c)
+        _exit_region!(c, ok ? val : nothing)
     end
 end
 
@@ -167,10 +235,14 @@ function eager(f, capacity::Integer; rng=nothing, strict::Bool=false)
     try
         return with(CURRENT_CONTEXT => ctx) do
             _enter_region!(ctx)
+            ok = false
+            val = nothing
             try
-                return f(ctx)
+                val = f(ctx)
+                ok = true
+                return val
             finally
-                _exit_region!(ctx)
+                _exit_region!(ctx, ok ? val : nothing)
             end
         end
     finally
@@ -188,10 +260,14 @@ function density(f, capacity::Integer; rng=nothing, strict::Bool=false)
     try
         return with(CURRENT_CONTEXT => ctx) do
             _enter_region!(ctx)
+            ok = false
+            val = nothing
             try
-                return f(ctx)
+                val = f(ctx)
+                ok = true
+                return val
             finally
-                _exit_region!(ctx)
+                _exit_region!(ctx, ok ? val : nothing)
             end
         end
     finally

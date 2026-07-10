@@ -57,8 +57,11 @@ the idiomatic alternative). Fields:
   `_assert_no_control` (guardrail 1: cast/trace/noise under control), and
   `_trace_and_free!` (the §3.9 clean-ancilla witness). Rides the ctx object
   into `Threads.@spawn` children exactly as `region_stack` does.
-- `parent`, `strict` — the D10 lost-binding detector hooks (detector lands M6;
-  inert while `parent` is empty).
+- `parent`, `strict` — the D10 lost-binding detector (M6): `parent` maps a
+  fresh-output child wire to the value-world entangling-parent wires that fed it
+  (a `Vector` because `x + y` has two sources per output wire); `strict` arms the
+  region-exit check (`_strict_check!`, regions.jl). Written ONLY by value-world
+  ring ops under `strict`; inert (empty) on the default path.
 - `wire_counter` — monotone id source for fresh `WireID`s (never reused).
 - `rng` — Julia-owned reproducibility (Orkan has no RNG, audit §6); `nothing`
   means the task-global default. Untyped: the measure-and-discard path is cold,
@@ -75,7 +78,7 @@ mutable struct ContextCore
     fusion::Dict{WireID,U2}
     region_stack::Vector{Vector{WireID}}
     control_stack::Vector{WireID}
-    parent::Dict{WireID,WireID}
+    parent::Dict{WireID,Vector{WireID}}
     strict::Bool
     wire_counter::Int
     rng::Any
@@ -84,7 +87,7 @@ end
 function ContextCore(state::OrkanStateRaw, storage::Cint, capacity::Int; rng=nothing, strict::Bool=false)
     return ContextCore(state, storage, capacity, 0, Int[], Dict{WireID,Int}(),
         Set{WireID}(), Dict{WireID,U2}(), Vector{WireID}[], WireID[],
-        Dict{WireID,WireID}(), strict, 0, rng)
+        Dict{WireID,Vector{WireID}}(), strict, 0, rng)
 end
 
 """

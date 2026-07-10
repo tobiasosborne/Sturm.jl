@@ -239,4 +239,8 @@ end
     @testset "M5 — when: streaming control, guardrails, deferred teleport" begin
         include("test_m5_when.jl")    # §3.5/§3.4/§3.9/§7.1b laws (reuses the choi.jl above)
     end
+
+    @testset "M6 — QInt, slices, two worlds, Pontryagin pins, QFT dual" begin
+        include("test_m6_qint.jl")    # §3.3/§3.4/D2/D12 laws + strict-mode detector
+    end
 end

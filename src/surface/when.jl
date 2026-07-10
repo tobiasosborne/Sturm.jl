@@ -271,7 +271,7 @@ anti-control idiom is the `not!` sandwich (`not!(q); when(q) do … end; not!(q)
 streams under `|1⟩`-control, then `F_G†` restores the basis (Delorme Eq 16). The
 pushed control is the PARENT wire, so guardrail 2 still sees `q` through the view.
 """
-when(f, q::QBool) = _when_core(_here(q), q.wire, f)
+when(f, q::AbstractQubit) = _when_core(_here(q), q.wire, f)
 
 function when(f, v::DualView)
     p = v.parent

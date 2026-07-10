@@ -105,7 +105,7 @@ docs/physics/wharton_koch_quaternion_bloch.md). M6 adds
 `_dual_transform(::QInt{W}) = QFT_W` (F ≠ F†; the direction pinned by the
 Pontryagin unit test, §3.3). INTERNAL — never a surface name.
 """
-_dual_transform(::QBool) = H
+_dual_transform(::AbstractQubit) = H
 
 """
     dual(q::QBool) -> DualView
@@ -152,7 +152,7 @@ docs/physics/adams_asdf_basis_translation_synthesis.md). Cite Qwerty §IV's own
 representation-vs-value disclaimer, never "they rejected the view". Qwerty's `∼e`
 (function adjoint) is `Sturm.adjoint` on a process value, NOT `dual`.
 """
-dual(q::QBool) = DualView(q)
+dual(q::AbstractQubit) = DualView(q)
 dual(v::DualView) = v.parent
 
 """
@@ -179,8 +179,11 @@ because every surface view-op resolves to parent `WireID`s before calling
 per-op `when`-guardrail consumes exactly this resolver
 (`_parent_wire(control) == _parent_wire(target)`). INTERNAL.
 """
-_parent_wire(q::QBool) = q.wire
+_parent_wire(q::AbstractQubit) = q.wire
 _parent_wire(v::AbstractView) = _parent_wire(v.parent)
+
+# A returned view escapes carrying its borrowed parent's wires (regions.jl).
+_escaped_wires(v::AbstractView) = _escaped_wires(v.parent)
 
 """
     _conj(V::ProcessValue, g::ProcessValue) -> ProcessValue

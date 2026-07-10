@@ -1,4 +1,38 @@
-# Session 95 — 2026-07-10 — M0 through M5 SHIPPED (orchestrated)
+# Session 95 — 2026-07-10 — M0 through M6 SHIPPED (orchestrated)
+
+## M6 SHIPPED (80g6) — 14,711 tests green; ALL FOUR SIGN PINS PASS
+
+QInt{W} (wire1=MSB, AbstractQubit supertype + WireRef borrow slices),
+QFT kernel node (ctrl(P(θ)) through the existing choke point — zero new
+lowering code; F†=conj(F), same ladder, negated angles), two-world
+arithmetic (the dispatch fact: += on the view mutates-returns-self =
+modulation D₋ₐ; += on the bare register allocates fresh = the lost-
+binding trap), strict-mode detector completed WITH escape tracking
+(returned handles now survive region exit — an improvement), D2 suite
+(dual(x)[i] throws with the corrected CSW wording). Sign pins: add!(0,1)
+→ 1 ✓; superpose!; x̂+=a; Int(dual(x))==a ✓ (wrong sign reads −a);
+dual(dual(x))===x zero-ops ✓ vs QFT² → 2^W−n ✓ (the normative
+integer-negation signature — M4's blind-pinned conjugation direction now
+empirically verified).
+
+Also this round: CSW distillation found + I fixed a RESIDUAL r6 citation
+inversion in PRD D2 prose (maximality → Tyson/Nielsen; CSW = small-core).
+
+### M6 gotchas
+1. apply!(X) leaves a global −i per set bit (ker Ad drops φ) — invisible
+   physically, breaks raw-amplitude test compares; test tooling preps via
+   _emit_x!. 2. Strict lost-binding is undecidable at region granularity
+   without ESCAPE TRACKING (return-value handles marked survivors);
+   s=x+a;return s is genuinely indistinguishable from x=x+a;return x —
+   only parent-consumed/parent-returned are reliable negatives. 3. Two
+   consecutive docstrings = "cannot document expression" precompile trap.
+   4. Julia ≥1.11: public symbols appear in names(M) — test exportedness
+   via Base.isexported. 5. QFT adjoint needs no ladder reversal (H/SWAP
+   real, F symmetric).
+
+---
+
+# (earlier: M0–M5 + audit)
 
 ## M5 SHIPPED (o5yh) — 13,822 tests green; §8.1 CLOSED; deferred teleport one-run Choi PASSES
 
