@@ -362,18 +362,61 @@ function apply!(ctx::AbstractContext, v::ProcessValue, wires::NTuple{N,WireID}) 
 end
 
 """
+    apply!(ctx, v::ProcessValue, wires::AbstractVector{WireID}) -> ctx
+
+The VECTOR-typed sibling of the tuple `apply!` (M7 kernel seam, bead
+Sturm.jl-7a0v). Byte-for-byte the same logic over a `Vector`: the reversible
+corner is the ONE value whose wire count is runtime DATA — a Bennett `Perm`
+oracle spans data-dependent, unbounded `n` (hundreds of wires for arithmetic), so
+an `NTuple{N}` type parameter is actively wrong for it (type explosion, per-`n`
+recompilation, dynamic dispatch). `Perm.gates` is already a `Vector` for exactly
+this reason. ADDITIVE (no existing signature moves), confined to the process-value
+path; the emitter (`_emit!`) already takes a `Vector{Int}` of slots. The tuple
+`apply!` above stays the frozen M2/M4/M5 fast path for fixed-arity values.
+"""
+function apply!(ctx::AbstractContext, v::ProcessValue, wires::AbstractVector{WireID})
+    nwires(v) == length(wires) || error("apply!: value $(typeof(v)) has $(nwires(v)) wires but $(length(wires)) given")
+    _check_wire_aliasing(wires, v)
+    core = _core(ctx)
+    for w in wires
+        haskey(core.wire_to_slot, w) || error("apply!: wire $w is not live in this context")
+    end
+    for w in wires
+        _flush_wire!(ctx, w)
+    end
+    qs = Int[core.wire_to_slot[w] for w in wires]
+    _emit!(ctx, v, qs)
+    return ctx
+end
+
+"""
     _check_wire_aliasing(wires, v)
 
 PRD-v2 §8.4: distinct wires must be distinct REGISTER identities. Fires on
 `WireID` (not raw Orkan index), and BEFORE the FFI shim's `_check_distinct` — so
 `apply!(ctx, ctrl(X), (w, w))` (the kernel shadow of `when(a){not!(a)}`) is a
-clear DSL error, not a cryptic FFI one.
+clear DSL error, not a cryptic FFI one. Both the tuple and the M7 Vector `apply!`
+route through the same check (the vector method shares the fail helper).
 """
 function _check_wire_aliasing(wires::NTuple{N,WireID}, v::ProcessValue) where {N}
     seen = Set{WireID}()
     for w in wires
-        w in seen && error("apply!(::$(typeof(v))): wire $w appears more than once — register aliasing is forbidden (PRD-v2 §8.4); a control and its target (or two tensor factors) must be distinct registers")
+        w in seen && _aliasing_fail(w, v)
         push!(seen, w)
     end
     nothing
 end
+
+function _check_wire_aliasing(wires::AbstractVector{WireID}, v::ProcessValue)
+    seen = Set{WireID}()
+    for w in wires
+        w in seen && _aliasing_fail(w, v)
+        push!(seen, w)
+    end
+    nothing
+end
+
+@noinline _aliasing_fail(w::WireID, v::ProcessValue) = error(
+    "apply!(::$(typeof(v))): wire $w appears more than once — register aliasing is " *
+    "forbidden (PRD-v2 §8.4); a control and its target (or two tensor factors) must " *
+    "be distinct registers")

@@ -132,6 +132,27 @@ function _act!(ctx::AbstractContext, v::ProcessValue, wires::NTuple{N,WireID}) w
 end
 
 """
+    _act!(ctx, v::ProcessValue, wires::AbstractVector{WireID}) -> ctx
+
+The VECTOR-typed sibling (M7 kernel seam, bead Sturm.jl-7a0v): identical control-
+awareness over a `Vector` of wires — the data-width `Perm` oracle path (the one
+value whose wire count is runtime data; see the Vector `apply!` in ad.jl). Under
+a depth-`k` stack `cv = ctrl^k(Perm) = Perm` (the perm.jl closure), applied with
+the `k` stack controls prepended as the LEADING wires. ADDITIVE; the tuple `_act!`
+above stays the fixed-arity action-family path.
+"""
+function _act!(ctx::AbstractContext, v::ProcessValue, wires::AbstractVector{WireID})
+    core = _core(ctx)
+    isempty(core.control_stack) && return apply!(ctx, v, wires)
+    _guard_externality(ctx, wires)
+    cv = v
+    for _ in 1:length(core.control_stack)
+        cv = ctrl(cv)
+    end
+    return apply!(ctx, cv, vcat(core.control_stack, wires))   # controls are the LEADING wires
+end
+
+"""
     _guard_externality(ctx, wires)
 
 Guardrail 2 (§3.5): the body must not operate on the control register — as a
@@ -149,15 +170,25 @@ guardrail-1 error, while `when(q) do not!(q) end` is a guardrail-2 error.
 """
 function _guard_externality(ctx::AbstractContext, wires::NTuple{N,WireID}) where {N}
     for w in wires, c in _core(ctx).control_stack
-        w === c && error(
-            "the `when` body operates on its control register $w (guardrail 2, " *
-            "§3.5 / Bădescu–Panangaden Condition I, p.34): a body must not read or " *
-            "write its guard — not as a target, not as an op-control, not through a " *
-            "view. (Legal kickback names a DIFFERENT register as the target and lets " *
-            "the control pick up phase through the `ctrl` mechanism.)")
+        w === c && _guard_externality_fail(w)
     end
     nothing
 end
+
+# The M7 Vector-typed sibling (data-width `Perm` oracle path); same guardrail 2.
+function _guard_externality(ctx::AbstractContext, wires::AbstractVector{WireID})
+    for w in wires, c in _core(ctx).control_stack
+        w === c && _guard_externality_fail(w)
+    end
+    nothing
+end
+
+@noinline _guard_externality_fail(w::WireID) = error(
+    "the `when` body operates on its control register $w (guardrail 2, " *
+    "§3.5 / Bădescu–Panangaden Condition I, p.34): a body must not read or " *
+    "write its guard — not as a target, not as an op-control, not through a " *
+    "view. (Legal kickback names a DIFFERENT register as the target and lets " *
+    "the control pick up phase through the `ctrl` mechanism.)")
 
 # --- The clean-ancilla exit witness (§3.9) ------------------------------
 #

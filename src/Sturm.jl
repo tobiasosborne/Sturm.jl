@@ -101,6 +101,15 @@ include("kernel/qft.jl")
 include("types/qint.jl")
 include("surface/arithmetic.jl")
 
+# --- M7: the Bennett bridge — oracle(f,x) + b ⊻= oracle (bead Sturm.jl-7a0v) ---
+# CORE half only (names no Bennett type): the `CompiledOracle`/`OracleQuery`
+# values, the `oracle` entry + weakdep backend hook, the two `Base.xor`
+# application methods, and the `_apply_oracle!` choreography. The `f → Perm`
+# compile lives in `ext/SturmBennettExt.jl` (activated by `using Bennett`). This
+# reads `_act!` (M5), `region()`/`allocate!` (M2), `_clean_ancilla_assert!` (M5),
+# `_assert_live` (M3), and `QInt`/`AbstractQubit` (M6/M3), so it is included last.
+include("bennett/bridge.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -128,6 +137,12 @@ export when
 # phase constant are kernel `public` (reachable as `Sturm.…`, never `using`-dumped).
 export QInt, add!, sub!, superpose!
 
+# --- Surface Bennett bridge (exported; PRD-v2 §3.4/§7.4/§7.5/D9/D14, M7) ---
+# `oracle` (construct 7). `b ⊻= oracle(f, x)` is a `Base.xor` method extension on
+# our own `OracleQuery` (no new name); the query value types are kernel `public`
+# (reachable as `Sturm.OracleQuery`, never `using`-dumped — 7 produces, 3 applies).
+export oracle
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -139,6 +154,8 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     # M4 view machinery (kernel `public`, reachable as `Sturm.view`, not dumped)
     view, View, DualView,
     # M6 kernel/type surface (kernel `public`, reachable as `Sturm.QFT`, not dumped)
-    QFT, P, WireRef, AbstractQubit
+    QFT, P, WireRef, AbstractQubit,
+    # M7 Bennett bridge query values (kernel `public`, 7 produces / 3 applies)
+    OracleQuery, CompiledOracle
 
 end # module Sturm

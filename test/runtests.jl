@@ -84,6 +84,19 @@ risk is kept off the critical path entirely).
 find_single_from_mat(text::AbstractString) = [m.match for m in eachmatch(r"single_from_mat", text)]
 
 """
+    find_role_indexing(text) -> Vector{String}
+
+Every `input_wires[` / `output_wires[` bracket-INDEXING token. Pure string
+function — the M7 single-remap lint (bead Sturm.jl-7a0v; ruling: mirrors the ctrl
+choke-point lint). The MSB/LSB bit-order remap (a silent bit-reversal is the wm28
+class) must live in EXACTLY ONE function (`_role_tables`, in the extension), so its
+tell-tale register-vector indexing may appear in `src/`+`ext/` nowhere else. Set-
+construction like `Set(circuit.output_wires)` is NOT indexing (no bracket) and is
+allowed anywhere. Self-tested below.
+"""
+find_role_indexing(text::AbstractString) = [m.match for m in eachmatch(r"input_wires\[|output_wires\[", text)]
+
+"""
     relsrc(root, fname) -> String
 
 `src/…`-relative path of a walked file, with `/` separators, for the
@@ -211,6 +224,37 @@ end
         end
     end
 
+    @testset "M7 single-remap lint (§4.2-style single choke point for bit order)" begin
+        @testset "lint function catches synthetic violations" begin
+            @test find_role_indexing("circuit.input_wires[3]") == ["input_wires["]
+            @test find_role_indexing("output_wires[β+1]") == ["output_wires["]
+            @test find_role_indexing("Set(circuit.output_wires)") == String[]
+        end
+
+        @testset "register-vector indexing appears NOWHERE in src/" begin
+            src_dir = joinpath(REPO_ROOT, "src")
+            for (root, _dirs, files) in walkdir(src_dir)
+                for fname in files
+                    endswith(fname, ".jl") || continue
+                    text = read(joinpath(root, fname), String)
+                    @test isempty(find_role_indexing(text))
+                end
+            end
+        end
+
+        @testset "in ext/, register-vector indexing appears ONLY in _role_tables" begin
+            extfile = joinpath(REPO_ROOT, "ext", "SturmBennettExt.jl")
+            @test isfile(extfile)
+            lines = readlines(extfile)
+            s = findfirst(l -> occursin("function _role_tables", l), lines)
+            @test s !== nothing
+            e = s - 1 + findfirst(==("end"), @view lines[s:end])   # top-level `end` (col 0)
+            hits = [i for i in eachindex(lines) if !isempty(find_role_indexing(lines[i]))]
+            @test !isempty(hits)                     # non-vacuous: the remap really indexes
+            @test all(i -> s ≤ i ≤ e, hits)          # ...and ONLY inside _role_tables
+        end
+    end
+
     include("test_prd_examples.jl")
 
     @testset "Kernel process values (M1)" begin
@@ -242,5 +286,9 @@ end
 
     @testset "M6 — QInt, slices, two worlds, Pontryagin pins, QFT dual" begin
         include("test_m6_qint.jl")    # §3.3/§3.4/D2/D12 laws + strict-mode detector
+    end
+
+    @testset "M7 — Bennett bridge: oracle, accumulate, DJ/BV, control" begin
+        include("test_m7_bennett.jl") # §3.4/§7.4/§7.5/D9/D14 laws (needs Bennett loaded)
     end
 end

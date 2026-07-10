@@ -4,13 +4,24 @@ uuid = "fcbab5b2-4b8e-43e2-8ec6-8804d7a8d72e"
 authors = ["Tobias Osborne <tobias.j.osborne@gmail.com>"]
 version = "0.2.0-dev"
 
+[weakdeps]
+Bennett = "d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8"
+
+[extensions]
+SturmBennettExt = "Bennett"
+
+[sources]
+Bennett = {path = "../Bennett.jl"}
+
 [compat]
+Bennett = "0.5"
 julia = "1.11"
 
 [extras]
+Bennett = "d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["LinearAlgebra", "Random", "Test"]
+test = ["Bennett", "LinearAlgebra", "Random", "Test"]
