@@ -39,8 +39,13 @@ using Sturm: Perm, MCX, CompiledOracle, OracleQuery, denoted_permutation,
 dj_const(x)   = false                                   # constant  → DJ true
 dj_bal(x)     = (x & 0x01) == 0x01                      # balanced (LSB) → DJ false
 bv_s0(x)      = false                                   # s = 0 (0b000)
+bv_s1(x)      = ((x >> 0x00) & 0x01) == 0x01            # s = 1 (0b001): bit 0
 bv_s2(x)      = ((x >> 0x01) & 0x01) == 0x01            # s = 2 (0b010): bit 1
+bv_s3(x)      = xor((x >> 0x00) & 0x01, (x >> 0x01) & 0x01) == 0x01   # s = 3: bit0 ⊕ bit1
+bv_s4(x)      = ((x >> 0x02) & 0x01) == 0x01            # s = 4 (0b100): bit 2
 bv_s5(x)      = xor((x >> 0x00) & 0x01, (x >> 0x02) & 0x01) == 0x01   # s = 5: bit0 ⊕ bit2
+bv_s6(x)      = xor((x >> 0x01) & 0x01, (x >> 0x02) & 0x01) == 0x01   # s = 6: bit1 ⊕ bit2
+bv_s7(x)      = xor(xor((x >> 0x00) & 0x01, (x >> 0x01) & 0x01), (x >> 0x02) & 0x01) == 0x01  # s = 7
 inc3(x)       = x + 0x01                                # asymmetric — the carry tripwire
 
 # A data-dependent loop (probe §2e): its convergence flag is a dirty ancilla.
@@ -220,9 +225,15 @@ end
             end
         end
 
-        @testset "BV — one query recovers the (palindromic) secret s exactly" begin
-            for (fs, s) in ((bv_s0, 0), (bv_s2, 2), (bv_s5, 5))
-                @test eager(20) do ctx
+        @testset "BV — one query recovers EVERY 3-bit secret s exactly (6xdk ruling)" begin
+            # All 8 secrets, non-palindromic ones included: the pre-ruling PRD
+            # listing returned reverse_bits(s) for s ∈ {1, 3, 4, 6} — palindromic
+            # pins (0, 2, 5) alone are the wm28-class blind spot.
+            # cap=26: bv_s7 (three-term parity) Bennett-compiles past 24 wires
+            # (probed 2026-07-19); 2^26 statevector ≈ 1 GiB, transient.
+            for (fs, s) in ((bv_s0, 0), (bv_s1, 1), (bv_s2, 2), (bv_s3, 3),
+                            (bv_s4, 4), (bv_s5, 5), (bv_s6, 6), (bv_s7, 7))
+                @test eager(26) do ctx
                     mod.bernstein_vazirani(fs, Val(3))
                 end == s
             end

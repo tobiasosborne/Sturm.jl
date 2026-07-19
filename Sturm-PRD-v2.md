@@ -1207,9 +1207,20 @@ function bernstein_vazirani(f, ::Val{N}) where {N}
 
     bits = [Bool(dual(x[i])) for i in 1:N]  # ℤ₂ dual of each wire — legal
                                             # under D2; consumes x wire-wise
-    return evalpoly(2, bits)                # s, LSB-first; b traced (§3.9)
+    return evalpoly(2, reverse(bits))       # s — bits is wire-1=MSB-first (M6
+                                            # pin); evalpoly wants LSB-first.
+                                            # b traced (§3.9)
 end
 ```
+
+**Endianness ruling (bead 6xdk, 2026-07-19).** `x[i]` follows the M6
+wire-1 = MSB pin, so `bits` comes out MSB-first and the readout must
+`reverse` it before `evalpoly`. An earlier draft's `# s, LSB-first`
+comment assumed the opposite convention and returned `reverse_bits(s)`
+for every non-palindromic secret (empirically confirmed on all 8 3-bit
+secrets; the listing's own s=5 is palindromic and masked it). §7.7's
+control schedule obeys the same pin: wire 2W is the LSB and takes the
+a^{2⁰} factor.
 
 ### 7.6 Magic-state injection — `cases`, literals, and the ladder
 
@@ -1261,7 +1272,10 @@ function shor_order(a, N, ::Val{W}) where {W}
     y = QMod{N}(1)                   # work register ≡ 1 (mod N)
 
     c = a % N
-    for j in 1:2W                    # classical loop, quantum body (P8/P9)
+    for j in 2W:-1:1                 # classical loop, quantum body (P8/P9).
+                                     # LSB-upward: wire j weighs 2^(2W−j)
+                                     # (M6 MSB pin — 6xdk ruling), so wire
+                                     # 2W takes c = a^(2^0), wire 1 the top
         when(k[j]) do                # wire-handle control (D2)
             mulmod!(y, c)            # library: in-place y ← c·y (mod N) —
         end                          # bijective (gcd(c, N) = 1), action world
