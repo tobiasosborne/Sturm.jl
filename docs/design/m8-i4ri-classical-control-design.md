@@ -896,3 +896,62 @@ operations**.
 
 Tracked as bead `eyho` (postselection/effects surface, M8-or-later);
 the F13 ruling brief is updated with the three-meanings observation.
+
+---
+
+## 13. Addendum 2 (session 98, dialogue with Tobias) — why the contexts exist, and the traceable-subset argument
+
+**The context trichotomy (Tobias's framing, adopted).** The three contexts
+exist for categorically different reasons, and the PRD should say so as a
+"why contexts" preamble (staged wording, lands with the F13 package):
+
+1. **Eager — runtime semantics.** The execution model of hardware capable
+   of projective *mid-circuit* measurement with feed-forward (trapped
+   ions et al.), and the prototyping/shot-statistics simulator. Outcomes
+   are real at the moment they occur; values flow; host `if` works.
+   Hardware relates to Eager at *runtime only* — device programs are
+   compiled via Tracing, then execute Eager-like.
+2. **DM — physical denotation.** The platonic state of the system under
+   channels: the normative semantics, where law tests (one-run Choi) and
+   correctness licenses live. The record semantics of §2 **is the
+   principle of deferred measurement expressed as types**: the record
+   wire is "the measurement not yet read," carried as correlation until
+   last use.
+3. **Tracing — the compiler.** The IR for optimization reasoning.
+   Measurement is a first-class named node with a Bool-typed output
+   wire; `cases` nodes are its consumers; both are the barriers of the
+   5hr7 pass discipline. Canonical measurement optimizations: the
+   **deferred-measurement rewrite** (for no-MCM backends: measure +
+   `cases`-on-record → coherent control off the unmeasured wire +
+   terminal measurement; license = Choi equality, defined in DM) and
+   **dead-record elimination** (record never consumed ⇒ measurement is
+   pinching; wire subsequently traced ⇒ node chain collapses to trace).
+
+**Registered pushback (for accuracy):** the cast is not uninteresting on
+no-MCM hardware — terminal readout is still the cast, and the boundary
+algebra (qc∘cq = id, cq∘qc = pinching) is context-independent normative
+structure. What is MCM-specific is the *value-returning, branch-on-it*
+usage.
+
+**The traceable-subset argument (sharpens F13, distinct from the Julia-
+convention argument).** The IR node identity is spelling-independent —
+a measure node is recorded whether the user wrote `Bool(q)` or
+`measure(q)`, so "the compiler needs to see it" does not by itself
+discriminate the F13 options. The genuine surface consequence is
+**program classification**: a program branching via host `if Bool(q)` is
+Eager-pinned and *cannot* be traced even in principle (the trace would
+record one branch); a program in token+`cases` vocabulary traces,
+optimizes, and ports. Under a split vocabulary (Option A family) that
+boundary is **lexical** — visible at a glance, mechanically lintable.
+Under a single spelling (Option D) the same text is traceable or not
+depending on how the result is *used*, discovered at trace time by
+failure. Status of the F13 axis after sessions-98 dialogue:
+- **Option D gained a principled foundation** (one channel, one
+  spelling; the cast returns the classical system, represented as
+  faithfully as the context allows: value/point ↔ record/distribution ↔
+  wire/no-state);
+- **Option A gained the traceable-subset argument** (the spelling marks
+  the compiler-food subset).
+Both are coherent; the ruling (bead `vqas`) is now a clean choice
+between these two positions, with the three-meanings rule (§12)
+holding under either.

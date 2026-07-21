@@ -27,6 +27,19 @@ this file, replying in-session, or `bd comments`.*
    ruled, the three must be distinct surface operations — one name
    silently covering two of them is the silent-wrongness pattern. The
    effects/postselection surface is its own bead (below).
+   **Session-98 addendum 2 (context trichotomy + traceable subset,
+   design doc §13):** the contexts exist for different reasons — Eager =
+   runtime semantics (MCM hardware, prototyping), DM = physical
+   denotation (record = deferred measurement as types), Tracing = the
+   compiler. The IR names the measure node under EVERY option, so
+   compiler visibility does not discriminate; what does: under Option A
+   the traceable/portable subset is **lexical** (lintable at a glance),
+   under Option D it is use-site-dependent (discovered at trace time by
+   failure). Meanwhile Option D gained a principled foundation from the
+   typing dialogue: one channel, one spelling, the cast returns the
+   classical system represented as faithfully as the context allows
+   (value ↔ record ↔ wire). The ruling is now a clean A-vs-D choice;
+   §12's three-meanings rule holds under either.
 
 2. **TR1–TR8 — UnitaryBlock design details** (bead `z1sa`;
    full options: `m8-5hr7-unitary-block-design.md` §8). One line each:
