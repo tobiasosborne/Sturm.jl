@@ -955,3 +955,58 @@ failure. Status of the F13 axis after sessions-98 dialogue:
 Both are coherent; the ruling (bead `vqas`) is now a clean choice
 between these two positions, with the three-meanings rule (§12)
 holding under either.
+
+---
+
+## 14. RULINGS (2026-07-21, Tobias, session 98) — F13 = OPTION D; all standing recommendations adopted
+
+**F13 RULED: Option D — one spelling.** `Bool(q)` / `Int(x)` are THE
+measurement spelling in every context. The cast denotes the q→c channel;
+its return is the classical system that channel outputs, represented as
+faithfully as the context allows: **value** (Eager — a point state IS its
+value), **record handle** (DM — distribution inside ρ), **wire handle**
+(Tracing — no state yet). This is a **registered exception** to the Julia
+constructor convention, adopted knowingly alongside `not!` and the view
+op-assigns (CLAUDE.md Julia conventions #2 gains this entry). The
+three-meanings rule (§12) stands: sample (Eager-native) / record (the
+cast, everywhere) / assert (`postselect`, explicit) remain distinct
+operations.
+
+**Consequential re-spellings of this document's Option-A-form statements**
+(the body above is the historical record; these deltas govern):
+- Every `measure(q)` in §§1–8 reads `Bool(q)` (resp. `Int(x)`); the
+  portable idiom is `cases(Bool(q))` / `@cases Bool(m)` — which lands F30
+  back on the original review's preferred form.
+- **L3 re-spelled:** under DM/Tracing `Bool(q)` does NOT throw — it
+  returns the record/wire handle. What remains loud: `convert(Bool, ·)`
+  (the P2 implicit-cast path) stays Eager-only — typed `Bool` slots
+  re-check and throw (§9.0 fact 2), and the owned-method guards
+  (`convert(Bool, ::ClassicalBit)` etc.) carry descriptive errors.
+  `if Bool(q)` under DM/Tracing dies with Julia's native TypeError on
+  the handle type — mitigated by descriptive type naming only (§4.3).
+- The **traceable-subset boundary is use-site-dependent under D**
+  (accepted cost, §13): a program is compiler-food iff its outcomes flow
+  only through T1–T4. Mitigation: this is mechanically checkable at
+  trace time and SHOULD become a tracer pre-flight lint listing each
+  offending use site, since it cannot be lexical.
+- **F16 is now even harder a prerequisite**: the context-varying return
+  of `Bool(q)` itself demands `QBool{C}`/`QInt{W,C}` for inference-clean
+  hot paths — scheduled as an explicit pre-M8 work item.
+
+**Also ruled (recommendations adopted wholesale):**
+- **D15 (xy4w)** = option (b): `QBool(p, φ)` literals under `when` are
+  admitted only inside a certified compute/uncompute unitary block whose
+  ancilla the §3.9 witness cleans; loud error naming D15 otherwise.
+- **TR1–TR8 (z1sa)**: all standing recommendations — square
+  `UnitaryBlock{N}` + rename; tee+poison Eager failure; `within` is
+  `public` kernel API, not an 8th surface construct; conservative
+  combinator-carried certificate set; `Perm`/`MCX` freeze to `NTuple`;
+  oracle targets full-width + structural range certificate (governs
+  `fy8l`); `PhaseDelta` kernel-internal, zero-port blocks forbidden;
+  `denoted_matrix` memory-budget cap.
+- **Effects surface (eyho)**: spelling `postselect(record, v)`, explicit
+  opt-in, weight visible (§12 commitments unchanged).
+- **F15/F19 (4c0j)**: numeric-contract wording → "number-like handles"
+  trait; bicharacter trait as recommended. **F16**: pre-M8 refactor,
+  scheduled.
+- **F31 PRD follow-up (ne0d)**: approved as recommended.

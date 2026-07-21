@@ -1,5 +1,16 @@
 # M8 rulings brief — everything blocking M8 code, one page
 
+> **⚖ RULED — 2026-07-21, session 98 (Tobias, in-session).**
+> **F13 = OPTION D**: `Bool(q)`/`Int(x)` are the single measurement
+> spelling in every context, returning the classical system as the
+> context represents it (value / record / wire) — a registered exception
+> to the Julia constructor convention. **All other items: standing
+> recommendations adopted** (D15 = certified-block option; TR1–TR8 as
+> recommended; `postselect` spelling; F15/F19 as recommended; F16
+> scheduled pre-M8; ne0d approved). Full ruling record:
+> `m8-i4ri-classical-control-design.md` §14. The items below are
+> retained as the pre-ruling record.
+
 *Session 98 (2026-07-21). M8 (`szx1`) is design-complete: both P0 gates
 (`5hr7`, `i4ri`) closed with 3+1 syntheses committed. The critical path is
 now **decisions, not design**. Each item below names its bead, where the
