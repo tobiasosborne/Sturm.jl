@@ -81,14 +81,21 @@ cause of the `_cz!` ≠ controlled-Rz(π) folklore, the recurring `3yz`
 (X vs −iY) bug family, and the defensive comment blocks copy-pasted across
 four files.
 
-Additionally, sound coherent-control bodies must be unitary, must not touch
-the control, and must leave control disentangled at exit. Attribution,
-precisely (the earlier draft lumped these): Bădescu–Panangaden's own §1
-already posits guard-externality and reversibility as Conditions I and III
-on any alternation; Yuan–Villanyi–Carbin (Quantum Control Machine,
+Additionally, sound coherent-control bodies must be unitary and must not
+touch the control; and the control *machine's* path/scratch workspace must
+be synchronized — disentangled from program data — at exit. The user's
+semantic guard is **not** covered by that last condition: a controlled
+unitary generally entangles it (`(α|0⟩+β|1⟩)|ψ⟩ ↦ α|0⟩|ψ⟩ + β|1⟩U|ψ⟩` — CNOT
+on `|+⟩|0⟩` is the simplest case, and required elsewhere in this PRD), and
+kickback onto it is physics; the guard remains a live quantum output.
+Attribution, precisely (the earlier draft lumped these): Bădescu–Panangaden's
+own §1 already posits guard-externality and reversibility as Conditions I and
+III on any alternation; Yuan–Villanyi–Carbin (Quantum Control Machine,
 OOPSLA 2024 — arXiv:2304.15000) prove that injectivity (Thm 4.4) plus
 synchronization (Def 4.7) are jointly sound *and complete* for
-unitarity-with-disentangled-control (Thms 4.8/4.9); Ying–Yu–Feng
+unitarity-with-synchronized-control-*machine* workspace (Thms 4.8/4.9 —
+their result is about disentangling the control-flow/path scratch from
+program data, not about the user's semantic guard); Ying–Yu–Feng
 (arXiv:1402.5172) supply only guard-externality (Def 2.1(4)) — their
 general guarded composition deliberately admits non-unitary branches,
 which is precisely the road the denotation problem above closes. v0.1
@@ -300,11 +307,21 @@ inside `src/simulation`/`src/qsvt` internals, never in algorithm code.
 Users never see a `V`.
 
 **Registers are numbers; views are addressing modes.** Views do NOT
-ride P9: no ring operations (`*`, `^`, `&`) exist on a view, so generic
-numeric code handed one MethodErrors honestly — the same wall as
-`g(x::Int)` in the P9 section — and the mutate-in-place convention on
-views (D11) can never leak into generic value code. A view supports
-exactly the casts, the translation family, and `when`; nothing else.
+ride P9: the ring operations (`*`, `^`, `&`) do not exist on a view, so
+generic numeric code handed one MethodErrors honestly — the same wall as
+`g(x::Int)` in the P9 section. The translation family, by contrast, *is*
+defined on a view — that is how `x̂ += a` modulates — and because Julia
+lowers `x̂ += a` to `x̂ = +(x̂, a)`, **that `+` method is necessarily
+effectful**: a bare `+(x̂, a)`, a `map(+, …)`, or any generic code that
+reaches the view mutates the underlying register. This is exactly the
+julialang #249/#3217 update-operator trap owned for `xor` in §3.4;
+we adopt it *knowingly* here too and scope it to views — which is
+precisely why views are addressing modes excluded from every generic
+value API, never number-like values. (An earlier draft claimed the
+mutate-in-place convention "can never leak into generic value code";
+that was wrong — `+` on a view can — and it is withdrawn.) A view
+supports exactly the casts, the translation family, and `when`; nothing
+else.
 Wrapper identity is not view identity: each `dual(q)` call constructs a
 fresh wrapper (`dual(dual(q)) === q` by unwrap, but
 `dual(q) === dual(q)` is `false`), so consumed-set and aliasing
@@ -471,8 +488,16 @@ unitary-witness requirement is exactly the Yuan–Villanyi–Carbin
 soundness/completeness pair (Thms 4.8/4.9); guardrail 3 is the
 non-monotonicity result (§1.1):
 
-1. The body must trace to a **unitary-witnessed** value: any cast, `ptrace!`,
-   `cases`, or noise channel inside `when` is a **loud error**.
+1. The body must trace to a **unitary-witnessed** value: any **measurement
+   (qc) cast** (`Bool`, `Int`), `ptrace!`, `cases`, or noise channel inside
+   `when` is a **loud error**. Canonical fresh-|0⟩ allocation — spelled
+   `QBool(false)` — is *permitted*: it is the blessed alloc-inside-`when`
+   scratch pattern (the compute–uncompute lemma below), a preparation
+   *without* backaction, not a qc cast. An arbitrary literal `QBool(p, φ)`
+   (p ∉ {0}, or φ ≠ 0) under `when` is neither — controlled preparation is
+   phase-ambiguous (different unitary extensions of the preparation differ
+   by a global phase observable under outer `ctrl`), so it awaits an
+   explicit ruling and is a loud error naming **D15** until then.
 2. The body must not operate on the control register — loud error.
 3. No unbounded recursion/iteration under `when` — bounded unrolling only.
 
@@ -483,7 +508,7 @@ register participates as input *and* output (kickback is physics).
 
 **Operational semantics (D13 ruling).** The definition above ("trace,
 then apply ctrl(V)") is the *semantics*; the §4.2 homomorphism law
-`ctrl(g ∘ h) == ctrl(g) ∘ ctrl(h)` is the license to implement it
+`ctrl(g ∘ h) ≈ ctrl(g) ∘ ctrl(h)` is the license to implement it
 **streamingly** — applying `ctrl(op)` op-by-op as the body executes.
 That is v0.1's control stack, now justified by a law instead of an
 accident, and it fixes the enforcement story per context:
@@ -615,8 +640,14 @@ yields the *exact* channel, which is what makes the Choi-level test
 discipline (rule 12) cheap: `Choi(teleport) ≈ Choi(id)` is a
 deterministic one-run assertion, no shot averaging. Trajectory sampling
 remains available as an explicit shot API. Harness note: the Choi state
-of a W-wire channel needs 2W wires, so Orkan's 30-qubit cap tests
-channels up to 15 wires — ample for every law test. Two test-design
+of a W-wire channel lives on 2W wires, but the DM-context test evaluates it
+as a *density matrix* — 2^{4W} complex entries — so the binding limit is
+memory, not the pure-state qubit ceiling. Orkan's ~30-qubit (≈2^{30}-
+amplitude) budget therefore caps an exact dense-Choi law test at **≈7
+wires** (4W ≲ 30), NOT 15 — a 15-wire Choi would be a 30-qubit density
+matrix, 2^{60} complex numbers (~16 EiB). Still ample for the named laws,
+which are all small; wider channels need randomized reference-assisted,
+stabilizer, or tensor-network Chois rather than a dense one. Two test-design
 rules bought with review-r6 derivations: the cq∘qc pinching test must
 probe a *coherent* input (pinching and identity coincide on diagonal
 inputs), and teleport-class channel tests must probe a Z-*sensitive*
@@ -794,10 +825,16 @@ element — data, not denotation. One abstract type, trait-stratified:
   **Equality is double-cover equality (normative — review r6/M2).** The
   5-float representation is 2-to-1 onto U(2): (q, φ) ~ (−q, φ+π) are
   the *same* element, and exact H satisfies H² = (−1_quat, π) — the
-  *other* representative of +I — so the law test `H ∘ H == I` fails
-  naive tuple equality. Process-value equality is therefore mod that
-  ℤ₂ (canonicalize, compare both representatives, or compare the
-  denoted matrices e^{iφ}R(q)), with two guardrails: the quotient must
+  *other* representative of +I — so the law `H ∘ H ≈ I` fails
+  naive tuple equality. Semantic process-value comparison is therefore
+  mod that ℤ₂ — a dedicated `isapprox`/`same_process` predicate
+  (canonicalize, compare both representatives, or compare the denoted
+  matrices e^{iφ}R(q)). It is deliberately **not** Julia `==`/`hash`:
+  tolerance-based equality is non-transitive and would corrupt any dict or
+  cache keyed on process values, so `==` stays *exact-structural* (it does
+  not identify drifted double-cover representatives — that is
+  `same_process`'s job, and the shipped kernel implements exactly this
+  split). The quotient predicate carries two guardrails: the quotient must
   **never merge +I with −I** — `Ry(2π) = (1_quat, π) = −I` is physics
   (spinor 4π-periodicity) and ctrl(−I) is a real CZ-grade operation, so
   a test asserting `Ry(2π) == I` is *wrong* and "fixing" H² by
@@ -822,8 +859,13 @@ element — data, not denotation. One abstract type, trait-stratified:
   the proof.
 - `UnitaryDAG` — a `Channel`-style DAG carrying a unitarity witness
   (produced by tracing `when` bodies and library circuits).
-- Future per-register-type structures (P7): SU(d) values for `QMod{d}`,
-  symplectic+displacement for CV, braid-group elements for anyons
+- Future per-register-type structures (P7): **U(d)** values for `QMod{d}`
+  (phase-carrying: a definite representative is φ + `SU(d)` modulo the ℤ_d
+  center, `(S, φ) ~ (ζS, φ − arg ζ)`, ζ^d = 1 — `SU(d)` *alone* would
+  discard exactly the global-phase information `ctrl`/P4 needs, re-importing
+  the §1 disease at the qudit layer, because Fourier/Weyl/Clifford
+  representatives carry determinant-dependent phases observable under
+  control), symplectic+displacement for CV, braid-group elements for anyons
   (discrete — the process-first view covers them; a generator view never
   could).
 
@@ -834,16 +876,17 @@ declares its arithmetic. The kernel is parametric in it.
 
 `∘` (composition), `⊗` (parallel), `adjoint`, `ctrl`. Convention,
 stated once: `∘` is right-to-left matrix composition ("apply the right
-operand first"), so `V ∘ W ∘ V†` means V·W·V†. Laws (equalities are
-U(2)-quotient equalities per §4.1, ≈ on floats):
+operand first"), so `V ∘ W ∘ V†` means V·W·V†. Laws (each `==` below is the
+semantic U(2)-quotient predicate of §4.1 — `≈`/`same_process` on floats,
+**never** Julia `==`, which stays exact-structural):
 
-- `Ry(a) ∘ Ry(b) == Ry(a+b)` — dynamics as a representation of (ℝ, +),
-  now a testable identity on quaternions (and `Ry(2π) == −I ≠ I`:
+- `Ry(a) ∘ Ry(b) ≈ Ry(a+b)` — dynamics as a representation of (ℝ, +),
+  now a testable identity on quaternions (and `Ry(2π) ≈ −I`, `≉ I`:
   the double cover is physics, §4.1);
-- `ctrl(g ∘ h) == ctrl(g) ∘ ctrl(h)` — `ctrl` is a group homomorphism
+- `ctrl(g ∘ h) ≈ ctrl(g) ∘ ctrl(h)` — `ctrl` is a group homomorphism
   U(d) → U(2d), **not** a channel map (it distinguishes `g` from
   `e^{iα}g`; that is its job);
-- `adjoint(ctrl(g)) == ctrl(adjoint(g))`;
+- `adjoint(ctrl(g)) ≈ ctrl(adjoint(g))`;
 - `ctrl` is closed: `ctrl(ctrl(g))` is Toffoli-grade control, no special
   case. Single-qubit gate fusion becomes quaternion arithmetic — v0.1's
   `gate_cancel` commutation table is subsumed for 1q rotations by exact
@@ -1008,7 +1051,11 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
 
 - **P1 — Functions are channels.** Unchanged, *strengthened*: under §4.5
   every primitive visibly has channel type (consume inputs, produce
-  outputs); a program is a composite in the image of Ad.
+  outputs). Process *applications* lie in `im(Ad)`; a program is a composite
+  in the symmetric monoidal category **generated by** those applications
+  together with preparation, instruments, classical control, and trace —
+  measurement, discard, reset, and noise are CPTP but *not* unitary
+  conjugations, so they lie outside `im(Ad)` itself (§4.4's stratification).
 - **P2 — The boundary is a cast.** Unchanged, sharpened by the boundary
   algebra (§3.2): qc ∘ cq = id, cq ∘ qc = pinching.
 - **P3 — Operations are operations.** Unchanged (Stinespring fallback makes
@@ -1150,6 +1197,13 @@ Equivalently `when(r) do not!(dual(q)) end`. The symmetry
 `dual(q) ⊻= r` of earlier drafts is not writable Julia (D11).
 
 ### 7.4 Deutsch–Jozsa over an arbitrary Julia function (D9)
+
+> **Precondition (weakdep, F36).** `oracle(f, x)` ships in the
+> `SturmBennettExt` package extension (Project.toml `[weakdeps]`/
+> `[extensions]`), so this example and §7.5 require `using Bennett`
+> *alongside* `using Sturm` to activate the bridge — `using Sturm` alone
+> does not load it. (`using` cannot appear inside the function body; it is
+> the caller's session/module import.)
 
 ```julia
 """
@@ -1363,8 +1417,15 @@ as found on v0.1:
   (QuantumClifford.jl's `S"XXX ZZI"`) — discrete vocabularies suit
   string macros; the continuous (p, φ) chart does not. Recorded so the
   next research round doesn't reopen it.
-  Required tests: `QBool(1, φ) == QBool(1, φ′) == QBool(true)` (chart
-  degenerates at the poles — a fact about literals, made once);
+  Required tests: at the north pole the chart degenerates — `QBool(1, φ)`
+  and `QBool(1, φ′)` prepare the same one-wire state for every φ, φ′ (all
+  are `|1⟩` up to an unobservable global phase). The test therefore compares
+  the **prepared density matrices** (or preparation-channel Chois):
+  `ρ(QBool(1, φ)) ≈ ρ(QBool(1, φ′)) ≈ ρ(QBool(true))`, while asserting the
+  **handles are distinct** — each call allocates a fresh register, so `==`
+  on the handles is identity, never state (comparing handles by current
+  state would need context inspection and fail under entanglement). A fact
+  about literals, made once;
   dispatch check `QBool(true)` hits the `Bool` method
   (`Bool <: Integer <: Real`, more-specific wins); `Float64(φ)` before
   the ccall boundary for `Irrational` args.
@@ -1555,6 +1616,21 @@ as found on v0.1:
   cross; if Bennett ever grows MBU it must return a DISTINCT type, not
   a `ReversibleCircuit`. Revisit as a new decision point if BennettVM
   matures into a backend candidate (option C of the audit).
+- **D15 — arbitrary `QBool(p, φ)` literals inside `when` (OPEN).**
+  Guardrail 1 (§3.5) bans measurement casts and permits only canonical
+  fresh-|0⟩ allocation (`QBool(false)`) as controlled scratch — that case
+  is closed by the compute–uncompute lemma. A general literal `QBool(p, φ)`
+  with p ∉ {0} or φ ≠ 0 is a preparation channel/isometry with **no
+  canonical controlled implementation**: distinct unitary extensions of the
+  preparation differ by a global phase that becomes observable under outer
+  `ctrl` — the same phase-ambiguity §1 and D6/F9 turn on. Until ruled, such
+  a literal inside `when` is a **loud error** naming this decision, never a
+  silent lowering (fail-loud, CLAUDE.md §1). Candidate resolutions, none yet
+  chosen: (a) forbid them outright; (b) admit them only as part of a
+  certified compute/uncompute unitary block whose ancilla the §3.9 witness
+  cleans; (c) pin one phase convention and *prove* it control-stable. This
+  is a genuine open point — do not invent the ruling (raised by the GPT-5.6
+  review, F12).
 - **Citations TODO (rule 4; audited twice — r6 corrections baked in).**
   Before implementation, `docs/physics/` distillations for:
   Bădescu–Panangaden 1511.01567 (Conditions I/III ↔ guardrails 2/1 —
