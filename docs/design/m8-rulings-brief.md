@@ -18,6 +18,15 @@ this file, replying in-session, or `bd comments`.*
    stay honest scalar casts (Eager-only).**
    Sub-question: do `Bool(q)`/`Int(x)` *throw* under DM/Tracing (recommended)
    or degrade?
+   **Session-98 addendum (Tobias dialogue,
+   `m8-i4ri-classical-control-design.md` §12):** "measurement returns a
+   `Bool`" has THREE coherent readings in DM-land — *sample* (Eager only),
+   *record* (TP instrument, DM native), *assert/postselect* (CP-TNI, the
+   outcome is an input, state subnormalized with weight p_b; factors as
+   record + classical effect ⟨b| on the c-wire). Whatever spelling is
+   ruled, the three must be distinct surface operations — one name
+   silently covering two of them is the silent-wrongness pattern. The
+   effects/postselection surface is its own bead (below).
 
 2. **TR1–TR8 — UnitaryBlock design details** (bead `z1sa`;
    full options: `m8-5hr7-unitary-block-design.md` §8). One line each:
