@@ -356,23 +356,100 @@ end
     DeferMeasurementPass()
 
 A CHANNEL pass (design §3, part 5; §7.10 build order lists deferred measurement as
-a channel pass) that would rewrite `measure(w) → cases(record)` into a COHERENT
-`ctrl` off the still-unmeasured wire plus a TERMINAL `measure` — the deferred-
-measurement principle, licensed by CHANNEL-level Choi equality. **FRAMEWORK SLOT —
-rewrite body DEFERRED.** The rewrite needs the `MeasureN`/`CasesN` TOKEN /
-correlation-record semantics (the Kleisli join), which is the parallel i4ri round =
-M8 part 7 (design §6 seam). Until those land, this pass is the identity on any DAG:
-it recognizes no `measure+cases` pattern to defer. It is registered as a
-`ChannelPass` (returns `ChannelDAG`), rejects a `UnitaryBlock` (`MethodError`), and
-its Choi law is trivially satisfied by identity — the SLOT is real and typed; only
-the rewrite body waits on part 7.
+a channel pass; i4ri §13 names it a canonical Tracing optimization) that rewrites
+`MeasureN(w→rec)` + `CasesN(sel=rec)` — measure-and-condition — into a COHERENT
+`ctrl` off the still-unmeasured wire plus a TERMINAL `MeasureN` (the no-MCM-backend
+lowering). This is the DEFERRED-MEASUREMENT PRINCIPLE: for a binary `CasesN` with an
+identity false-arm and a body-arm of unitary corrections `Uⱼ` on wires DISJOINT from
+`w`, `Σ_b |b⟩⟨b|·U^b ∘ 𝓜_w  =  𝓜_w ∘ ctrl_w(U)` at the CHANNEL level — the record
+is diagonal, so coherent control off `w` before measuring it denotes the same channel
+(licence = Choi equality, DEFINED in DM and TESTED by DM replay, `M8.TRACE.DEFER-*`).
+The `ctrl` is built through the PUBLIC combinator (the choke point stays honest).
+
+Only the canonical binary pattern is deferred (identity false-arm; body ApplyNs on
+wires disjoint from `w`; the record used by no other node). A DAG with no such
+pattern is returned UNCHANGED (identity — e.g. a bare `X; measure(w)` with no
+`cases`). A `ChannelPass` (returns `ChannelDAG`, rejects a `UnitaryBlock`); its law
+is Choi preservation, NOT the unitary two-law battery, so it is NOT in
+`PASS_REGISTRY` (which the boot lint asserts holds only `UnitaryPass`es).
 """
 struct DeferMeasurementPass <: ChannelPass end
 
+# Is `nd` a MeasureN whose record is deferrable by exactly one binary CasesN?
+# Returns `(cases_index, casesnode)` or `nothing`.
+function _deferrable_cases(nodes, rec::PortID, w::PortID)
+    hits = Tuple{Int,CasesN}[]
+    for (i, c) in enumerate(nodes)
+        c isa CasesN || continue
+        c.sel == rec && push!(hits, (i, c))
+    end
+    length(hits) == 1 || return nothing
+    (ic, c) = hits[1]
+    length(c.branches) == 2 || return nothing
+    isempty(c.branches[1].nodes) || return nothing                    # false-arm must be identity
+    all(x -> x isa ApplyN, c.branches[2].nodes) || return nothing     # true-arm: unitary corrections only
+    any(a -> w in a.ports, c.branches[2].nodes) && return nothing      # corrections disjoint from w
+    return (ic, c)
+end
+
 function _rewrite(::DeferMeasurementPass, g::ChannelDAG)
-    # DEFERRED: the measure→ctrl+terminal-measure rewrite needs part-7 CasesN token
-    # semantics. Identity until then (no pattern is recognized without the record).
-    return g
+    nodes = collect(g.nodes)
+    remove = Set{Int}()
+    inserts = Dict{Int,Vector{Node}}()          # CasesN index → coherent ctrl nodes
+    terminal = Tuple{PortID,PortID}[]           # (w, rec) → terminal MeasureN appended
+    for (im, nd) in enumerate(nodes)
+        nd isa MeasureN || continue
+        m = _deferrable_cases(nodes, nd.out, nd.in)
+        m === nothing && continue
+        (ic, c) = m
+        push!(remove, im); push!(remove, ic)
+        inserts[ic] = Node[ApplyN(ctrl(a.v), (nd.in, a.ports...)) for a in c.branches[2].nodes]
+        push!(terminal, (nd.in, nd.out))
+    end
+    isempty(remove) && return g
+    out = Node[]
+    for (i, nd) in enumerate(nodes)
+        if i in remove
+            haskey(inserts, i) && append!(out, inserts[i])
+        else
+            push!(out, nd)
+        end
+    end
+    for (w, rec) in terminal
+        push!(out, MeasureN(w, rec))            # deferred to the END (terminal readout)
+    end
+    return ChannelDAG(Tuple(out), g.qin, g.qout, g.cout)
+end
+
+"""
+    DeadRecordEliminationPass()
+
+A CHANNEL pass (i4ri §13, a canonical Tracing optimization): a measurement whose
+RECORD is never consumed (no `CasesN.sel` reads it, and it does not escape as a
+classical `cout`) is just pinching, and a pinch followed by a discard is a discard —
+so `MeasureN(w→rec)` with `rec` dead COLLAPSES to `TraceN(w)`. Licence = Choi
+equality (`Tr ∘ pinch = Tr`), TESTED by DM replay (`M8.TRACE.DEAD-RECORD`). A
+`ChannelPass` (Choi-preserving), NOT in `PASS_REGISTRY`.
+"""
+struct DeadRecordEliminationPass <: ChannelPass end
+
+function _rewrite(::DeadRecordEliminationPass, g::ChannelDAG)
+    used = Set{PortID}()
+    for nd in g.nodes
+        nd isa CasesN && push!(used, nd.sel)
+    end
+    escaping = Set{PortID}(p.id for p in g.cout)
+    out = Node[]
+    changed = false
+    for nd in g.nodes
+        if nd isa MeasureN && !(nd.out in used) && !(nd.out in escaping)
+            push!(out, TraceN(nd.in, nothing))          # pinch-then-discard ≡ discard
+            changed = true
+        else
+            push!(out, nd)
+        end
+    end
+    return changed ? ChannelDAG(Tuple(out), g.qin, g.qout, g.cout) : g
 end
 
 # ============================================================================ #

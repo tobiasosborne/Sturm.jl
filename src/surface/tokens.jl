@@ -438,28 +438,44 @@ _min_width(maxval::Integer) = max(1, (maxval <= 0 ? 1 : (8 * sizeof(Int) - leadi
     "finite classical SSA (§3.6 T1–T4). `if token` / `token && …` are Julia's own " *
     "non-boolean errors; there is no host branch on a quantum outcome."))
 
+# A token in a Sturm-owned forbidden position: RECORD the site into the tracer
+# pre-flight lint (Ruling D §14 — a no-op off a TracingContext) BEFORE the
+# descriptive throw. The `if`/`&&`/`||` sites are Julia-native `TypeError`s
+# (uncatchable) and cannot be recorded — the lint covers what Sturm owns.
+@noinline function _token_reject(t::ClassicalToken, what::AbstractString)
+    _note_nonportable!(contextof(t), what)
+    _token_control_flow_error(what)
+end
+
 # Array indexing by a token (Sturm-owned via the token type in the index slot).
 # The single-index `getindex` is more specific than Base's varargs (no ambiguity);
 # `to_index` is the funnel multi-index / `to_indices` forms route through — both
 # loud, both descriptive.
-Base.getindex(::AbstractArray, ::ClassicalToken) = _token_control_flow_error("an array index (`arr[token]`)")
-Base.to_index(::ClassicalToken) = _token_control_flow_error("an array index (`arr[token]`)")
+Base.getindex(::AbstractArray, t::ClassicalToken) = _token_reject(t, "an array index (`arr[token]`)")
+Base.to_index(t::ClassicalToken) = _token_reject(t, "an array index (`arr[token]`)")
 
 # Iteration (a `for x in token` / splatting attempt).
-Base.iterate(::ClassicalToken) = _token_control_flow_error("iteration (`for x in token`)")
-Base.iterate(::ClassicalToken, ::Any) = _token_control_flow_error("iteration (`for x in token`)")
+Base.iterate(t::ClassicalToken) = _token_reject(t, "iteration (`for x in token`)")
+Base.iterate(t::ClassicalToken, ::Any) = _token_reject(t, "iteration (`for x in token`)")
 
 # Explicit host coercions to a scalar — the P2 implicit path stays loud and
-# Eager-only (Ruling D / §14: `convert(Bool, ·)` never silently degrades).
-Base.convert(::Type{Bool}, ::ClassicalBit) = throw(ArgumentError(
-    "convert(Bool, ::ClassicalBit): a measurement outcome under a channel context is " *
-    "a classical RECORD, not a host `Bool` (Ruling D, §3.6). Branch with `cases`; to " *
-    "sample a scalar trajectory run under `shots` over an Eager context (§3.8)."))
-Base.convert(::Type{<:Integer}, ::ClassicalWord) = throw(ArgumentError(
-    "convert(Integer, ::ClassicalWord): a measurement outcome under a channel context " *
-    "is a classical RECORD, not a host integer (Ruling D, §3.6). Use `cases`/`select`, " *
-    "or `shots` over Eager for a scalar trajectory."))
+# Eager-only (Ruling D / §14: `convert(Bool, ·)` never silently degrades). Note
+# the pre-flight lint, then throw the record-specific message.
+function Base.convert(::Type{Bool}, t::ClassicalBit)
+    _note_nonportable!(contextof(t), "a host coercion (`convert(Bool, token)`)")
+    throw(ArgumentError(
+        "convert(Bool, ::ClassicalBit): a measurement outcome under a channel context is " *
+        "a classical RECORD, not a host `Bool` (Ruling D, §3.6). Branch with `cases`; to " *
+        "sample a scalar trajectory run under `shots` over an Eager context (§3.8)."))
+end
+function Base.convert(::Type{<:Integer}, t::ClassicalWord)
+    _note_nonportable!(contextof(t), "a host coercion (`convert(Integer, token)`)")
+    throw(ArgumentError(
+        "convert(Integer, ::ClassicalWord): a measurement outcome under a channel context " *
+        "is a classical RECORD, not a host integer (Ruling D, §3.6). Use `cases`/`select`, " *
+        "or `shots` over Eager for a scalar trajectory."))
+end
 
 # Word-indexed by a TOKEN (the forbidden dynamic index) — distinct from the
 # static build-time `w[i::Integer]` slice above.
-Base.getindex(::ClassicalWord, ::ClassicalToken) = _token_control_flow_error("a token index (`w[token]`)")
+Base.getindex(::ClassicalWord, t::ClassicalToken) = _token_reject(t, "a token index (`w[token]`)")

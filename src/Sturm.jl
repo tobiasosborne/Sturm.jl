@@ -154,6 +154,18 @@ include("bennett/bridge.jl")
 include("surface/tokens.jl")
 include("surface/cases.jl")
 
+# --- M8: i4ri classical-control, TRACING half (bead Sturm.jl-szx1) -----------
+# The `TracingContext` (the COMPILER context — executes nothing, materializes a
+# `ChannelDAG`; no Orkan/FFI), the Ruling-D measurement-cast seams
+# (`_cast_bool`/`_cast_int(::TracingContext, …)` → MeasureN + wire token), the
+# `cases` materializer (`_cases_ctx_run(::TracingContext, …)` → nested CasesN), the
+# tracer pre-flight lint (`_note_nonportable!`), the `trace(f, nin)` HOF, and the DM
+# REPLAY (`_replay_dm!`) that executes a traced DAG (the materialize half of the
+# stream≡materialized round-trip + the channel-pass Choi laws). Included LAST: it
+# overrides `apply!`/`allocate!`/`trace_wire!`/`teardown!` and dispatches the cast/
+# cases seams that M3/M6/cases.jl forward-reference — all resolved at call time.
+include("context/tracing.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -234,13 +246,15 @@ public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
 # combinator (a `public` kernel/library API — NOT an 8th surface construct, TR3).
 public UnitaryPass, ChannelPass, apply_pass, PASS_REGISTRY,
     Fuse1qPass, ViewFusionPass, ReassocPass,
-    FuseUnitaryRunsPass, DeferMeasurementPass, within
+    FuseUnitaryRunsPass, DeferMeasurementPass, DeadRecordEliminationPass, within
 
 # --- M8 i4ri classical-control tokens + library (kernel/library `public`) ----
 # The measurement-record tokens and the T2/T3 finite classical SSA + trajectory
 # HOF. `cases`/`@cases` are the exported surface; these are the token vocabulary
 # (Ruling D returns) and the library multiplexer/shot/lifetime helpers.
 public ClassicalBit, ClassicalWord, ClassicalToken, ClassicalTable,
-    select, shots, discard!, width, zext, truncate_word
+    select, shots, discard!, width, zext, truncate_word,
+    # M8 TRACING half: the compiler context + trace/replay + pre-flight lint
+    TracingContext, trace, trace_nonportable
 
 end # module Sturm

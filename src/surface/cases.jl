@@ -222,16 +222,17 @@ end
 """
     _cases_dm_run(t, arms; binary, default) -> nothing
 
-Execute `cases` on a DM record token as the EXACT instrument sum (design §2.1).
-Enumerate the selector's 2^K base-wire configs; for each, evaluate `t.f` to pick
-the arm and apply its body CONTROLLED on that config (`_apply_arm_config!`). The
-join signature is asserted preserved after each arm (design §2.3). `_assert_no_control`
-first — `cases` under `when` is guardrail-1 forbidden (§3.5).
+Execute `cases` on a record token. Common front matter (context resolution,
+guardrail 1, the fan-in cap), then DISPATCH on the owning context type
+(`_cases_ctx_run`): a `DensityMatrixContext` runs the exact instrument sum
+(this file); a `TracingContext` MATERIALIZES a `CasesN` into the DAG
+(`src/context/tracing.jl`). `_assert_no_control` first — `cases` under `when`
+is guardrail-1 forbidden (§3.5). The name is kept for source-compat with the
+slice-4 call sites; the DM-specific work now lives in `_cases_ctx_run`.
 """
 function _cases_dm_run(t::ClassicalToken, arms::Vector{Tuple{Any,Any}}; binary::Bool, default)
     ctx = _here_token(t)
     _assert_no_control(ctx, "cases (classical branching)")
-    core = _core(ctx)
     wires = t.wires
     K = length(wires)
     K <= CASES_MAX_FANIN || error(
@@ -239,6 +240,23 @@ function _cases_dm_run(t::ClassicalToken, arms::Vector{Tuple{Any,Any}}; binary::
         "exceeds the fan-in cap ($CASES_MAX_FANIN). Wide feed-forward is a finite classical " *
         "SSA over the WRITTEN structure (a per-bit `@cases w[j]` loop, K=1), never an " *
         "implicit branch over a whole word domain (§3.6 / law L13).")
+    _cases_ctx_run(ctx, t, wires, arms; binary = binary, default = default)
+    return nothing
+end
+
+"""
+    _cases_ctx_run(ctx::DensityMatrixContext, t, wires, arms; binary, default) -> nothing
+
+The EXACT instrument-sum executor (design §2.1). Enumerate the selector's 2^K
+base-wire configs; for each, evaluate `t.f` to pick the arm and apply its body
+CONTROLLED on that config (`_apply_arm_config!`). The join signature is asserted
+preserved after each arm (design §2.3). The `TracingContext` sibling materializes
+a `CasesN` instead (`src/context/tracing.jl`).
+"""
+function _cases_ctx_run(ctx::DensityMatrixContext, t::ClassicalToken,
+                        wires::Vector{WireID}, arms::Vector{Tuple{Any,Any}}; binary::Bool, default)
+    core = _core(ctx)
+    K = length(wires)
     baseline_live = Set(keys(core.wire_to_slot))
     baseline_consumed = copy(core.consumed)
     @inbounds for a in 0:((1 << K) - 1)

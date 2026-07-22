@@ -340,6 +340,10 @@ end
         include("test_m8_i4ri.jl")     # §3.6/§3.8 L-battery: Ruling-D tokens, instrument-sum cases, L5 phase form
     end
 
+    @testset "M8 — i4ri classical control: TracingContext, materialize, defer (part 7, Tracing)" begin
+        include("test_m8_tracing.jl")  # §2.4/§2.3/§13: MeasureN/CasesN, join-typing, stream≡materialized, defer/dead-record
+    end
+
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
         include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
     end
