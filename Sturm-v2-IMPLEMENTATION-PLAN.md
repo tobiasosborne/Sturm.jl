@@ -280,15 +280,19 @@ and one refactor.
   is quantum-port-signature equality; DM executes the exact instrument
   sum via `ctrl`-off-the-c-wire.
 
-**Ruling gates — OPEN (block PRD paste + M8 code):**
+**Ruling gates — ✅ RESOLVED (Tobias, session 98; i4ri doc §14, RULINGS
+commit 8313932). PRD wording applied by `w5rw` (e834d36); F16 landed
+(`vanm`, 22f4994). M8 code is UNGATED.**
 
-- **`vqas`** (F13 — measurement verb spelling). Both `i4ri` proposers
-  recommend Option A: `measure(q)` is the token-producing observation,
-  `Bool(q)`/`Int(x)` stay honest scalar casts that throw under DM/Tracing.
-  Tobias must rule (a) the verb (`measure` vs `observe` vs `q[]`) and
-  (b) whether `Bool`/`Int` throw vs silently degrade. §3.6/§3.8 PRD
-  wording is written against Option A and re-spelled if another wins.
-- **`z1sa`** (TR1–TR8 from `5hr7` §8). Consolidated rulings on:
+- **`vqas`** (F13 — measurement verb spelling). **RULED: Option D**,
+  overruling both proposers' Option-A recommendation — `Bool(q)`/`Int(x)`
+  are the SINGLE spelling in every context, returning the classical system
+  as the context represents it (Eager scalar / DM record token / Tracing
+  wire token); there is NO `measure` verb; `if token` raises Julia's
+  native `TypeError`; portable idiom `cases(Bool(q))` / `@cases Bool(m)`;
+  tracer pre-flight lint mandated (PRD §3.6/§3.8/D3 as shipped).
+- **`z1sa`** (TR1–TR8 from `5hr7` §8). **RULED: all eight as
+  recommended** (session 98). Consolidated rulings on:
   TR1 `UnitaryBlock{N}` square shape + rename; TR2 Eager failure
   topology (poison-on-failed-seal); TR3 canonical scratch spelling
   (`QBool(false)` blessed, `within` stays `public`, seven surface
@@ -296,12 +300,15 @@ and one refactor.
   closed constructors); TR5 `Perm`/`MCX` immutability refactor; TR6
   under-sized oracle targets; TR7 phase-delta scope + zero-port scalar
   blocks; TR8 `denoted_matrix` memory-budget cap.
-- **`xy4w`** (D15 — arbitrary `QBool(p, φ)` literal inside `when`). A
-  loud error until ruled (PRD D15). Candidate resolutions: forbid;
-  admit only inside a certified compute/uncompute block; pin one
-  control-stable phase convention. **Do not invent the ruling.**
+- **`xy4w`** (D15 — arbitrary `QBool(p, φ)` literal inside `when`).
+  **RULED: option (b)** (session 98) — admitted only inside a certified
+  compute/uncompute unitary block (`MatchedPair`, PRD §4.1a) whose
+  ancilla the §3.9 witness cleans; a bare literal under `when` stays a
+  loud error naming D15 (PRD D15 as shipped).
 
-**Refactor gate — F16 (must land before M8 cast work):** the cast path
+**Refactor gate — F16: ✅ LANDED (`vanm` 3+1, commit 22f4994 — `QBool{C}`
+/ `QInt{W,C}` / `WireRef{C}`, typed `_here`, F15 loud surface, F19
+duality trait; suite 25245/25245).** As originally stated: the cast path
 cannot be type-stable while `QBool` erases context into
 `ctx::AbstractContext` and M8 makes the cast return type context-dependent.
 Parameterise handles internally — `QBool{C}`, `QInt{W,C}` — keeping the
@@ -370,7 +377,8 @@ refactor). Build order is the seven-part split from `5hr7` §7.10, with the
    phi); copyable tokens + retained correlation record traced at last use;
    DM c-wire executor (`_instrument!` + `ctrl`-off-c-wire + `_trace_and_free!`,
    **no new physics primitive**); `shots` HOF over Eager for trajectories.
-   `@cases measure(m)` (F30 ruled: register-accepting `@cases m` rejected).
+   `@cases Bool(m)` (Ruling D spelling; F30 ruled: register-accepting
+   `@cases m` rejected).
 
 - **Named tests:** the 5hr7 `M8.*` battery (19 tests incl. the phase
   sentinel `M8.PASS.PHASE-SENTINEL`, `M8.CERT.STATE-IS-NOT-WITNESS`, and
