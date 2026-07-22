@@ -71,6 +71,13 @@ include("channel/replay.jl")
 include("channel/cert.jl")
 include("channel/block_algebra.jl")
 include("channel/builder.jl")
+# --- M8 pass frameworks (parts 5–6; design m8-5hr7 §3): the ChannelPass /
+# UnitaryPass abstractions, `apply_pass`, the trusted phase-faithful `_commit`
+# (XportCert transport + tier-1b gphase reattach), the three concrete unitary
+# passes (fuse1q / view-fusion / reassoc) + PASS_REGISTRY, the FuseUnitaryRuns
+# channel pass + the deferred-measurement framework slot, and the `within`
+# combinator. Included after builder.jl (uses DAGBuilder/certify/block algebra/ctrl).
+include("channel/passes.jl")
 
 # --- M2: FFI, Ad application, contexts, regions (bead Sturm.jl-dc6i) ---
 # Dependency-respecting order: wire identity → raw FFI → state lifecycle →
@@ -200,5 +207,13 @@ public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     is_barrier, has_barrier,
     CleanCert, NoAncilla, PermClean, MatchedPair, SeqCert, ParCert, AdjointCert, XportCert,
     DAGBuilder, input!, alloc!, apply_node!, trace!, measure!, noise!, freeze
+
+# --- M8 pass frameworks (parts 5–6; kernel `public`, not exported) -----------
+# The two pass abstractions + `apply_pass`, the registered representative-preserving
+# unitary passes and `PASS_REGISTRY`, the channel passes, and the `within`
+# combinator (a `public` kernel/library API — NOT an 8th surface construct, TR3).
+public UnitaryPass, ChannelPass, apply_pass, PASS_REGISTRY,
+    Fuse1qPass, ViewFusionPass, ReassocPass,
+    FuseUnitaryRunsPass, DeferMeasurementPass, within
 
 end # module Sturm

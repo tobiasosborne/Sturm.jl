@@ -200,6 +200,29 @@ end
         end
     end
 
+    @testset "M8 PASS_REGISTRY law-coverage lint (§4.2 pass law, mirrors ctrl choke point)" begin
+        # The pass-side analogue of the ctrl choke-point lint (design m8-5hr7 §3.3):
+        # every registered UnitaryPass must have BOTH required law tests — direct
+        # representative equality AND the ctrl-wrapped Choi equality — running against
+        # it. `passes_missing_laws` is the pure checker; test_m8_passes.jl applies it
+        # to the runtime record of what actually ran. Here we (a) self-test the checker
+        # for TEETH (mirrors "lint function catches a synthetic violation") and (b)
+        # assert the shipped registry is populated with genuine `UnitaryPass` values.
+        both = Set([:representative, :controlled])
+        passes_missing_laws(reg, ran) =
+            sort([n for n in reg if get(ran, n, Set{Symbol}()) != both])
+        # TEETH: a pass with no laws, or only one, is flagged; both ⇒ clean.
+        @test passes_missing_laws([:dummy], Dict{Symbol,Set{Symbol}}()) == [:dummy]
+        @test passes_missing_laws([:a], Dict(:a => Set([:representative]))) == [:a]
+        @test passes_missing_laws([:a], Dict(:a => Set([:controlled]))) == [:a]
+        @test passes_missing_laws([:a], Dict(:a => both)) == Symbol[]
+        # The shipped registry is real and every entry is a UnitaryPass (channel
+        # passes are deliberately NOT registered — their law is Choi, not the phase
+        # representative). The full runtime coverage assertion runs in test_m8_passes.jl.
+        @test !isempty(Sturm.PASS_REGISTRY)
+        @test all(p -> p isa Sturm.UnitaryPass, values(Sturm.PASS_REGISTRY))
+    end
+
     @testset "M2 FFI-confinement lints" begin
         @testset "lint functions catch synthetic violations" begin
             @test find_ccalls("@ccall lib.f()") == ["ccall"]
@@ -307,6 +330,10 @@ end
 
     @testset "M8 — block execution, Eager tee-tracing, TR2 poison (part 4)" begin
         include("test_m8_when_materialize.jl")   # §1.4/§5/§8-TR2: exec seams, seal-as-witness, stream≡materialized
+    end
+
+    @testset "M8 — pass frameworks: channel + unitary, registry, sentinel (parts 5–6)" begin
+        include("test_m8_passes.jl")   # §3 pass law: ChannelPass/UnitaryPass, PASS_REGISTRY, phase sentinel, within
     end
 
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin

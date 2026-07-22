@@ -235,7 +235,7 @@ end
 
 function _check_cert(c::MatchedPair, dag, id2lin, boundary_lineages)
     scratch = Set{Int}(nd.out.lineage for nd in dag.nodes if nd isa AllocN)
-    _check_matched_pair(dag, scratch, id2lin)
+    _check_matched_pair(dag, scratch, id2lin, c.compute)
     # The inner region's own certificate (usually NoAncilla) rides along; recurse
     # only when it points at further structure (SeqCert/ParCert/AdjointCert accept).
     return nothing
@@ -299,8 +299,17 @@ Enforce the `within` compute/uncompute discipline STRUCTURALLY (design §2.2 rul
      a non-writer has no scratch target). Between the pair, scratch is preserved, so
      the uncompute still inverts the compute on the ancilla — the ancilla returns to
      `|0⟩` for ALL inputs (`(I−ιι†)Wι = 0`).
+  4. COMPUTE-FIELD CROSS-CHECK (slice-3 ruling). The `MatchedPair.compute` block
+     `C` the certificate NAMES must actually agree with the body's compute writer:
+     `denoted_matrix(C) ≈ denoted_matrix(writers[1].v)` (phase-inclusive). This is a
+     comparison of two PROGRAM VALUES (universally quantified over inputs, no state —
+     like `_is_adjoint_pair` tier B), NOT a runtime observation, so F1's "the
+     certificate, not the run, is the witness" is intact. It stops a `MatchedPair`
+     from claiming a `compute` block that disagrees with what the body applies (a
+     mis-built cert). Skipped only when `compute === nothing`.
 """
-function _check_matched_pair(dag::ChannelDAG, scratch::Set{Int}, id2lin)
+function _check_matched_pair(dag::ChannelDAG, scratch::Set{Int}, id2lin,
+                             compute::Union{Nothing,ProcessValue} = nothing)
     writers = ApplyN[]
     for nd in dag.nodes
         nd isa ApplyN || continue
@@ -314,5 +323,13 @@ function _check_matched_pair(dag::ChannelDAG, scratch::Set{Int}, id2lin)
     _is_adjoint_pair(writers[1].v, writers[2].v) || throw(ArgumentError(
         "certify(MatchedPair): the uncompute is not the operator adjoint of the compute " *
         "(v₁ ≠ v₂†) — the ancilla is not provably restored to |0⟩ (§2.2 rule 3, Bennett eq (3))."))
+    if compute !== nothing
+        nwires(compute) == nwires(writers[1].v) || throw(ArgumentError(
+            "certify(MatchedPair): the named compute block acts on $(nwires(compute)) wire(s) but the " *
+            "body's compute writer acts on $(nwires(writers[1].v)) — the certificate names the wrong C."))
+        (compute ≈ writers[1].v) || throw(ArgumentError(
+            "certify(MatchedPair): the named compute block does not denote the body's compute writer " *
+            "(compute-field cross-check, slice-3 ruling) — a mis-built certificate."))
+    end
     return nothing
 end

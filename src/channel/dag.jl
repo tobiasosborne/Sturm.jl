@@ -47,6 +47,20 @@
 # The `PortID`/lineage split is retained exactly as §1.2 specifies (SSA name vs
 # physical identity); the refinement is only that in-place ops keep the PortID
 # rather than minting a fresh one per op. Documented as a deviation in the M8 report.
+#
+# SLICE-3 CHECKPOINT (orchestrator ruling, szx1). Before hardening the part-6 pass
+# frameworks the model was re-verified against every shipped pass. All are NODE-
+# SEQUENCE rewrites that preserve the ordered operator product on the SAME lineage-
+# stable ports and add/remove NO wire, so the in-place model suffices with no
+# explicit output-edge (SSA re-versioning) rework: 1q-quaternion-fusion (fuse two
+# consecutive same-wire `U2`s via the exact Hamilton product), view-fusion (drop an
+# adjacent inverse pair whose composite is exactly `I₂` — never `−I`), reassociation
+# (the §4.2 control-scope law: `V†; ctrl(W); V` ⇒ `ctrl(V∘W∘V†)` on the same ports),
+# and the `FuseUnitaryRuns` channel pass (partition at barriers, fuse within
+# barrier-free segments, never move a node across a barrier). Deferred measurement
+# genuinely needs part-7 `CasesN` token semantics for its rewrite BODY, so it ships
+# as a typed framework slot (identity until part 7) — not a wire-model limitation.
+# Rationale per pass is in `src/channel/passes.jl`'s header.
 
 """
     Node
