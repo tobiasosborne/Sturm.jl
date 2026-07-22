@@ -155,6 +155,103 @@ These physics sections are not load-bearing for the M7 code; they are the
 
 ---
 
+## Inverse-assisted in-place permutation (the M9 in-place `Perm`)
+
+**Context.** M7's `oracle(f, x)` consumes the compute–copy–uncompute circuit
+in its **input-preserving accumulate** form: writing the output block `out`
+and returning every ancilla to blank, but *keeping the input live*. Fix a
+total function `f` on the padded space `S_W = {0,…,2^W-1}` and let `U_f` be
+the Bennett-compiled clean-ancilla accumulate oracle
+
+```
+  U_f : |x⟩_in |t⟩_out |0⟩_anc  ↦  |x⟩_in |t ⊕ f(x)⟩_out |0⟩_anc          (★)
+```
+
+for **every** `t` (no output wire is ever read as a control — D9; this is
+the Table 1 clean-exit theorem, p. 527, in bit-accumulate dress). `(★)` is
+the exact contract of the shipped `_BENNETT_BACKEND` `CompiledOracle` (M9
+design §3.1) and of the PRD-v2 §4.1a `PermClean` bullet.
+
+**M9 needs the *in-place* map**, `|x⟩ ↦ |f(x)⟩` on the data block itself,
+with all scratch clean — a form `(★)` does not directly give (it keeps `x`).
+Bennett's own two-oracle "erase the input" pattern (Table 2, p. 530: compute
+`S₁` → copy → retrace `S₁` → interchange in/out → compute `S₂` → erase copy
+→ retrace `S₂`) is the template; the modular case specialises it to a
+*compute / swap / uncompute-with-the-inverse* triple that needs **`f⁻¹`
+separately compiled**, not `U_f†`.
+
+**Layout.** Data block `D` (slots `1:W`), copy block `B` (slots `W+1:2W`),
+shared ancilla pool `A` (`|A| = max(A_f, A_g)`, sharable because `U_f`
+returns its ancillas to `0` before `U_g` runs). Let `g` be a total function
+on `S_W` with clean-ancilla oracle `U_g` in the sense of `(★)`, and define
+
+```
+  C  =  U_g^{(D→B)}  ∘  SWAP_{D,B}  ∘  U_f^{(D→B)}
+```
+
+where `SWAP_{D,B}` is a **genuine width-`W` bitwise swap** (real gates, so
+the data physically ends in the declared `D` ports) and `U_f^{(D→B)}` is
+`U_f` embedded with input = `D`, output = `B`.
+
+**Theorem (inverse-pair in-place, eq (3)).** On a clean basis input,
+
+```
+  |x⟩_D |0⟩_B |0⟩_A  --U_f-->   |x⟩_D    |f(x)⟩_B       |0⟩_A
+                     --SWAP-->  |f(x)⟩_D |x⟩_B          |0⟩_A
+                     --U_g-->   |f(x)⟩_D |x ⊕ g(f(x))⟩_B |0⟩_A            (3)
+```
+
+The copy block `B` returns to `|0⟩` for **every** `x ∈ S_W` **iff**
+`g(f(x)) = x` for every `x` — i.e. iff `g ∘ f = id` on the *full padded
+space* `S_W`. In that case, and only then,
+
+```
+  C : |x⟩_D |0⟩_B |0⟩_A  ↦  |f(x)⟩_D |0⟩_B |0⟩_A     ∀ x ∈ S_W,
+```
+
+a clean in-place realisation of `f`, with **clean ports = `B ∪ A`**.
+
+**Proof (one line).** By `(★)` applied to `U_f` then, after the swap, to
+`U_g` with target register `B` currently holding `x`, block `B` ends in
+`x ⊕ g(f(x))` while `A` is returned to `0` by each oracle's clean-ancilla
+guarantee (the Table 1 / p. 527 exit condition). A basis vector `|b⟩_B` is
+`|0⟩` exactly when `b = 0`; `x ⊕ g(f(x)) = 0` for all `x` **iff**
+`g(f(x)) = x` for all `x` (XOR vanishes iff its operands are equal). ∎
+
+**Corollaries used by M9.**
+
+- **Take `g = f⁻¹`.** `g ∘ f = id` holds on all of `S_W` precisely when
+  `f⁻¹` is a *true two-sided inverse on the padded space* (design §3.2,
+  eq (3-inv): `f⁻¹(f(x)) = x` **and** `f(f⁻¹(x)) = x` ∀ `x`). The verifier
+  must check **both** directions on `S_W` (Tier E exhaustive replay, or a
+  registered structural proof) before any quantum action.
+- **`U_f†` is NOT a substitute.** Replacing `U_g` by `adjoint(U_f)` after the
+  swap accumulates `x ⊕ f(f(x))` in `B`, not `x ⊕ f⁻¹(f(x)) = x` — it cleans
+  `B` only if `f` is an involution. The **separately compiled inverse is
+  load-bearing**; this is the design's wm28-class guard.
+- **Linearity.** `(3)` is a basis identity with no residual entanglement, so
+  it extends verbatim to superpositions:
+  `Σ_x α_x |x⟩_D|0⟩_B|0⟩_A ↦ Σ_x α_x |f(x)⟩_D|0⟩_B|0⟩_A`.
+- **Certificate.** `C` is a single phase-free `Perm` on `2W + max(A_f,A_g)`
+  wires; MBU is excluded by construction (a `Perm` has no measurement node),
+  so `ctrl^k(C) = Perm`. Eq (3) is the generator-structure theorem that
+  grounds its **`PermClean`** certificate for the general clean-subspace
+  containment `(I − ιι†)Wι = 0` (data = `D`, ancilla = `B ∪ A`) — the M9
+  design §4.1a route that supplements Bennett's `(★)` (the `oracle` route).
+  The clean ports are exactly the copy block `B` ∪ the shared ancilla pool
+  `A`.
+
+**Why this needs `f⁻¹`, not just `f` and Table 2.** Bennett's Table 2 erases
+a *known-computable input* using a second machine `S₂` computing the input
+from the output; here that second machine is literally `f⁻¹`, and unlike
+Table 2 (which leaves the answer on a fresh tape) the width-`W` SWAP moves
+the answer into the original data ports so the map is genuinely *in place*.
+The construction is therefore Bennett-1973-faithful — every stage is a
+reversible compute/copy/uncompute — with the copy stage's target swapped
+into the data register between compute and uncompute.
+
+---
+
 ## Bennett 1989 — the pebble-game formalization (NOT locally sourced)
 
 **Citation**: C. H. Bennett, "Time/Space Trade-Offs for Reversible
