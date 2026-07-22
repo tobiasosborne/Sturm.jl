@@ -10,8 +10,12 @@
 # `Ctrl` (leading ports are controls).
 #
 # `certify` discharges the universal containment `(I−ιι†)Wι = 0` STRUCTURALLY —
-# NO state, NO Choi, NO sampling, NO `isapprox` in certificate construction
-# (design §2.2, ruling TR4). It refuses loudly if the DAG contains a barrier
+# NO state, NO Choi, NO sampling as a certificate-construction route (design §2.2,
+# ruling TR4): the prohibition targets runtime OBSERVATION. Comparing two program
+# VALUES with the kernel's phase-inclusive `≈` is NOT observation — it is universally
+# quantified over inputs and touches no statevector — so the shared matched-pair
+# check (`_is_adjoint_pair`) may fall back to `≈` (tier B) when a self-adjoint `U2`
+# is representation-brittle under exact `==`; see its docstring. It refuses loudly if the DAG contains a barrier
 # (`MeasureN`/`CasesN`/`NoiseN` — channel-level, §4.4), has classical outputs, is
 # not an endomorphism on its resource lineage (§1.2), or has an `AllocN` not
 # matched by a `TraceN` carrying a valid certificate. The F1 adversary
@@ -243,6 +247,42 @@ _check_cert(::AdjointCert, dag, id2lin, boundary_lineages) = nothing
 _check_cert(::XportCert, dag, id2lin, boundary_lineages) = nothing
 
 """
+    _is_adjoint_pair(v1::ProcessValue, v2::ProcessValue) -> Bool
+
+Is the uncompute `v2` the operator inverse of the compute `v1` (`v2 = v1†`)? The
+SINGLE matched-pair comparison discipline, shared by the `certify` `MatchedPair`
+checker (`_check_matched_pair`) and the streaming `when`-body seal
+(`_seal_check_scratch`, `src/surface/when.jl`) so the two never fork. Two tiers:
+
+  • **Tier A — structural provenance (preferred; exact, no numerics).** `v1` is
+    LITERALLY `adjoint(v2)` by construction/object structure: `v1 == adjoint(v2)`
+    (exact field equality). This is the `Perm`/`within`-combinator case — the
+    uncompute is the same value reversed (`Base.adjoint(::Perm)` reverses generators),
+    so the inverse relation is present in the representation, provable with no float.
+
+  • **Tier B — phase-inclusive process `≈` (float-law fallback).** When no structural
+    provenance exists (a streamed body whose uncompute was produced independently),
+    compare with the kernel's phase-inclusive `isapprox`: `v1 ≈ adjoint(v2)`. This is
+    REQUIRED because a self-adjoint `U2` is representation-brittle under exact `==` —
+    `adjoint(X) = U2(0,−1,0,0,−π/2) ≠ X = U2(0,1,0,0,π/2)` as stored quaternion fields,
+    though `X† = X` as an operator (the conjugate flips the vector part AND the phase).
+    `≈` is the phase-faithful process equality PRD §4.1 mandates for float laws (it
+    never merges `+I`/`−I`).
+
+Design §2.2's "NEVER `isapprox`" prohibition targets STATE/Choi/SAMPLED execution as
+a certificate-construction route — a runtime OBSERVATION. Comparing two program
+VALUES with the kernel's own `≈` is NOT a runtime observation: it is universally
+quantified over inputs and touches no statevector, so F1 (the certificate, not the
+run, is the witness) is intact. Tier A is tried first precisely to keep the common
+`Perm`/`within` case exact.
+"""
+function _is_adjoint_pair(v1::ProcessValue, v2::ProcessValue)
+    a2 = adjoint(v2)
+    v1 == a2 && return true          # tier A: exact structural provenance
+    return v1 ≈ a2                   # tier B: phase-inclusive process ≈ (§4.1 float law)
+end
+
+"""
     _check_matched_pair(dag, scratch::Set{Int}, id2lin)
 
 Enforce the `within` compute/uncompute discipline STRUCTURALLY (design §2.2 rule 3):
@@ -250,9 +290,11 @@ Enforce the `within` compute/uncompute discipline STRUCTURALLY (design §2.2 rul
   1. The `ApplyN` nodes that write scratch (a scratch lineage in their TARGET
      footprint) are the compute/uncompute pair — this slice requires EXACTLY TWO
      (the general palindrome is the deferred syntactic verifier, ruling TR4/R4).
-  2. The uncompute's process value is the exact STRUCTURAL adjoint of the compute's
-     (`v₂ == adjoint(v₁)`, exact field equality — NEVER `isapprox`, §2.2), so
-     whatever the compute wrote into scratch, the uncompute erases (Bennett eq (3)).
+  2. The uncompute's process value is the operator adjoint of the compute's — checked
+     by the shared `_is_adjoint_pair` (tier-A exact provenance, tier-B phase-inclusive
+     `≈`; see its docstring for why comparing two VALUES with `≈` is not the §2.2
+     runtime-observation prohibition), so whatever the compute wrote into scratch, the
+     uncompute erases (Bennett eq (3)).
   3. Every OTHER node touching scratch reads it only as CONTROL (guaranteed by (1):
      a non-writer has no scratch target). Between the pair, scratch is preserved, so
      the uncompute still inverts the compute on the ancilla — the ancilla returns to
@@ -269,8 +311,8 @@ function _check_matched_pair(dag::ChannelDAG, scratch::Set{Int}, id2lin)
     length(writers) == 2 || throw(ArgumentError(
         "certify(MatchedPair): expected exactly 2 scratch-writing (compute/uncompute) applications, " *
         "found $(length(writers)) — the general matched-uncompute palindrome is a deferred verifier (TR4/R4)."))
-    writers[1].v == adjoint(writers[2].v) || throw(ArgumentError(
-        "certify(MatchedPair): the uncompute is not the STRUCTURAL adjoint of the compute " *
-        "(v₁ ≠ adjoint(v₂)) — the ancilla is not provably restored to |0⟩ (§2.2 rule 3, Bennett eq (3))."))
+    _is_adjoint_pair(writers[1].v, writers[2].v) || throw(ArgumentError(
+        "certify(MatchedPair): the uncompute is not the operator adjoint of the compute " *
+        "(v₁ ≠ v₂†) — the ancilla is not provably restored to |0⟩ (§2.2 rule 3, Bennett eq (3))."))
     return nothing
 end

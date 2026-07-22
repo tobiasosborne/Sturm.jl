@@ -71,6 +71,18 @@ the idiomatic alternative). Fields:
   torn-down context; rebinding it with `@context` would otherwise reach freed
   FFI storage, so `_require_open` (via `_here`) fails LOUD before any state
   read/alloc/FFI touch. A pure safety check — it never alters a live channel.
+- `when_frames` — the M8 EAGER TEE-TRACING stack (bead szx1, design §5): one
+  `WhenFrame` per live `when` region. While a `when` body streams, its ops are
+  ALSO tee-recorded into the top frame's `DAGBuilder`; at body exit the transcript
+  is structurally SEALED — the certificate, not a runtime marginal, is the
+  clean-ancilla witness (F1/D13). EMPTY on the default path (zero overhead when
+  not under `when`; the element type is `Any` so `abstract.jl` needs no M8/`when.jl`
+  forward reference — the concrete `WhenFrame` lives in `surface/when.jl`).
+- `poison` — the TR2 FAILURE TOPOLOGY (design §8/TR2): a streaming Eager `when`
+  runs effects BEFORE its late seal, so a FAILED seal cannot be unwound. On seal
+  failure the context is POISONED (this field set to the seal's error message) and
+  every subsequent surface op fails loud (via `_require_open`) naming the original
+  seal failure. `nothing` on the healthy path.
 """
 mutable struct ContextCore
     state::OrkanStateRaw
@@ -88,12 +100,14 @@ mutable struct ContextCore
     wire_counter::Int
     rng::Any
     closed::Bool
+    when_frames::Vector{Any}
+    poison::Union{Nothing,String}
 end
 
 function ContextCore(state::OrkanStateRaw, storage::Cint, capacity::Int; rng=nothing, strict::Bool=false)
     return ContextCore(state, storage, capacity, 0, Int[], Dict{WireID,Int}(),
         Set{WireID}(), Dict{WireID,U2}(), Vector{WireID}[], WireID[],
-        Dict{WireID,Vector{WireID}}(), strict, 0, rng, false)
+        Dict{WireID,Vector{WireID}}(), strict, 0, rng, false, Any[], nothing)
 end
 
 """
@@ -105,9 +119,15 @@ Fail loud if `ctx`'s Orkan `state_t` has been torn down (F16 §5.1). Called by
 lifecycle/liveness failure, not a well-formed-but-forbidden op — S13).
 """
 @inline function _require_open(ctx::AbstractContext, op::AbstractString)
-    _core(ctx).closed && error(
+    core = _core(ctx)
+    core.closed && error(
         "$op: the owning context has been torn down (its Orkan state is freed) — " *
         "this is a dangling handle from a closed `eager`/`density` block (F16 §5.1).")
+    core.poison === nothing || error(
+        "$op: this context is POISONED and unusable — a `when` body failed to seal " *
+        "structurally (design TR2). Streaming Eager `when` runs effects before its " *
+        "late seal, so a failed seal cannot be unwound; the context is dead. Original " *
+        "seal failure: $(core.poison)")
     return ctx
 end
 
@@ -154,6 +174,10 @@ function allocate!(ctx::AbstractContext)
     w = WireID(core.wire_counter)
     core.wire_to_slot[w] = slot
     isempty(core.region_stack) || push!(core.region_stack[end], w)
+    # M8 EAGER TEE-TRACING (design §5): a wire born under a live `when` frame is
+    # body-owned SCRATCH — record its AllocN so the body-exit seal can match it to
+    # a certified trace (forward-ref to `surface/when.jl`; gated to zero overhead).
+    isempty(core.when_frames) || _tee_record_alloc!(ctx, w)
     return w
 end
 
@@ -323,12 +347,16 @@ function _trace_and_free!(ctx::AbstractContext, w::WireID)
     if isempty(core.control_stack)
         trace_wire!(ctx, w)                 # measure-and-discard (Eager) / exact ptrace (DM)
     else
-        # A body-owned ancilla leaving a `when` region: it must be a clean,
-        # DISENTANGLED |0⟩ (the §3.9 compute–uncompute witness). Asserted while
-        # the control is still on the stack; a clean ancilla is freed WITHOUT
-        # measuring (it is certified |0⟩, so tracing would be a no-op that only
-        # spends an RNG draw). Dirty ⇒ loud error. See surface/when.jl.
-        _clean_ancilla_assert!(ctx, w)
+        # A body-owned ancilla leaving a `when` region (M8 design §5). The WITNESS
+        # is now the STRUCTURAL body-exit seal (`_seal_when_frame!`, surface/when.jl),
+        # not this per-run marginal: record a TraceN into the tee-frame so the seal
+        # can verify a matched compute/uncompute (F1 — a state marginal cannot certify
+        # a universally-quantified containment). The DEMOTED marginal survives as a
+        # DEBUG cross-check (`_clean_ancilla_debug!`), off by default. A clean ancilla
+        # is freed WITHOUT measuring (certified |0⟩); if the later seal fails, the
+        # context is poisoned (TR2) so this early free is never observed.
+        isempty(core.when_frames) || _tee_record_trace!(ctx, w, nothing)
+        _clean_ancilla_debug!(ctx, w)
     end
     slot = core.wire_to_slot[w]
     delete!(core.wire_to_slot, w)

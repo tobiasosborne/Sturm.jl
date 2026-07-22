@@ -279,6 +279,14 @@ exit trace (it checks `haskey(wire_to_slot, ·)`), so no double-free.
 function _free_clean!(ctx::AbstractContext, w::WireID)
     _clean_ancilla_assert!(ctx, w)                # LOUD if the |1⟩-marginal ≥ CLEAN_EPS
     core = _core(ctx)
+    # M8 tee-tracing (design §5): if this Bennett-clean scratch is freed inside a
+    # `when` body, record its release with a `PermClean` cert so the body-exit seal
+    # matches the recorded `AllocN` and trusts Bennett's `(★)` (structural, not the
+    # marginal above). Zero-overhead outside `when`.
+    if !isempty(core.when_frames)
+        frame = core.when_frames[end]
+        haskey(frame.w2pid, w) && _tee_record_trace!(ctx, w, PermClean((frame.w2pid[w],)))
+    end
     slot = core.wire_to_slot[w]
     delete!(core.wire_to_slot, w)
     _return_slot!(core, slot)

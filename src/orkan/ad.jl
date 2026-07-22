@@ -324,25 +324,93 @@ function _emit!(ctx::AbstractContext, c::Ctrl, qs::Vector{Int})
     nothing
 end
 
-# --- M8 UnitaryBlock EXECUTION — reserved seam (bead Sturm.jl-szx1, part 4) ---
-# A certified `UnitaryBlock` is a process value and composes/controls at the
-# algebra/denotation level (`src/channel/`). REPLAYING its body against a live
-# context — allocating scratch, applying the ApplyNs, tracing the certified-clean
-# ancilla, and (under control) leaving Alloc/Trace UNCONTROLLED while control-
-# wrapping only the ApplyNs (design §1.4) — is the M8 part-4 Eager tee-tracing
-# work, deliberately NOT in this slice. Fail LOUD rather than half-execute
-# (CLAUDE.md #1); the denotation path (`denoted_matrix`) is fully live for the
-# part-1..3 law tests.
-function _emit!(::AbstractContext, ::UnitaryBlock, ::Vector{Int})
-    error("_emit!(UnitaryBlock): executing a certified block against a live context " *
-          "(body replay: alloc scratch → apply → certified-clean trace) is the M8 part-4 " *
-          "Eager tee-tracing seam — not in this slice. Use `denoted_matrix` for the reference " *
-          "semantics; `∘`/`⊗`/`adjoint`/`ctrl` on blocks work at the process-value level.")
+# --- M8 UnitaryBlock EXECUTION (bead Sturm.jl-szx1, part 4; design §1.4) ------
+# A certified `UnitaryBlock` is a process value; REPLAYING its body against a live
+# context executes it. `AllocN` births a fresh |0⟩ kernel-scratch slot, `ApplyN`
+# emits its process value on the mapped slots, `TraceN` releases the (certified-
+# clean) scratch slot. The certificate (§4.1a) is what makes this sound: the scratch
+# returns to |0⟩ for ALL inputs, so recycling its slot WITHOUT measuring is exact
+# (a coisometry on the reachable clean subspace — design §2.4). No `denoted_matrix`
+# materialization on the execution path (that stays a reference/Ad cross-check).
+
+"""
+    _block_slotmap(b::UnitaryBlock, slots::Vector{Int}) -> Dict{PortID,Int}
+
+Map `b`'s `N` boundary ports (MSB-first, in order) onto the given Orkan `slots`.
+Interior `AllocN` ports are added during replay (fresh scratch slots). The wire
+convention matches `apply!`/`_emit!`: position 1 = the block's MSB wire.
+"""
+function _block_slotmap(b::UnitaryBlock, slots::Vector{Int})
+    N = nwires(b)
+    length(slots) == N || error("_emit!(UnitaryBlock): $(length(slots)) slots for an $N-wire block")
+    id2slot = Dict{PortID,Int}()
+    for i in 1:N
+        id2slot[b.boundary[i].id] = slots[i]
+    end
+    return id2slot
 end
-function _apply_controlled!(::AbstractContext, ::Int, ::Vector{Int}, ::UnitaryBlock, ::Vector{Int})
-    error("_apply_controlled!(UnitaryBlock): controlled block execution (Alloc/Trace stay " *
-          "uncontrolled, only ApplyNs control-wrapped — design §1.4) is the M8 part-4 seam, not " *
-          "in this slice. `ctrl(::UnitaryBlock)` builds the process value; its denotation is live.")
+
+"""
+    _emit!(ctx, b::UnitaryBlock, qs) -> nothing
+
+UNCONTROLLED block execution (design §1.4): replay `b.body` in order — `AllocN` ⇒
+fresh |0⟩ scratch slot, `ApplyN` ⇒ `_emit!` the process value on its mapped slots,
+`TraceN` ⇒ release the certified-clean scratch slot (recycled |0⟩, no measurement).
+"""
+function _emit!(ctx::AbstractContext, b::UnitaryBlock, qs::Vector{Int})
+    core = _core(ctx)
+    id2slot = _block_slotmap(b, qs)
+    for nd in b.body.nodes
+        if nd isa AllocN
+            id2slot[nd.out.id] = _alloc_scratch!(core)
+        elseif nd isa ApplyN
+            _emit!(ctx, nd.v, Int[id2slot[p] for p in nd.ports])
+        elseif nd isa TraceN
+            _free_scratch!(core, id2slot[nd.in])
+        else
+            error("_emit!(UnitaryBlock): non-unitary node $(typeof(nd)) — certify should have rejected it (§1.3)")
+        end
+    end
+    nothing
+end
+
+"""
+    _apply_controlled!(ctx, k, controls, b::UnitaryBlock, targets) -> nothing
+
+CONTROLLED block execution — the §4.2 control-scope-reassociation law made
+executable (design §1.4): `AllocN`/`TraceN` stay UNCONTROLLED (the scratch is |0⟩
+in every control branch), and ONLY the `ApplyN`s are control-wrapped. For a
+`MatchedPair` body `C†∘M∘C`, `ctrl(C†∘M∘C) = (1⊗C†)∘ctrl(M)∘(1⊗C)`, so the ancilla
+round-trips `|0⟩→…→|0⟩` in BOTH branches — cleanliness is ALGEBRAIC, not state-
+dependent (F1). This is why `ctrl(::UnitaryBlock)` is the one sound `ctrl` extension.
+"""
+function _apply_controlled!(ctx::AbstractContext, k::Int, controls::Vector{Int},
+                            b::UnitaryBlock, targets::Vector{Int})
+    core = _core(ctx)
+    id2slot = _block_slotmap(b, targets)
+    for nd in b.body.nodes
+        if nd isa AllocN
+            id2slot[nd.out.id] = _alloc_scratch!(core)          # alloc UNCONTROLLED (§1.4)
+        elseif nd isa ApplyN
+            _apply_controlled!(ctx, k, controls, nd.v, Int[id2slot[p] for p in nd.ports])
+        elseif nd isa TraceN
+            _free_scratch!(core, id2slot[nd.in])                # trace UNCONTROLLED (§1.4)
+        else
+            error("_apply_controlled!(UnitaryBlock): non-unitary node $(typeof(nd)) (§1.3)")
+        end
+    end
+    nothing
+end
+
+# ∧_k of an already-`Ctrl` value with count `j` flattens to ∧_{k+j}(inner): the
+# flat-count law (Delorme Eq 14 — nested controls commute). A block's `ApplyN` may
+# hold a `Ctrl` value (e.g. `ctrl(Z)` inside a `MatchedPair` body); under outer
+# control it flattens. The block's own `j` controls are the LEADING `j` targets;
+# prepend the outer `k` controls.
+function _apply_controlled!(ctx::AbstractContext, k::Int, controls::Vector{Int}, inner::Ctrl, targets::Vector{Int})
+    j = inner.k
+    _apply_controlled!(ctx, k + j, vcat(controls, targets[1:j]), inner.inner, targets[j+1:end])
+    nothing
 end
 
 # --- Public entry: apply! ----------------------------------------------

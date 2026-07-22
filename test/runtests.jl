@@ -305,6 +305,10 @@ end
         include("test_m8_channel.jl") # §4.1/§4.1a/§4.2 laws: typed IR, structural cert, block ctrl
     end
 
+    @testset "M8 — block execution, Eager tee-tracing, TR2 poison (part 4)" begin
+        include("test_m8_when_materialize.jl")   # §1.4/§5/§8-TR2: exec seams, seal-as-witness, stream≡materialized
+    end
+
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
         include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
     end

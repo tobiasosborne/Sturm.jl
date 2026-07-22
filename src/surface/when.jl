@@ -124,6 +124,7 @@ function _act!(ctx::AbstractContext, v::ProcessValue, wires::NTuple{N,WireID}) w
     core = _core(ctx)
     isempty(core.control_stack) && return apply!(ctx, v, wires)
     _guard_externality(ctx, wires)
+    isempty(core.when_frames) || _tee_record_apply!(ctx, v, wires)   # M8 tee-tracing (design §5)
     cv = v
     for _ in 1:length(core.control_stack)
         cv = ctrl(cv)                                   # flat ctrl^k via the public combinator
@@ -145,6 +146,7 @@ function _act!(ctx::AbstractContext, v::ProcessValue, wires::AbstractVector{Wire
     core = _core(ctx)
     isempty(core.control_stack) && return apply!(ctx, v, wires)
     _guard_externality(ctx, wires)
+    isempty(core.when_frames) || _tee_record_apply!(ctx, v, wires)   # M8 tee-tracing (design §5)
     cv = v
     for _ in 1:length(core.control_stack)
         cv = ctrl(cv)
@@ -190,30 +192,36 @@ end
     "view. (Legal kickback names a DIFFERENT register as the target and lets " *
     "the control pick up phase through the `ctrl` mechanism.)")
 
-# --- The clean-ancilla exit witness (§3.9) ------------------------------
+# --- The clean-ancilla witness: STRUCTURAL SEAL + demoted debug marginal ----
 #
-# When a body-owned ancilla leaves a `when` region, `_trace_and_free!`
-# (abstract.jl) calls this WHILE the control is still on the stack. Physics
-# (Proposal A's necessity+sufficiency proof, = Yuan–Villanyi–Carbin
-# synchronization, Def 4.7 p.16 / Thm 4.8 p.17): the streaming identity
-#     alloc → ctrl(U) → dealloc  =  ctrl(dealloc ∘ U ∘ alloc)
-# holds IFF `U` returns the ancilla to |0⟩ in the control=1 branch. Since alloc is
-# uncontrolled (the ancilla is |0⟩ in ALL branches at entry) and every body op on
-# it is control-wrapped (routes through `_act!`), the ancilla is |0⟩ in the control=0
-# branch automatically. Hence "|0⟩ in the control-firing block" and "the ancilla's
-# FULL |1⟩ marginal is 0" COINCIDE under the alloc-uncontrolled discipline. We
-# assert the FULL marginal (`_marginal_p1` on Eager; the ancilla=1 diagonal block
-# of ρ on DM): it is exactly "the ancilla is a DISENTANGLED |0⟩", which is
-# necessary AND sufficient for freeing the slot without measuring AND for
-# recycling it as a clean |0⟩. (It is strictly safer than the control-firing-block
-# restriction: it additionally catches the pathological case of an uncontrolled
-# non-|0⟩ prep inside the body — |1⟩ in the control=0 branch — where freeing
-# without measuring would corrupt the recycled slot and decohere the control. See
-# the deviation note in WORKLOG.) An unclean ancilla under a superposed control is
-# entangled with it, so tracing it would decohere the control — a silent wrong
-# channel, which is why the unwitnessed case is a LOUD error (§3.5).
+# M8 design gate (`docs/design/m8-5hr7-unitary-block-design.md` §2.5/§5, D13 as
+# shipped in PRD §3.5/§3.9). F1's lesson: a statevector |1⟩-marginal on ONE run
+# certifies the *run*, not the *program* — the adversary `a = QBool(false); a ⊻= r;
+# drop a` passes the marginal with `r = |0⟩` yet dephases `r = |+⟩`. The WITNESS is
+# now the STRUCTURAL body-exit seal (`_seal_when_frame!` below): a property of the
+# program transcript, universally quantified over inputs. The runtime |1⟩-marginal
+# survives ONLY as a demoted DEBUG cross-check "that the certificate was honoured —
+# sound fail-fast per run, never itself the witness" (PRD §3.5 Eager bullet):
+# a structurally-certified body whose marginal nonetheless leaks indicates an
+# executor/lowering/numeric/cert-checker defect (a mis-built certificate).
+#
+# The marginal methods (`_clean_ancilla_assert!`) are UNCHANGED — they remain the
+# M7 Bennett-oracle scratch witness (`_free_clean!`, bennett/bridge.jl), whose
+# structural backing is Bennett's `(★)` PermClean by construction, and they back
+# the `when` DEBUG cross-check (`_clean_ancilla_debug!`, flag-gated). The `when`
+# region-exit path (`_trace_and_free!`) no longer calls the marginal as the witness.
 
-"Full |1⟩-marginal clean-ancilla witness on a PURE state (Eager)."
+"""
+    DEBUG_CLEAN_ANCILLA
+
+Toggle (default `false`) for the demoted `when` clean-ancilla DEBUG cross-check
+(design §2.5). When `true`, the runtime |1⟩-marginal is asserted at every `when`
+scratch release as an independent fail-fast — defense in depth over the structural
+seal. Never the witness (a single input cannot certify a universal containment).
+"""
+const DEBUG_CLEAN_ANCILLA = Ref(false)
+
+"Full |1⟩-marginal clean-ancilla check on a PURE state (Eager). M7-oracle witness / `when` debug cross-check."
 function _clean_ancilla_assert!(ctx::EagerContext, w::WireID)
     core = _core(ctx)
     _flush_all!(ctx)
@@ -222,7 +230,7 @@ function _clean_ancilla_assert!(ctx::EagerContext, w::WireID)
     nothing
 end
 
-"Full |1⟩-marginal (ancilla=1 diagonal block trace of ρ) witness on DM."
+"Full |1⟩-marginal (ancilla=1 diagonal block trace of ρ) check on DM."
 function _clean_ancilla_assert!(ctx::DensityMatrixContext, w::WireID)
     core = _core(ctx)
     _flush_all!(ctx)
@@ -243,40 +251,280 @@ end
     "tracing it would decohere the control (a silent wrong channel). Uncompute it " *
     "inside the body (matched ctrl compute/uncompute).")
 
+"""
+    _clean_ancilla_debug!(ctx, w)
+
+The DEMOTED marginal cross-check (design §2.5): fires ONLY when
+`DEBUG_CLEAN_ANCILLA[]` is set, cross-checking that the structural certificate was
+honoured. Off by default — the structural body-exit seal is the sole witness.
+"""
+@inline function _clean_ancilla_debug!(ctx::AbstractContext, w::WireID)
+    DEBUG_CLEAN_ANCILLA[] && _clean_ancilla_assert!(ctx, w)
+    nothing
+end
+
+# --- M8 EAGER TEE-TRACING: the WhenFrame, the recorder, the structural seal ---
+#
+# A `when` body STREAMS (M5 semantics, unchanged) and SIMULTANEOUSLY tee-records a
+# `ChannelDAG` transcript into the top `WhenFrame` (design §5). At body exit the
+# transcript is structurally sealed: every body-owned scratch ancilla must be
+# released by a matched compute/uncompute (`nothing`-cert region-exit scratch — the
+# 2-mutual-adjoint form, reusing the shipped `_footprint`/`adjoint` checkers) or
+# carry a combinator-supplied `PermClean` (the M7 oracle's Bennett `(★)` scratch,
+# recorded by `_free_clean!`). A failed seal POISONS the context (TR2). The seal is
+# `certify`'s scratch-matching logic applied to the streamed transcript; it does NOT
+# wrap the whole body in a `UnitaryBlock` (a pure-scratch body denotes identity on
+# zero external wires — a legitimate no-op that TR7 forbids REPRESENTING as a block).
+# The independent `certify(::ChannelDAG) → UnitaryBlock` path (slice 1) is what the
+# `M8.WHEN.STREAM-MATERIALIZED-*` law test materializes and controls.
+
+"""
+    WhenFrame()
+
+One tee-tracing frame per live `when` region (design §5): a mutable `DAGBuilder`
+accumulating the streamed body transcript, and `w2pid` mapping each live body
+`WireID` to its port in that builder. Body-owned scratch is an `alloc!` port; a
+first-touched external wire is an `input!` port. EMPTY-overhead: a frame exists only
+inside a `when`.
+"""
+mutable struct WhenFrame
+    builder::DAGBuilder
+    w2pid::Dict{WireID,PortID}
+end
+WhenFrame() = WhenFrame(DAGBuilder(), Dict{WireID,PortID}())
+
+_tee_top(core::ContextCore) = core.when_frames[end]::WhenFrame
+
+"""
+    _tee_pid!(frame, w) -> PortID
+
+The port for body wire `w` in `frame.builder`: reuse if seen, else declare a fresh
+boundary `input!` (an external wire the body reaches; scratch is declared by
+`_tee_record_alloc!`).
+"""
+function _tee_pid!(frame::WhenFrame, w::WireID)
+    haskey(frame.w2pid, w) && return frame.w2pid[w]
+    pid = input!(frame.builder)
+    frame.w2pid[w] = pid
+    return pid
+end
+
+"Record a body-owned scratch `AllocN` (called from `allocate!` under a live frame)."
+function _tee_record_alloc!(ctx::AbstractContext, w::WireID)
+    frame = _tee_top(_core(ctx))
+    frame.w2pid[w] = alloc!(frame.builder)
+    nothing
+end
+
+"Record an `ApplyN` of the UNCONTROLLED body value `v` on `wires` (the transcript candidate)."
+function _tee_record_apply!(ctx::AbstractContext, v::ProcessValue, wires)
+    frame = _tee_top(_core(ctx))
+    pids = PortID[_tee_pid!(frame, w) for w in wires]
+    apply_node!(frame.builder, v, pids...)
+    nothing
+end
+
+"""
+    _tee_record_trace!(ctx, w, cert)
+
+Record a scratch `TraceN` with the given certificate: `nothing` for a region-exit
+release (the seal derives its matched-uncompute cert structurally), or a
+combinator-supplied `PermClean` for the M7 oracle's Bennett-clean scratch.
+"""
+function _tee_record_trace!(ctx::AbstractContext, w::WireID, cert::Union{Nothing,CleanCert})
+    frame = _tee_top(_core(ctx))
+    haskey(frame.w2pid, w) || return nothing          # a wire the frame never recorded
+    trace!(frame.builder, frame.w2pid[w]; cert = cert)
+    delete!(frame.w2pid, w)
+    nothing
+end
+
+@noinline function _poison_seal!(ctx::AbstractContext, msg::AbstractString)
+    _core(ctx).poison = String(msg)
+    error("`when`-body structural clean-ancilla seal FAILED (design §2.5/TR2 poison): $msg")
+end
+
+"""
+    _seal_when_frame!(ctx)
+
+The STRUCTURAL WITNESS (design §5, F1): fold the streamed transcript and verify
+every body-owned scratch ancilla is released by a matched compute/uncompute (the
+certificate is the witness, not a runtime marginal). A failed seal POISONS the
+context (TR2) and throws loud. A body with no scratch seals trivially (`NoAncilla`).
+"""
+function _seal_when_frame!(ctx::AbstractContext)
+    frame = _tee_top(_core(ctx))
+    any(nd -> nd isa AllocN, frame.builder.nodes) || return nothing   # NoAncilla — nothing to seal
+    dag = freeze(frame.builder)
+    has_barrier(dag) && _poison_seal!(ctx,
+        "the body holds a measurement/cases/noise barrier under control (guardrail 1 should have caught this)")
+    id2lin = _id_to_lineage(dag)
+    scratch_lins = Set{Int}(nd.out.lineage for nd in dag.nodes if nd isa AllocN)
+    traced_lins = Set{Int}()
+    for nd in dag.nodes
+        nd isa TraceN || continue
+        lin = get(id2lin, nd.in, nothing)
+        (lin === nothing || !(lin in scratch_lins)) && continue
+        push!(traced_lins, lin)
+        _seal_check_scratch(ctx, dag, nd, lin, id2lin, scratch_lins)
+    end
+    for al in scratch_lins
+        al in traced_lins || _poison_seal!(ctx,
+            "scratch lineage $al was allocated inside the body but never released — a leaked ancilla")
+    end
+    nothing
+end
+
+"""
+    _seal_check_scratch(ctx, dag, tracenode, lin, id2lin, scratch_lins)
+
+Discharge one scratch release. A `PermClean` cert on the trace (combinator-carried,
+M7 oracle) trusts Bennett's `(★)`. Otherwise (region-exit `nothing`-cert scratch)
+the matched compute/uncompute is checked structurally by the SHARED `_is_adjoint_pair`
+(`src/channel/cert.jl` — the single discipline `certify`'s `_check_matched_pair` also
+uses): the `ApplyN`s targeting `lin` must be either none (an untouched `|0⟩`) or
+exactly two writers on the SAME ports whose values are operator adjoints (the compute
+and its reversal — Bennett eq (3)). `_is_adjoint_pair` prefers exact structural
+provenance (tier A) and falls back to phase-inclusive process `≈` (tier B) for a
+self-adjoint `U2` (`X`, `H`, `Z`), whose `adjoint` differs in stored fields though
+`X† = X` as an operator — a comparison of two PROGRAM VALUES (universally quantified
+over inputs, no state), so F1's "the certificate, not the run, is the witness" holds.
+The general palindrome over an arbitrarily-shaped scratch cone (and the case where the
+inner `M` disturbs a data wire the compute read) is the deferred syntactic verifier
+(design §2.3 secondary, TR4/R4); `within` is its combinator form.
+"""
+function _seal_check_scratch(ctx, dag::ChannelDAG, tracenode::TraceN, lin::Int, id2lin, scratch_lins)
+    tracenode.cert isa PermClean && return nothing        # oracle: Bennett (★), trusted
+    writers = ApplyN[]
+    for nd in dag.nodes
+        nd isa ApplyN || continue
+        (_c, tgts) = _footprint(nd.v, collect(nd.ports))
+        any(p -> get(id2lin, p, -1) == lin, tgts) && push!(writers, nd)
+    end
+    nw = length(writers)
+    nw == 0 && return nothing                              # untouched |0⟩
+    (nw == 2 && writers[1].ports == writers[2].ports &&
+        _is_adjoint_pair(writers[1].v, writers[2].v)) && return nothing
+    _poison_seal!(ctx,
+        "scratch lineage $lin has $nw compute/uncompute writer(s) that are not a matched " *
+        "pair (same ports, mutually-adjoint values) — the F1 adversary. A state marginal " *
+        "cannot certify a universally-quantified clean-subspace containment. Uncompute the " *
+        "scratch inside the body (matched ctrl compute/uncompute), or use the `within` combinator.")
+end
+
 # --- The do-block plumbing ----------------------------------------------
 
 """
     _when_core(ctx, control_wire::WireID, f)
 
-The nested try/finally that (a) pushes the control frame, (b) opens a region so
-body-owned ancillas are clean-ancilla-asserted at body exit WHILE the control is
-still up, and (c) pops the control on ANY throw. The topology is load-bearing:
-`_push_control!` outside the inner `try` and `_pop_control!` in the OUTER
-`finally` guarantee the stack is popped even if the body OR the region-exit
-clean-ancilla assert throws — the context is never left with a stale control
-frame. `_exit_region!` is in the INNER `finally` so the clean-ancilla assert runs
-with the control still on the stack.
+The nested try/finally that (a) pushes the control frame + the M8 tee-tracing
+`WhenFrame`, (b) opens a region so body-owned ancillas are recorded/released at body
+exit WHILE the control is still up, (c) STRUCTURALLY SEALS the streamed transcript
+on the SUCCESS path (the witness — design §5), and (d) pops the tee-frame and
+control on ANY throw. The topology is load-bearing: the frame/control pushes precede
+the inner `try` and their pops sit in the OUTER `finally`, so the stacks are restored
+even if the body, the region-exit trace, OR the seal throws. `_exit_region!` (INNER
+`finally`) traces body scratch — recording each `TraceN` into the tee-frame — BEFORE
+the seal reads the completed transcript. `_seal_when_frame!` runs AFTER the inner
+`try`/`finally` so it fires ONLY when the body ran to completion (a mid-body throw
+skips the seal and surfaces the user's error; the transcript would be incomplete).
 
-Masking caveat (accepted for M5): if the body throws AND the region-exit witness
-also throws, Julia's `finally` surfaces the witness error and masks the body's.
-Both are fail-loud, so the user still crashes; the FIRST error is hidden (no
-clean in-flight-exception introspection at Julia 1.12). Recorded in WORKLOG.
+TR2 failure topology (design §8): the streaming path runs effects BEFORE this late
+seal, so a failed seal cannot be unwound — `_seal_when_frame!` POISONS the context
+and throws; every subsequent surface op fails loud naming the seal failure. The SAME
+topology covers a mid-body throw: if a user exception escapes the body (or the
+region-exit trace) with UN-SEALED scratch allocated, `_when_error_poison!` poisons the
+context (a `catch` must not resume on a context whose scratch was recycled without a
+cleanliness proof — the dirty-ancilla silent-wrongness class), then the ORIGINAL error
+is rethrown. A body that allocated no scratch propagates its error unpoisoned (the
+context stays usable — the M5 `not!(r); error()` unwind idiom).
 """
 function _when_core(ctx::AbstractContext, control_wire::WireID, f)
-    haskey(_core(ctx).wire_to_slot, control_wire) ||
+    core = _core(ctx)
+    haskey(core.wire_to_slot, control_wire) ||
         error("when: control wire $control_wire is not live (already traced/consumed)")
     _push_control!(ctx, control_wire)
+    push!(core.when_frames, WhenFrame())           # M8 tee-tracing frame (design §5)
+    try
+        try
+            _enter_region!(ctx)
+            try
+                f()
+            finally
+                _exit_region!(ctx)       # traces body scratch → records TraceNs (control still up)
+            end
+            _seal_when_frame!(ctx)       # STRUCTURAL WITNESS — success path (TR2 poison on seal failure)
+        catch err
+            _when_error_poison!(ctx, err)   # mid-body throw with un-sealed scratch ⇒ poison (TR2)
+            rethrow()
+        end
+    finally
+        pop!(core.when_frames)           # ALWAYS restore the tee-frame stack
+        _pop_control!(ctx, control_wire) # ...and the control stack, even on a throw
+    end
+    return nothing
+end
+
+"""
+    _when_error_poison!(ctx, err)
+
+TR2 mid-body extension (design §8): an exception escaped a `when` body before its
+transcript was sealed. If a failed SEAL already poisoned the context, keep that
+message. Otherwise, if the frame recorded any `AllocN` (scratch was allocated — and,
+on this error path, freed by the region-exit trace WITHOUT a cleanliness proof),
+POISON so a user `catch` cannot resume on a context with recycled-but-unverified
+scratch (the dirty-ancilla silent-wrongness class). A body that allocated nothing is
+left unpoisoned — its error propagates and the context stays usable.
+"""
+function _when_error_poison!(ctx::AbstractContext, err)
+    core = _core(ctx)
+    core.poison === nothing || return nothing           # a failed seal already poisoned — keep its message
+    any(nd -> nd isa AllocN, _tee_top(core).builder.nodes) || return nothing   # no scratch ⇒ propagate clean
+    core.poison = "an exception escaped a `when` body with un-sealed scratch ancilla — the " *
+        "transcript was never sealed, so scratch cleanliness is unverified and the region-exit " *
+        "trace recycled it WITHOUT a proof (dirty-ancilla corruption risk, TR2). Escaped " *
+        "exception: $(sprint(showerror, err))"
+    nothing
+end
+
+"""
+    _when_capture(ctx, control_wire, f) -> Union{UnitaryBlock,Nothing}
+
+Stream `f` under `control_wire` exactly as `_when_core` does (same seal, same TR2
+poison), AND return the sealed transcript as `M(B) = certify(trace(B))` — the
+MATERIALIZED unitary block — captured from the SAME streaming run whose applied
+channel is `S(B)`. This is the materialize half of the `M8.WHEN.STREAM-MATERIALIZED`
+law (design §3.4, §7.10 part 4): the streamed value and its materialization denote
+the same channel (compared ctrl-wrapped). Returns `nothing` for a body with no
+external boundary (a pure-scratch identity — TR7 forbids a zero-port `UnitaryBlock`)
+or one carrying scratch (whose per-run `nothing`-cert traces certify cannot re-seal
+without the deferred verifier — the seal already witnessed cleanliness). Kernel-
+internal materialize/test hook, NOT a surface construct (TR3).
+"""
+function _when_capture(ctx::AbstractContext, control_wire::WireID, f)
+    core = _core(ctx)
+    haskey(core.wire_to_slot, control_wire) ||
+        error("when: control wire $control_wire is not live (already traced/consumed)")
+    _push_control!(ctx, control_wire)
+    push!(core.when_frames, WhenFrame())
+    block = nothing
     try
         _enter_region!(ctx)
         try
             f()
         finally
-            _exit_region!(ctx)           # clean-ancilla assert runs HERE (control still up)
+            _exit_region!(ctx)
+        end
+        _seal_when_frame!(ctx)
+        dag = freeze(_tee_top(core).builder)
+        if !isempty(dag.qin) && !any(nd -> nd isa AllocN, dag.nodes)
+            block = certify(dag)          # NoAncilla external-boundary body → UnitaryBlock
         end
     finally
-        _pop_control!(ctx, control_wire) # ALWAYS runs, even if _exit_region! threw
+        pop!(core.when_frames)
+        _pop_control!(ctx, control_wire)
     end
-    return nothing
+    return block
 end
 
 """
