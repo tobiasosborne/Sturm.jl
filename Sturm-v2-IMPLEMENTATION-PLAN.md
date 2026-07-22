@@ -370,8 +370,9 @@ refactor). Build order is the seven-part split from `5hr7` §7.10, with the
    deferred measurement, `within`. **Choi equality of uncontrolled values
    is NOT a unitary-pass proof** (F3, Tang–Wright Thm 1.1) — every unitary
    pass carries a `ctrl`-wrapped pre/post channel test.
-7. **Classical-control IR (`i4ri`) — after the F13/`vqas` ruling**:
-   `ClassicalBit`/`ClassicalWord{W}` tokens; `measure` verb; `cases`/`@cases`
+7. **Classical-control IR (`i4ri`) — F13 ruled Option D (no measure
+   verb)**: `ClassicalBit`/`ClassicalWord{W}` tokens returned by the
+   `Bool(q)`/`Int(x)` casts under DM/Tracing; `cases`/`@cases`
    with quantum-port-signature join-typing (`cases` returns `nothing`;
    branch-dependent classical values via `select`/`ClassicalTable`, not a
    phi); copyable tokens + retained correlation record traced at last use;
