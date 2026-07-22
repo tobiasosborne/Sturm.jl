@@ -135,10 +135,13 @@ end
     # Session 94 recorded 11 ```julia blocks in Sturm-PRD-v2.md at the
     # r6 prototype stage; session 98 (w5rw, Ruling D) added the §3.6
     # `@cases Bool(m)` classical-branching example, bringing the count to
-    # 12. Pin the count so a silently-truncated extractor (or a PRD edit
-    # that drops an example) is caught even if every remaining block still
-    # happens to lower cleanly.
-    @test length(blocks) == 12
+    # 12. The M9 `8tma` wording pass split §7.7's single `shor_order`
+    # listing into two blocks — the `_shor_phase_sample` quantum kernel and
+    # the bounded classical driver — bringing the count to 13. Pin the
+    # count so a silently-truncated extractor (or a PRD edit that drops an
+    # example) is caught even if every remaining block still happens to
+    # lower cleanly.
+    @test length(blocks) == 13
 
     for b in blocks
         parts = split(strip(b.code), '\n'; keepempty = false)

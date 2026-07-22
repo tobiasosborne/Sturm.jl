@@ -627,9 +627,22 @@ modular process value is a canonical zero-phase `Perm` on `2^W` states and remai
 
 ## 8. Staged PRD amendments — apply post-`vanm`, under the doctest lint
 
-These are **not** applied by this round. Each block gives exact replacement text a
-later wording pass installs while the `test/test_prd_examples.jl` doctest lint is
-green. Line anchors are as of commit `e834d36`.
+> **✅ APPLIED to `Sturm-PRD-v2.md` (bead `8tma`, M9 wording pass, after F16
+> landed as `22f4994`).** All five amendments below (§7.7 bounded-driver
+> rewrite, §7.6 `Bool(m)`/`@cases` wording, §3.4 in-place-`Perm` paragraph +
+> MBU qualifier, §4.1a two-theorem `PermClean` bullet + second acquisition
+> combinator, §3.1/§3.2 `QMod{N,W,C}` + `Int`/`BigInt` width bounds) are in
+> the shipped PRD. §7.7's single `shor_order` listing was split into the
+> `_shor_phase_sample` kernel and the classical driver, bumping the doctest
+> pin `test/test_prd_examples.jl` from 12 → 13. §4.1a cites
+> `docs/physics/bennett_1973_logical_reversibility.md` ("Inverse-assisted
+> in-place permutation", eq (3)). §3.5's brief `PermClean (Bennett (★))`
+> parenthetical was left as-is (not staged here; still correct as one of the
+> two groundings). Blocks retained as the design record.
+
+These gave exact replacement text a later wording pass installed while the
+`test/test_prd_examples.jl` doctest lint stayed green. Line anchors are as of
+commit `e834d36`.
 
 ### 8.1 §7.7 — replace the `shor_order` listing (`Sturm-PRD-v2.md:1636–1669`)
 

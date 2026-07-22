@@ -175,10 +175,20 @@ ordinary Julia with a few casts and views, it is probably right.**
 
 ### 3.1 Registers (unchanged in spirit)
 
-`QBool`, `QInt{W}`, `QMod{d}`, … are numeric types for Julia's dispatch
-(P9). Generic functions ride operator overloading (P8); type-restricted
-functions go through `oracle(f, q)` (Bennett). Nothing here changes except
-what operations exist.
+`QBool{C}`, `QInt{W,C}`, `QMod{N,W,C}`, … are numeric types for Julia's
+dispatch (P9), each carrying the concrete context type `C` trailing
+(F16/`vanm`). Generic functions ride operator overloading (P8);
+type-restricted functions go through `oracle(f, q)` (Bennett). The
+modulus `N` of `QMod{N,W,C}` is **static in the type** (F24) — it
+declares the logical dimension `ℂ^N`, the group ℤ_N, its units, and the
+conjugate transform `F_N` (P7: the register type declares its symmetry
+structure), so there is **no runtime `modulus` field**; the width
+`W = ndigits(N-1; base=2)` is derived, and an inconsistent `(N, W)` is
+rejected by the inner constructor. Public constructors are `QMod{N}(v)`
+and `QMod(Val(N), v)` — there is no dynamic `QMod(N::Integer, v)`, whose
+`Val(N)` at a high-cardinality call site would force unbounded
+specialization while hiding the static-program contract. Nothing else
+here changes except what operations exist.
 
 ### 3.2 Casts and the boundary algebra
 
@@ -192,6 +202,16 @@ what operations exist.
   register handle dies at the cast: after collapse the information is
   classical, and a live quantum handle to it would be a type lie. Implicit
   casts warn (unchanged P2 discipline).
+- **Width bounds on the consuming cast (F23):** `Int(x::QInt{W,C})` is an
+  *honest machine-`Int`* cast — it admits exactly `1 ≤ W ≤ Sys.WORD_SIZE-1`
+  (every unsigned `W`-bit outcome fits a signed host `Int`; on a 64-bit
+  host, `W ≤ 63`) and throws **before** any backaction when
+  `W ≥ Sys.WORD_SIZE`, never silently widening to `BigInt`. The explicit
+  wide consuming cast is **`BigInt(x::QInt{W,C})`**, valid for every
+  `W ≥ 1` — a constructor-spelled qc cast, not a new verb. `W ≤ 0` is
+  rejected. The same bound governs `Int(dual(x))`, whose check must fire
+  **before** the Fourier basis transform is applied — applying it and
+  *then* failing would mutate the state first.
 - **The boundary algebra** (normative, testable):
   - `Bool(QBool(b)) == b` — qc ∘ cq = identity on classical data;
   - `QBool(Bool(q))` — cq ∘ qc = the **pinching channel** (complete
@@ -432,6 +452,26 @@ operation on it is `⊻=` application (binding it to a variable is legal;
 there is nothing else to do with it), and applying it leaves `x` live —
 the Perm reads the argument wires control-like and consumes nothing.
 
+**Registered actions may also compile an in-place `Perm` (M9).** The
+accumulate form `b ⊻= oracle(f, x)` XORs `f(x)` into a *separate* target
+and leaves `x` live; a registered library action such as `mulmod!(y, c)`
+instead transforms its register **in place** — `|x⟩ ↦ |f(x)⟩` on the data
+block itself. It is built by
+`compile_inplace_perm(verify_inverse_pair(f, finv, Val(W)))`: `f` and its
+inverse `finv` are each Bennett-compiled, then composed by
+compute/swap/uncompute into **one frozen kernel `Perm`**. Its denotation
+is the inverse-pair in-place contract `|x⟩_D|0⟩_B|0⟩_A ↦ |f(x)⟩_D|0⟩_B|0⟩_A`
+(`docs/physics/bennett_1973_logical_reversibility.md`, "Inverse-assisted
+in-place permutation", eq (3)) — **not** input discard. Both directions
+must Bennett-compile and carry an *exact* inverse proof (Tier E exhaustive
+replay for `W ≤ PERM_EQ_MAXW`, else a registered structural proof — no
+sampling-as-proof, no `check=false`); only full-width accumulated outputs
+are admissible. The result is a **phase-free `Perm`**, hence closed under
+`ctrl` (`ctrl(Perm) = Perm`), and — being a `Perm` with no measurement
+node — measurement-based uncompute is excluded **by construction,
+unconditionally**, in every context, `when` body, and control stack. Only
+fixed `ReversibleCircuit → Perm` artifacts cross this boundary.
+
 **Named convention exception (alongside `not!`), with its risk
 registered honestly:** Sturm's `Base.xor` methods on registers — and
 the D11 translation-family methods on *bound views* — mutate their
@@ -511,7 +551,12 @@ available. This is §1.1's theorem walking — two implementations equal
 *as channels* are distinguishable *under control* — and it is the
 cleanest live illustration of why the channel/process-value
 stratification exists. Without this rule, the first `when`-wrapped QROM
-oracle ships a soundness bug.
+oracle ships a soundness bug. This control-aware exclusion governs
+*strategy selection during Bennett compilation*; it does **not** reach the
+in-place-`Perm` artifacts above (`compile_inplace_perm`), which are already
+frozen phase-free `Perm`s with no measurement node and so are never MBU
+candidates in *any* context — their MBU exclusion is unconditional, not
+control-conditioned.
 
 ### 3.5 `when` — control flow, with theorem-shaped guardrails
 
@@ -1114,11 +1159,20 @@ cross-check (§3.5). The constructor set:
 - **`NoAncilla`** — the body allocates no ancilla; the composite is a
   product of fixed-port unitaries, unitary by closure of U(d).
 - **`PermClean`** — the body is a single `Perm` (or `ctrl^k` of one) with
-  declared ancilla ports; Bennett's `(★)` guarantees
-  `P_f : |x⟩|t⟩|0⟩ ↦ |x⟩|t⊕f(x)⟩|0⟩` for every input (a theorem about the
-  generator structure, not a runtime observation), and `ctrl(Perm)=Perm`
-  keeps it phase-free under control. This is F2's "Perm-by-construction",
-  and the `oracle` path produces exactly it.
+  declared ancilla ports whose clean-subspace return `(I − ιι†) W ι = 0`
+  is guaranteed by a **closed generator-structure theorem** (not a runtime
+  observation) — either Bennett's `(★)`
+  `P_f : |x⟩|t⟩|0⟩ ↦ |x⟩|t⊕f(x)⟩|0⟩` (the accumulate form; the `oracle`
+  path), or the **inverse-pair compute/swap/uncompute theorem**
+  `|x⟩_D|0⟩_B|0⟩_A ↦ |f(x)⟩_D|0⟩_B|0⟩_A` (the in-place form; the
+  `compile_inplace_perm` path, with `f⁻¹` separately compiled and
+  verified — `docs/physics/bennett_1973_logical_reversibility.md`,
+  "Inverse-assisted in-place permutation", eq (3)). `ctrl(Perm)=Perm`
+  keeps it phase-free under control. This is F2's "Perm-by-construction";
+  acquisition stays **combinator-carried** — both `oracle ⇒ PermClean` and
+  `compile_inplace_perm ⇒ PermClean` — and the checker validates the
+  private-constructor provenance, never an arbitrary `Perm` plus an
+  assertion. No new certificate variant is introduced.
 - **`MatchedPair`** — the only constructor that introduces fresh ancilla:
   the `within(V) do … end` combinator, denoting `C† ∘ M ∘ C`. The uncompute
   is `adjoint(C)` (structurally the same value reversed), so whatever `C`
@@ -1142,7 +1196,8 @@ cross-check (§3.5). The constructor set:
 classical-control IR of §3.6 attaches), or any allocation not matched to a
 certified deallocation, or if boundary lineage in ≠ out. Acquisition is
 **combinator-carried** (`within` ⇒ `MatchedPair`, `oracle` ⇒ `PermClean`,
-ancilla-free ⇒ `NoAncilla`) — sound by construction, no inference and no
+`compile_inplace_perm` ⇒ `PermClean`, ancilla-free ⇒ `NoAncilla`) — sound
+by construction, no inference and no
 SMT/solver in M8; a syntactic matched-uncompute verifier and dense
 below-cutoff checks are follow-on/test-only, never certificate-construction
 routes. The adversarial input-dependent program `a = QBool(false); a ⊻= r;
@@ -1604,10 +1659,13 @@ a^{2⁰} factor.
 
 §3.7's universality argument as running code: the literal is the
 resource, `cases` is the adaptive step, and the correction ladder
-terminates on native Z. (`@cases Bool(m) …` measures `m` — the qc cast
-consumes it — and runs the branch on outcome 1; a bare `@cases m` on the
-unmeasured register is rejected, F30; under DM/Tracing the observation
-returns a record/wire token and both branches are captured, §3.6.)
+terminates on native Z. (`Bool(m)` is the **consuming qc cast** (§3.2)
+that turns the register into a classical outcome; `@cases` branches on
+that classical result and runs the arm on outcome 1. Handing `@cases` a
+bare live quantum register — `@cases m` with no cast — is rejected (F30).
+Under DM/Tracing the observation returns a record/wire token and **both**
+arms are captured (§3.6), so the injection-channel tests must exercise
+*both* observation branches, never a single output marginal.)
 
 ```julia
 function inject_S!(ψ::QBool)
@@ -1635,38 +1693,83 @@ and not just Pauli-frame bookkeeping (§3.7).
 
 ### 7.7 Order finding (Shor) — the capstone composition
 
+One quantum experiment — coherent modular multiplication controlled by a
+uniform phase register, then a Fourier sample — lives in a fresh region so
+the work register `y` is traced at exit (that trace is *why* order finding
+works). `mulmod!(y, c)` is the full-space in-place permutation
+`|v⟩ ↦ |c̄·v mod N⟩` (identity on the padded tail `N ≤ v < 2^W`; eq (1),
+§3.4); every `c` is a power of the coprime base, so its `gcd(c, N) = 1`
+precondition holds. The control schedule is `2W:-1:1` — wire `2W` is the
+LSB carrying `a^{2⁰}` (M6 MSB pin, F21):
+
 ```julia
-"""
-    shor_order(a, N, ::Val{W}) -> Int
-
-Order finding for a mod N: oracle-grade modular arithmetic, coherent
-control, Fourier sampling, and classical post-processing — nothing but
-the seven constructs and library verbs. (Sketch: the production version
-uses the semiclassical iQFT and coset registers, both ported on paper
-in D5.)
-"""
-function shor_order(a, N, ::Val{W}) where {W}
-    k = QInt{2W}(0)
-    superpose!(k)                    # phase register
-    y = QMod{N}(1)                   # work register ≡ 1 (mod N)
-
-    c = a % N
-    for j in 2W:-1:1                 # classical loop, quantum body (P8/P9).
-                                     # LSB-upward: wire j weighs 2^(2W−j)
-                                     # (M6 MSB pin — 6xdk ruling), so wire
-                                     # 2W takes c = a^(2^0), wire 1 the top
-        when(k[j]) do                # wire-handle control (D2)
-            mulmod!(y, c)            # library: in-place y ← c·y (mod N) —
-        end                          # bijective (gcd(c, N) = 1), action world
-        c = powermod(c, 2, N)
+function _shor_phase_sample(a₀, ::Val{N}, ::Val{W}) where {N,W}
+    region() do
+        k = QInt{2W}(0); superpose!(k)     # phase register, uniform over 0:2^{2W}-1
+        y = QMod{N}(1)                      # work register ≡ 1 (mod N)
+        c = a₀
+        for j in 2W:-1:1                    # LSB-upward: wire j weighs 2^(2W-j);
+            when(k[j]) do                   # wire 2W ↦ a^(2^0), wire 1 ↦ top (F21 fix)
+                mulmod!(y, c)               # in-place y ← c·y (mod N), bijective
+            end
+            c = Int(powermod(big(c), 2, big(N)))
+        end
+        return BigInt(dual(k))              # Fourier-sample; y traced at region exit
     end
-
-    r = Int(dual(k))                 # Fourier-sample the phase register;
-                                     # y is traced silently at exit (§3.9) —
-                                     # that trace is WHY order finding works
-    return denominator(rationalize(r / 4^W; tol = 1 / (2N^2)))
 end
 ```
+
+The classical driver repeats the sample, turns each `BigInt` phase into an
+*exact* continued-fraction denominator `q | r` (eq (5); `q = 1` / `z = 0`
+are uninformative and skipped — the `z = 0` outcome no longer masquerades
+as order 1), accumulates `lcm`, and returns only a `powermod`-verified,
+prime-strip-minimized order. It never returns `nothing`, a raw
+denominator, or an unverified LCM:
+
+```julia
+"""
+    shor_order(a, ::Val{N}; max_samples = 32) -> Int
+
+Multiplicative order of `a` modulo `N`: the quantum kernel
+`_shor_phase_sample` (coherent modular multiplication + Fourier sampling)
+wrapped in a bounded classical driver — exact `BigInt` continued
+fractions, `lcm` accumulation, `powermod` verification, prime-strip
+minimization. Every successful return is verified and minimal.
+
+Returns the exact multiplicative order after verification and
+minimization, or throws `OrderFindingFailure` after `max_samples`; throws
+`NonCoprimeBaseError` (carrying the factor) if `gcd(a, N) ≠ 1`.
+"""
+function shor_order(a::Integer, ::Val{N}; max_samples::Int = 32) where {N}
+    N ≥ 2           || throw(DomainError(N, "modulus must be ≥ 2"))
+    max_samples ≥ 1 || throw(DomainError(max_samples, "need ≥ 1 sample"))
+    W  = ndigits(N - 1; base = 2)           # width derived from N, never passed in
+    a₀ = mod(a, N)
+    g  = gcd(a₀, N)
+    g == 1 || throw(NonCoprimeBaseError(a, N, g))   # gcd(a,N)≠1 ⇒ a factor is in hand
+    a₀ == 1 && return 1                              # order-1 guard (no false failure)
+
+    Q = big(1) << (2W)                      # exact 2^{2W}; never 4^W in Int, never Float
+    L = big(1)                              # lcm accumulator of verified denominators
+    for _ in 1:max_samples
+        z = _shor_phase_sample(a₀, Val(N), Val(W))   # one fresh experiment
+        q = _cf_denominator(z, Q, N)                 # largest CF denom, eq (5); skips q=1
+        q === nothing && continue                    # z = 0 / uninformative sample
+        L = lcm(L, q)
+        L ≥ N && (L = q)                             # contaminated history → reset (§4.4)
+        if powermod(big(a₀), L, big(N)) == 1         # verified: the true order divides L
+            return Int(_minimize_order(a₀, N, L))    # exact prime-strip minimization
+        end
+    end
+    throw(OrderFindingFailure(a₀, N, max_samples))   # loud, never nothing / raw denom
+end
+```
+
+`W = ndigits(N-1; base=2)` is derived, so a caller cannot supply an
+inconsistent `(N, W)`, and `N` is static in `QMod{N,W,C}` (§3.1). The
+driver is `BigInt`-clean end to end — `Q = big(1) << (2W)`, never `4^W`
+in `Int` — so no word-size arithmetic cap is imposed; the binding bound on
+`W` is the backend qubit budget, checked at register allocation.
 
 ---
 
