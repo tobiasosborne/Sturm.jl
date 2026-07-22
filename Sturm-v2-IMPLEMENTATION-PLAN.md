@@ -400,49 +400,86 @@ refactor). Build order is the seven-part split from `5hr7` §7.10, with the
 
 ### M9 — Capstones: QMod full-space permutation, the injection ladder, order finding — (bead `8oo9`; ⚠ `addq` P1)
 
-**⚠ REBASELINED for the `addq` P1 bug (F7). The fix is filed, not designed
-here.** The M9-as-written `mulmod!(y, c)` = Bennett-compiled `v -> (c*v) % N`
-Perm is **not a permutation of the physical Hilbert basis**: for `N=15` in
-4 wires, basis states 0 and 15 both map to 0 — many-to-one, not unitary.
-Two corrections are required and are prerequisites of the Shor capstone:
+**⚠ REBASELINED for the `addq` P1 bug (F7). DESIGNED — see
+[`docs/design/m9-addq-inplace-perm-design.md`](docs/design/m9-addq-inplace-perm-design.md)
+(3+1 synthesis of proposals A/B; closes F7/F22/F23/F24).** The M9-as-written
+`mulmod!(y, c)` = Bennett-compiled `v -> (c*v) % N` Perm is **not a permutation
+of the physical Hilbert basis**: for `N=15` in 4 wires, basis states 0 and 15
+both map to 0 — many-to-one, not unitary. The resolved work items (full detail
+in the design doc):
 
-- **Full-space permutation.** Define `v ↦ (c·v mod N) for v < N, else v`
-  (identity on the padded tail `v ≥ N`) — a genuine bijection of the
-  `2^⌈log₂N⌉` basis states.
-- **A new in-place-Perm compiler contract.** M7's Bennett bridge builds
-  the *target-accumulating* permutation `|v⟩|b⟩ ↦ |v⟩|b⊕f(v)⟩`, **not**
-  the in-place `|v⟩ ↦ |f(v)⟩` that `mulmod!` needs; dropping the input
-  register dephases superpositions. The in-place map is realised by
-  compute/swap/uncompute against `f`'s inverse (`f⁻¹` must itself
-  Bennett-compile). This contract does not exist yet; it is the load-
-  bearing M9 design step (its own 3+1 round when claimed).
-- **QMod values are U(d), not SU(d)** (F9/`rlhj`): the modular-arithmetic
-  process value carries its `U(1)` phase; under `ctrl` an `SU(d)`-only
-  representative reintroduces the controlled-phase unsoundness.
-- **Width/type-stability** (F23/F24): Shor doubles to `QInt{2W}`; bound
-  `Int(x)` to machine width or return a wide type; pass `N` such that
-  `QMod{N}` stays inference-clean (representation class in the type param,
-  modulus as a field or `Val{N}`).
-- **`shor_order` return contract** (F22): a single continued-fraction
-  denominator is a *candidate divisor*, not the order — implement
-  repetition + modular verification (`a^r ≡ 1`) + LCM accumulation, or
-  rename `order_candidate`. State the `gcd(a,N)=1` precondition. This is a
-  real semantic decision, resolved when M9 is claimed.
+- **Full-space permutation (eq 1).** `mulmod!(y::QMod{N,W,C}, c)` denotes
+  `v ↦ (c̄·v mod N) for v < N, else v` (`c̄ = mod(c,N)`, identity on the padded
+  tail) — a genuine bijection of the `2^⌈log₂N⌉` basis states; `gcd(c̄,N)=1`,
+  `N ≥ 2` preconditions, loud `DomainError` naming `c/N/gcd` before any
+  allocation. Bennett callable is a fixed-`W` overflow-free double-and-add, NOT
+  `(c*v)%N` (Bennett narrows mod `2^W`).
+- **In-place-Perm compiler contract** — `verify_inverse_pair(f, finv, Val(W)) →
+  compile_inplace_perm(pair) → CompiledInplacePerm{W}`, in `src/bennett/inplace.jl`
+  (+ `ext/SturmBennettExt.jl` for the two compilations through the **existing**
+  `_BENNETT_BACKEND`, + `src/library/modular.jl` for `mulmod!`). Compute/swap/
+  uncompute against a **separately compiled** `f⁻¹` (`adjoint(U_f)` gives `f∘f`,
+  wrong) into **one frozen kernel `Perm`** of width `2W + max(A_f,A_g)` (shared
+  ancilla pool); `W + max(A_f,A_g)` fresh scratch per application; one `_act!`.
+  Inverse agreement proved **before any quantum action**: Tier E exhaustive
+  replay of the compiled `Perm` for `W ≤ PERM_EQ_MAXW (=20)`, else a **registered,
+  closed** analytic/structural proof (`FullSpaceMulProof{N,W}`) — no `check=false`,
+  no sampling-as-proof, no open witness trait. Private construction choke point
+  `_compiled_inplace_perm` (boot-lint gated, like `_ctrl`). `public`, not
+  exported, NOT an eighth surface construct. Its own 3+1 round (this doc).
+- **§4.1a certificate** — the composite carries **`PermClean`** (declared clean
+  ports = copy block ∪ ancilla pool), justified by the inverse-pair theorem, via
+  a second combinator-carried route `compile_inplace_perm ⇒ PermClean`. **No new
+  `CleanCert` variant.** MBU excluded **by construction** in every context (a
+  `Perm` has no measurement node) ⇒ safe to reuse inside `when`; `ctrl^k(Perm)=Perm`.
+- **QMod values are U(d), not SU(d)** (F9/`rlhj`): the modular process value
+  carries its `U(1)` phase (canonical zero-phase `Perm`).
+- **F23/F24 (width & type-stability):** `Int(x)` stays an honest machine-`Int`
+  cast, throwing **before** backaction for `W ≥ Sys.WORD_SIZE`; the wide qc cast
+  is **`BigInt(x)`** (a constructor-spelled cast, no `measure` verb). `QMod{N,W,C}`
+  — modulus **static** in the type (matching the *already-shipped* `QInt{W,C}`
+  F16/`vanm` convention), `W` derived, **no runtime modulus field**; entry
+  `shor_order(a, ::Val{N})`. Repair the `1 << W` overflow at `qint.jl:66-67`
+  **and** `arithmetic.jl:79,167` (`mod(a, 1<<W)` — missed by both proposals) with
+  `big(1) << W`; reject `W ≤ 0`.
+- **`shor_order` return contract** (F22): `shor_order(a, ::Val{N}; max_samples=32)`
+  — bounded repeated fresh sampling, `gcd(a,N)=1` precondition (→
+  `NonCoprimeBaseError` w/ factor), `a₀==1 ⇒ 1` guard, exact `BigInt` continued
+  fractions (`Q = big(1)<<(2W)`, no `4^W`/`rationalize`), skip `q=1`, `lcm`
+  accumulation with contamination reset, `powermod` verification, exact
+  prime-strip minimization, `OrderFindingFailure` at the retry limit. Never
+  returns `nothing`, a raw denominator, or an unverified LCM. Corrected `2W:-1:1`
+  control schedule (F21).
+- **Physics gate (CLAUDE.md #4, prerequisite BEFORE code):** amend
+  `docs/physics/bennett_1973_logical_reversibility.md` with an "Inverse-assisted
+  in-place permutation" subsection (eq ★ and eq 3); **add the missing**
+  `docs/physics/shor_order_finding.md` + a local primary-source PDF (phase-sample
+  eq, continued-fraction theorem, `Q ≥ N²`, repetition/LCM, `powermod` verify,
+  success-probability threshold for the §9.6 statistical test).
+- **PRD amendments are STAGED** in the design doc §8 (§7.7 driver rewrite; §7.6
+  `Bool(m)`/`@cases` wording; §3.4 in-place action paragraph + MBU qualifier;
+  §4.1a generalized `PermClean` bullet; §3.1/§3.2 `QMod{N,W,C}` + `Int`/`BigInt`
+  bounds) — applied post-`vanm` under the doctest lint, not by this round.
 
 - **Universality writeup** (§3.7 proof obligation) in `docs/physics/` with
   RBB/ZLC/Gottesman–Chuang/Bravyi–Kitaev distillations (injection circuit
   = GC/ZLC; BK = distillation). No longer gates the M8 IR (§3.0).
 - **Worked examples land:** `inject_S!`/`inject_T!` §7.6 (channel test:
   Choi ≈ S/T on random probes, both outcomes, the non-Pauli S-correction
-  path explicit; `@cases measure(m)` per the `i4ri`/F30 ruling);
-  `shor_order` §7.7 end-to-end for small N (15, 21) with seeded statistics.
+  path explicit; `@cases Bool(m)` per the `i4ri`/F30 ruling + session-98
+  Ruling D — the stale `@cases measure(m)` spelling is retired, there is no
+  `measure` verb); `shor_order` §7.7 end-to-end for small N (15, 21) — the
+  ≥1000-trial statistical order-finding suite, permutation-bijectivity
+  tables, controlled-Choi, inverse-contract, overflow-boundary, and QMod
+  inference tests of the design doc §9.
 - **The §8 ledger:** §8.1 already closed at M5 (shipped). Remaining defect
   classes get named green regressions by end of M9 (8.3→M4, 8.4→M2/M4,
   8.5→M6, 8.6→API-shape review, 8.7→M1 totality, 8.8→M4; 8.2 died with the
   surface).
-- 3+1: **YES** for the in-place-Perm contract (new kernel-adjacent
-  contract); otherwise composition of existing core. Distillations: the
-  four universality papers.
+- 3+1: **DONE** for the in-place-Perm contract (design doc = A/B synthesis;
+  reviewed by orchestrator); otherwise composition of existing core.
+  Distillations: the four universality papers, the Bennett in-place
+  subsection (eq 3), and the **new** `shor_order_finding.md` (+ local PDF).
 
 ### M10 — Library HOFs — (bead new)
 
