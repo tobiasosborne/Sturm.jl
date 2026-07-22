@@ -142,6 +142,18 @@ include("surface/arithmetic.jl")
 # `_assert_live` (M3), and `QInt`/`AbstractQubit` (M6/M3), so it is included last.
 include("bennett/bridge.jl")
 
+# --- M8: i4ri classical-control (bead Sturm.jl-szx1; DM/Eager slice) ---------
+# Classical outcome TOKENS + T2/T3 finite SSA (`surface/tokens.jl`), then
+# `cases`/`@cases` + `select`/`shots`/`discard!` (`surface/cases.jl`). Included
+# LAST: the DM `_cast_bool`/`_cast_int` token seams (Ruling D) are called from
+# M3/M6 casts by forward reference (resolved at call time), and the executor
+# reuses `_instrument_record!` (density.jl), `_push_control!`/`_act!` (when.jl),
+# and `_trace_and_free!`/region ownership (M2) — no new physics primitive.
+# Reserved seams for the next slice: TracingContext token variant, MeasureNode/
+# CasesNode emission, the DeferMeasurementPass rewrite body, the tracer pre-flight lint.
+include("surface/tokens.jl")
+include("surface/cases.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -174,6 +186,14 @@ export QInt, add!, sub!, superpose!
 # our own `OracleQuery` (no new name); the query value types are kernel `public`
 # (reachable as `Sturm.OracleQuery`, never `using`-dumped — 7 produces, 3 applies).
 export oracle
+
+# --- Surface classical control (exported; PRD-v2 §3.6/§3.8, M8 i4ri) ---------
+# `cases`/`@cases` (surface construct 6): classical branching on outcomes. The
+# outcome TOKENS (`ClassicalBit`/`ClassicalWord`), the `select`/`shots`/`discard!`
+# library HOFs, and `ClassicalTable`/width helpers are kernel/library `public`
+# (reachable as `Sturm.select`, never `using`-dumped) — `select`/`shots` are
+# library, NOT an 8th surface construct.
+export cases, @cases
 
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
@@ -215,5 +235,12 @@ public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
 public UnitaryPass, ChannelPass, apply_pass, PASS_REGISTRY,
     Fuse1qPass, ViewFusionPass, ReassocPass,
     FuseUnitaryRunsPass, DeferMeasurementPass, within
+
+# --- M8 i4ri classical-control tokens + library (kernel/library `public`) ----
+# The measurement-record tokens and the T2/T3 finite classical SSA + trajectory
+# HOF. `cases`/`@cases` are the exported surface; these are the token vocabulary
+# (Ruling D returns) and the library multiplexer/shot/lifetime helpers.
+public ClassicalBit, ClassicalWord, ClassicalToken, ClassicalTable,
+    select, shots, discard!, width, zext, truncate_word
 
 end # module Sturm

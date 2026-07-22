@@ -146,8 +146,11 @@ end
         sum(_ -> Bool(dual(QBool(false))) ? 1 : 0, 1:N)
     end
     @test abs(ones0 / N - 0.5) < 3 * sqrt(0.25 / N)
-    # DM Bool(dual(q)) throws (a scalar outcome is a trajectory, §3.8).
-    @test_throws ArgumentError density(1) do _; Bool(dual(QBool(0.5))) end
+    # DM Bool(dual(q)) is NO LONGER a throw: under Ruling D (§3.6/§14, M8 i4ri) the
+    # conjugate-basis measurement cast returns the classical RECORD as a
+    # `ClassicalBit` token (the H-rotated wire, pinched). Updated from the M4
+    # placeholder-throw contract to the token contract.
+    @test density(1) do _; Bool(dual(QBool(0.5))) isa Sturm.ClassicalBit end
 end
 
 @testset "M4 — views are NOT numbers: the P9 wall (§3.3)" begin
@@ -217,10 +220,13 @@ end
     end
 end
 
-@testset "M4 — teleport under DM throws at the first Bool (M5 pointer)" begin
-    # WHY there is no M4 DM Choi of the &&-form: DM Bool throws (§3.8), so
-    # choi(teleport) throws at `Bool(dual(ψ))`. The deterministic
-    # Choi(teleport_deferred) ≈ Choi(id) is M5's gate (§7.1b, corrections under
-    # `when`, no scalar Bool). Documented here as a required negative test.
-    @test_throws ArgumentError density(4) do _; teleport(QBool(0.5)) end
+@testset "M4 — teleport under DM: the &&-form dies on a token (Ruling D / L11)" begin
+    # WHY there is no M4 DM Choi of the &&-form: under Ruling D (§3.6/§14, M8 i4ri)
+    # DM `Bool` returns a `ClassicalBit` TOKEN, and the §7.1 `&&`-corrections put
+    # that token in host-Boolean position — `m_value && not!(c)` throws Julia's
+    # OWN non-boolean `TypeError` (law L11; we do not intercept it). The portable
+    # one-run DM Choi uses token+`cases` (test_m8_i4ri.jl L4), not `&&`. Updated
+    # from the M4 placeholder-throw (ArgumentError at the first `Bool`) to the
+    # token contract: the cast now succeeds; the `&&` is what dies.
+    @test_throws TypeError density(4) do _; teleport(QBool(0.5)) end
 end

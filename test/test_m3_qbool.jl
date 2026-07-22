@@ -134,8 +134,12 @@ end
     @test_throws DomainError eager(1) do _; QBool(NaN)  end
 
     # ArgumentError — well-formed-but-forbidden.
-    #  (a) DM scalar Bool (a trajectory, not a channel — D3/§3.8, deferred to M8).
-    @test_throws ArgumentError density(1) do _; Bool(QBool(0.5)) end
+    #  (a) DM `Bool` is NO LONGER a throw: under Ruling D (§3.6/§14, M8 i4ri) it
+    #  returns the classical RECORD as a `ClassicalBit` token (not a scalar
+    #  trajectory). Updated from the M3 placeholder-throw contract to the token
+    #  contract; the exact instrument-sum / cases semantics is tested in
+    #  test_m8_i4ri.jl (L1–L5).
+    @test density(1) do _; Bool(QBool(0.5)) isa Sturm.ClassicalBit end
     #  (b) cross-context handle (a handle escaped its context; closed by storing ctx).
     @test_throws ArgumentError eager(1) do _
         qo = QBool(0.5)                 # qo.ctx = outer

@@ -137,3 +137,34 @@ function _instrument!(ctx::DensityMatrixContext, w::WireID)
     _apply_channel_1q!(ctx, _PINCH_KRAUS, q(ctx, w))
     nothing
 end
+
+"""
+    _instrument_record!(ctx::DensityMatrixContext, w::WireID) -> WireID
+
+The DM measurement cast's record realization (Ruling D, M8 i4ri design §2.1): pinch
+wire `w` in place (`_instrument!` — the classical record Σᵢ|i⟩⟨i|_C ⊗ ρ̃ᵢ, kept
+LIVE, no reset), then split the ONE physical slot's two roles:
+
+- the QUANTUM handle DIES (affine): `w` is removed from `wire_to_slot` and marked
+  consumed on the single-sourced set (§4.5), so any later quantum use of the
+  original handle — `Bool(q)` again, `not!(q)`, `apply!(…, w)` — fails loud (law L1);
+- the CLASSICAL RECORD lives on: a FRESH `WireID` `rec` re-homes the SAME Orkan
+  slot and is registered in the enclosing region's owned set, so the record is
+  traced (summed) at region exit unless `discard!`ed first (last-use, design §2.2).
+
+Returns `rec`, the token's record-wire handle. No new physics primitive — reuses
+the shipped pinch + slot bookkeeping. The measured wire is "still-live c-wire",
+NEVER "an ordinary quantum handle" (design §6).
+"""
+function _instrument_record!(ctx::DensityMatrixContext, w::WireID)
+    _instrument!(ctx, w)                              # pinch; the record stays on the slot
+    core = _core(ctx)
+    slot = core.wire_to_slot[w]
+    delete!(core.wire_to_slot, w)                     # the quantum identity dies (affine)
+    mark_consumed!(ctx, w)                            # single-sourced consumed set (§4.5)
+    core.wire_counter += 1
+    rec = WireID(core.wire_counter)
+    core.wire_to_slot[rec] = slot                     # the record lives on the SAME slot, new identity
+    isempty(core.region_stack) || push!(core.region_stack[end], rec)  # region owns it → summed at exit
+    return rec
+end

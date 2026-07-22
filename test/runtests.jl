@@ -336,6 +336,10 @@ end
         include("test_m8_passes.jl")   # §3 pass law: ChannelPass/UnitaryPass, PASS_REGISTRY, phase sentinel, within
     end
 
+    @testset "M8 — i4ri classical control: tokens, cases, select, shots (part 7, DM/Eager)" begin
+        include("test_m8_i4ri.jl")     # §3.6/§3.8 L-battery: Ruling-D tokens, instrument-sum cases, L5 phase form
+    end
+
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
         include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
     end

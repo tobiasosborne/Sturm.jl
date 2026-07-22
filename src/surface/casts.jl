@@ -53,26 +53,45 @@ function _assert_live(ctx::AbstractContext, w::WireID)
 end
 
 """
-    Bool(q::QBool) -> Bool
+    Bool(q::QBool) -> Bool | ClassicalBit
 
-The MEASUREMENT cast (qc, §3.2). Measures `q` in the computational basis,
-CONSUMES the handle (records it on the single-sourced consumed set, §4.5),
-recycles the wire's slot, and returns the outcome. Eager-only in M3: on a
-density context a scalar outcome is a trajectory (not a channel) and throws
-(ArgumentError, D3/§3.8 — use `@cases`/tokens (M8) or the Choi harness). Explicit
-`Bool(q)` does NOT warn; the implicit `convert(Bool, q)` path does (P2).
+The MEASUREMENT cast (qc, §3.2), THE measurement spelling in every context
+(Ruling D, §3.6/§14 — no separate `measure` verb). It denotes the q→c channel;
+its RETURN is the classical system that channel outputs, represented as faithfully
+as the context allows:
+
+- EAGER (a point state IS its value): a real `Bool`. Measures in the computational
+  basis, CONSUMES the handle (single-sourced consumed set, §4.5), recycles the
+  slot, returns the outcome (M3 behaviour, unchanged).
+- DM (a distribution inside ρ): a `ClassicalBit` TOKEN — a handle to the pinched,
+  still-live classical record Σᵢ|i⟩⟨i|_C ⊗ ρ̃ᵢ (`_instrument!`, no new primitive).
+  Branch on it with `cases`; the record is summed at region exit / `discard!`.
+
+The context-varying return is inference-clean because `_here` returns the concrete
+`C` (F16), so `_cast_bool(ctx::C, …)` dispatches statically. Explicit `Bool(q)`
+does NOT warn; only the implicit `convert(Bool, q)` path warns/throws (P2, Ruling
+D: `convert(Bool,·)` stays Eager-honest).
 """
 function Base.Bool(q::AbstractQubit{C}) where {C}
-    # `_here` returns the CONCRETE `C` (F16) after the cross-context (ArgumentError)
-    # and torn-down (ErrorException) guards — so `_measure_wire!(ctx, …)` dispatches
-    # statically on `C`, giving the Ruling-D exact return type (`Bool` on Eager).
     ctx = _here(q)
     # Guardrail 1 (§3.5): measurement under a live `when` control is a loud error
     # BEFORE any backaction — measurement-under-ctrl is unrepresentable (§4.4).
     _assert_no_control(ctx, "measurement cast Bool(q)")
     _assert_live(ctx, q.wire)
-    b = _measure_wire!(ctx, q.wire)     # Eager: sample+collapse+retire; DM: throws
-    mark_consumed!(ctx, q.wire)         # single-sourced set (§4.5) — reached only on Eager success
+    return _cast_bool(ctx, q.wire)      # Eager: Bool (measure+consume); DM: ClassicalBit token
+end
+
+"""
+    _cast_bool(ctx::EagerContext, w) -> Bool
+
+The Eager (trajectory) qc: sample+collapse+retire (`_measure_wire!`), then mark
+the handle consumed on the single-sourced set (§4.5). The DM sibling
+(`_cast_bool(::DensityMatrixContext, …)` → `ClassicalBit`) lives in
+surface/tokens.jl, alongside the token type it builds (Ruling D).
+"""
+function _cast_bool(ctx::EagerContext, w::WireID)
+    b = _measure_wire!(ctx, w)
+    mark_consumed!(ctx, w)
     return b
 end
 
@@ -100,22 +119,12 @@ function _measure_wire!(ctx::EagerContext, w::WireID)::Bool
     return out == 1
 end
 
-"""
-    _measure_wire!(ctx::DensityMatrixContext, w::WireID)
-
-Fails loud: a scalar `Bool` outcome on a density (channel-executing) context is a
-TRAJECTORY, not a channel (§3.8). Scalar lifting of a measurement outcome is the
-D3 classical-token problem, deferred to M8 (`cases`/tokens). For the
-channel-level statement (`cq∘qc = pinching`), use the Choi harness, which
-measures the instrument channel directly (`_instrument!`, density.jl).
-"""
-_measure_wire!(::DensityMatrixContext, w::WireID) =
-    throw(ArgumentError("Bool(q) returns a scalar outcome, which on a " *
-        "density-matrix context is a trajectory, not a channel (§3.8: a " *
-        "DensityMatrixContext executes channels, not trajectories). Scalar " *
-        "lifting of a measurement outcome is the D3 classical-token problem, " *
-        "deferred to M8 (`@cases`/tokens). For the channel-level cq∘qc=pinching " *
-        "statement, use the Choi harness (it measures the instrument channel)."))
+# NOTE (M8, Ruling D): the former `_measure_wire!(::DensityMatrixContext, …)` LOUD
+# placeholder (a scalar outcome is a trajectory, not a channel) is RETIRED. Under
+# §14 Ruling D the DM measurement cast returns the classical RECORD as a
+# `ClassicalBit`/`ClassicalWord` token (`_cast_bool`/`_cast_int(::DensityMatrixContext,
+# …)`, surface/tokens.jl) via `_instrument_record!` (density.jl) — no scalar, no
+# throw. `_measure_wire!` now exists ONLY on `EagerContext` (the trajectory unravel).
 
 """
     convert(::Type{Bool}, q::QBool) -> Bool

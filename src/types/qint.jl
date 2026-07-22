@@ -122,14 +122,16 @@ torn-down (closed) context, before any FFI touch (F16 §5.1).
 end
 
 """
-    Int(x::QInt{W}) -> Int
+    Int(x::QInt{W}) -> Int | ClassicalWord{W}
 
-The MEASUREMENT cast (qc, §3.2): measure all `W` wires in the computational basis
-(MSB-first, `n = Σ x_j 2^{W−j}`), CONSUMING each on the single-sourced set. Fails
-loud BEFORE any backaction on a PARTIALLY-consumed register — a wire already
-measured via `Bool(x[i])` (§8.5) — and on a cross-context handle, and (guardrail
-1) under a live `when` control. Eager-only: on a density context each wire
-measurement throws (a scalar outcome is a trajectory, not a channel — §3.8).
+The MEASUREMENT cast (qc, §3.2), THE measurement spelling in every context
+(Ruling D, §3.6/§14): measure all `W` wires in the computational basis (MSB-first,
+`n = Σ x_j 2^{W−j}`). Fails loud BEFORE any backaction on a PARTIALLY-consumed
+register — a wire already measured via `Bool(x[i])` (§8.5) — on a cross-context
+handle, and (guardrail 1) under a live `when` control. The RETURN varies by
+context: a real `Int` on EAGER (measure+consume, unchanged); a `ClassicalWord{W}`
+record TOKEN on DM (`_cast_int(::DensityMatrixContext, …)`, surface/tokens.jl —
+the pinched record, summed at region exit / `discard!`).
 """
 function Base.Int(x::QInt{W,C}) where {W,C}
     ctx = _here(x)
@@ -142,10 +144,22 @@ function Base.Int(x::QInt{W,C}) where {W,C}
         "Int(x): register $(x.wires) is partially consumed — wire(s) $(dead) are dead " *
         "(a slice `x[i]` was measured via `Bool(x[i])`, or the register was traced). " *
         "Measure the remaining wires explicitly; do not `Int(x)` a holed register (D2/§8.5).")
+    return _cast_int(ctx, Val(W), x.wires)   # Eager: Int; DM: ClassicalWord{W} token
+end
+
+"""
+    _cast_int(ctx::EagerContext, Val(W), wires) -> Int
+
+The Eager (trajectory) qc for a width-`W` register: measure each wire MSB-first,
+reassemble the integer, mark each consumed (§4.5). The DM sibling
+(`_cast_int(::DensityMatrixContext, …)` → `ClassicalWord{W}`) lives in
+surface/tokens.jl (Ruling D).
+"""
+function _cast_int(ctx::EagerContext, ::Val{W}, wires::NTuple{W,WireID}) where {W}
     n = 0
     @inbounds for j in 1:W
-        _measure_wire!(ctx, x.wires[j]) && (n |= (1 << (W - j)))   # MSB-first reassembly
-        mark_consumed!(ctx, x.wires[j])
+        _measure_wire!(ctx, wires[j]) && (n |= (1 << (W - j)))   # MSB-first reassembly
+        mark_consumed!(ctx, wires[j])
     end
     return n
 end
