@@ -301,6 +301,10 @@ end
         include("test_m7_bennett.jl") # §3.4/§7.4/§7.5/D9/D14 laws (needs Bennett loaded)
     end
 
+    @testset "M8 — ChannelDAG, certify, UnitaryBlock (parts 1–3)" begin
+        include("test_m8_channel.jl") # §4.1/§4.1a/§4.2 laws: typed IR, structural cert, block ctrl
+    end
+
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
         include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
     end

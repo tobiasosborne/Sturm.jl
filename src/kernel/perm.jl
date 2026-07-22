@@ -25,18 +25,41 @@
 """
     MCX(controls, target)
 
-One reversible generator: a multiply-controlled NOT. `controls` is a vector of
+One reversible generator: a multiply-controlled NOT. `controls` is a list of
 1-based wire indices (empty ⇒ a bare `X` on `target`); the target bit flips iff
 every control wire is `1`. Every `MCX` is an INVOLUTION. Negative controls
 (control-on-`|0⟩`) are expressed by conjugating the control wire with `X`
 generators, not a polarity flag — keeping every generator uniformly
 "flip target iff controls = |1…1⟩", which is what makes the `ctrl` closure a
 one-liner. Not itself a `ProcessValue`.
+
+STORAGE (M8/F28 immutability refactor, design `m8-5hr7` §4, TR5): `controls` is
+an immutable `NTuple` (frozen), not a `Vector`, so an `MCX` (and any `Perm` /
+`UnitaryBlock` that embeds it) is DEEPLY immutable — no live-`Vector` aliasing
+can mutate a sealed block out from under a certificate. The public constructor
+accepts any integer vector/tuple and defensively freezes it. The field type is
+the abstract `NTuple{K,Int} where K` (variable length): this is deliberate —
+pinning `K` into a type parameter would explode compilation for wide Bennett
+generators, and hiding the length behind an abstract field keeps generator
+iteration on the runtime (non-unrolled) path (verified: a 3000-generator tuple
+behind an abstract field compiles in ~15 ms vs ~7.5 s if the length is concrete).
 """
 struct MCX
-    controls::Vector{Int}
+    controls::NTuple{K,Int} where {K}
     target::Int
+    # Frozen-tuple internal path (the sealer/combinators build tuples directly).
+    MCX(controls::Tuple{Vararg{Int}}, target::Integer) = new(controls, Int(target))
 end
+
+"""
+    MCX(controls::AbstractVector, target) -> MCX
+
+Vector-accepting public constructor: defensively freezes `controls` into an
+immutable tuple (F28 — the incoming vector may be mutated by the caller after
+the call without affecting the stored `MCX`).
+"""
+MCX(controls::AbstractVector{<:Integer}, target::Integer) =
+    MCX(NTuple{length(controls),Int}(controls), target)
 
 """
     Perm(n, gates)
@@ -45,13 +68,34 @@ A reversible permutation on `n` wires as an ordered list of `MCX` generators
 (`gates[1]` applied first). Compact (linear in circuit size — a Bennett
 artifact stays small; the explicit 2^n permutation vector is exponential and
 rejected for storage) and phase-free by construction (PRD-v2 §4.1).
+
+STORAGE (M8/F28 immutability refactor, design `m8-5hr7` §4, TR5): `gates` is a
+frozen `NTuple{M,MCX} where M` (abstract length — see `MCX`), NOT a `Vector`, so
+a `Perm` embedded in a sealed `UnitaryBlock` is deeply immutable. The public
+constructors accept a vector or tuple of `MCX` and freeze it; the internal
+combinators (`∘`, `⊗`, `adjoint`, `ctrl`) build a `Vector{MCX}` and freeze once
+at construction — never mutating a stored field.
 """
 struct Perm <: ProcessValue
     n::Int
-    gates::Vector{MCX}
+    gates::NTuple{M,MCX} where {M}
+    Perm(n::Integer, gates::Tuple{Vararg{MCX}}) = new(Int(n), gates)
 end
 
+"""
+    Perm(n, gates::AbstractVector{MCX}) -> Perm
+
+Vector-accepting public constructor: defensively freezes the generator list into
+an immutable tuple (F28). This is the form every test fixture and the Bennett
+extension use (`Perm(n, [MCX(...), ...])`).
+"""
+Perm(n::Integer, gates::AbstractVector{MCX}) = Perm(n, Tuple(gates))
+
 nwires(p::Perm) = p.n
+
+# Read the frozen generator list back as a mutable Vector for the combinators
+# below (they concat/reverse/offset — pure Vector algebra — then freeze once).
+_gatevec(p::Perm) = collect(MCX, p.gates)
 
 """
     denoted_permutation(p::Perm) -> Vector{Int}
@@ -130,7 +174,7 @@ end
 Reverse the generator list. Every `MCX` is an involution, so per-generator
 inversion is a no-op and `(G_k ⋯ G_1)† = G_1 ⋯ G_k` is just the reversed order.
 """
-Base.adjoint(p::Perm) = Perm(p.n, reverse(p.gates))
+Base.adjoint(p::Perm) = Perm(p.n, reverse(_gatevec(p)))
 
 """
     ∘(a::Perm, b::Perm) -> Perm
@@ -140,7 +184,7 @@ match (fail loud).
 """
 function Base.:∘(a::Perm, b::Perm)
     @assert a.n == b.n "Perm ∘: width mismatch ($(a.n) vs $(b.n))"
-    return Perm(a.n, vcat(b.gates, a.gates))
+    return Perm(a.n, vcat(_gatevec(b), _gatevec(a)))
 end
 
 """
@@ -153,7 +197,7 @@ corner is closed under `⊗` as well as under `ctrl`
 """
 function ⊗(a::Perm, b::Perm)
     off = a.n
-    newgates = copy(a.gates)
+    newgates = _gatevec(a)
     for g in b.gates
         push!(newgates, MCX(Int[c + off for c in g.controls], g.target + off))
     end

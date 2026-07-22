@@ -324,6 +324,27 @@ function _emit!(ctx::AbstractContext, c::Ctrl, qs::Vector{Int})
     nothing
 end
 
+# --- M8 UnitaryBlock EXECUTION — reserved seam (bead Sturm.jl-szx1, part 4) ---
+# A certified `UnitaryBlock` is a process value and composes/controls at the
+# algebra/denotation level (`src/channel/`). REPLAYING its body against a live
+# context — allocating scratch, applying the ApplyNs, tracing the certified-clean
+# ancilla, and (under control) leaving Alloc/Trace UNCONTROLLED while control-
+# wrapping only the ApplyNs (design §1.4) — is the M8 part-4 Eager tee-tracing
+# work, deliberately NOT in this slice. Fail LOUD rather than half-execute
+# (CLAUDE.md #1); the denotation path (`denoted_matrix`) is fully live for the
+# part-1..3 law tests.
+function _emit!(::AbstractContext, ::UnitaryBlock, ::Vector{Int})
+    error("_emit!(UnitaryBlock): executing a certified block against a live context " *
+          "(body replay: alloc scratch → apply → certified-clean trace) is the M8 part-4 " *
+          "Eager tee-tracing seam — not in this slice. Use `denoted_matrix` for the reference " *
+          "semantics; `∘`/`⊗`/`adjoint`/`ctrl` on blocks work at the process-value level.")
+end
+function _apply_controlled!(::AbstractContext, ::Int, ::Vector{Int}, ::UnitaryBlock, ::Vector{Int})
+    error("_apply_controlled!(UnitaryBlock): controlled block execution (Alloc/Trace stay " *
+          "uncontrolled, only ApplyNs control-wrapped — design §1.4) is the M8 part-4 seam, not " *
+          "in this slice. `ctrl(::UnitaryBlock)` builds the process value; its denotation is live.")
+end
+
 # --- Public entry: apply! ----------------------------------------------
 
 """
@@ -369,8 +390,10 @@ Sturm.jl-7a0v). Byte-for-byte the same logic over a `Vector`: the reversible
 corner is the ONE value whose wire count is runtime DATA — a Bennett `Perm`
 oracle spans data-dependent, unbounded `n` (hundreds of wires for arithmetic), so
 an `NTuple{N}` type parameter is actively wrong for it (type explosion, per-`n`
-recompilation, dynamic dispatch). `Perm.gates` is already a `Vector` for exactly
-this reason. ADDITIVE (no existing signature moves), confined to the process-value
+recompilation, dynamic dispatch). `Perm.gates` is a frozen `NTuple{M,MCX} where M`
+(M8/F28 refactor) whose length is hidden behind an ABSTRACT field for exactly this
+reason — generator iteration stays on the runtime, non-unrolled path (design
+`m8-5hr7` §4, TR5). ADDITIVE (no existing signature moves), confined to the process-value
 path; the emitter (`_emit!`) already takes a `Vector{Int}` of slots. The tuple
 `apply!` above stays the frozen M2/M4/M5 fast path for fixed-arity values.
 """

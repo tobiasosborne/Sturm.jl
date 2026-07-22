@@ -83,6 +83,30 @@ ctrl(t::Tensor) = _ctrl(1, t)
 ctrl(s::Seq) = _ctrl(1, s)
 
 """
+    ctrl(b::UnitaryBlock) -> Ctrl{UnitaryBlock{N}}
+
+THE ONE method M8 adds to the choke point (design `m8-5hr7` §1.4). A certified
+`UnitaryBlock` is a process value (only a certified block may be controlled — P4,
+§4.4), so it wraps exactly like `ctrl(::Tensor)`: `Ctrl{UnitaryBlock{N}}`, one
+shared control gating the whole block. Soundness is the §4.2 control-scope-
+reassociation law: under control, the block's internal `AllocN`/`TraceN` stay
+UNCONTROLLED and only its `ApplyN`s are control-wrapped, because a `MatchedPair`
+body `C†∘M∘C` satisfies `ctrl(C†∘M∘C) = (1⊗C†)∘ctrl(M)∘(1⊗C)` — the ancilla
+round-trips `|0⟩→…→|0⟩` in BOTH control branches (control=0: `ctrl(M)=I` so
+`C†∘C=I` on the ancilla; control=1: `C†` uncomputes what `C` wrote). Cleanliness is
+ALGEBRAIC, not state-dependent (design §1.4) — the property F1's `|1⟩`-marginal
+assert lacks. The certificate is what makes this the ONE sound `ctrl` extension;
+`denoted_matrix(::Ctrl{UnitaryBlock})` reads off the block's phase-fixed U(d)
+representative and controls it (`docs/physics/tang_wright_2025_controlled_unitaries.md`).
+
+(The uncontrolled execution lowering `_emit!(ctx, ::UnitaryBlock, …)` — replaying
+the body against a live context, and its controlled sibling that leaves alloc/trace
+uncontrolled — is the M8 part-4 Eager tee-tracing seam, deliberately NOT in this
+slice; see the fail-loud stub in `src/orkan/ad.jl`.)
+"""
+ctrl(b::UnitaryBlock) = _ctrl(1, b)
+
+"""
     adjoint(c::Ctrl) -> Ctrl
 
 `(C_k g)† = C_k(g†)` — control and adjoint commute (PRD-v2 §4.2; Delorme

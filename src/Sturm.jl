@@ -46,9 +46,31 @@ module Sturm
 include("kernel/numerics.jl")
 include("kernel/u2.jl")
 include("kernel/perm.jl")
+# --- M8 channel IR: STRUCTS (bead Sturm.jl-szx1; design m8-5hr7 §1/§2) ------
+# Included BEFORE ctrl.jl so the single new method `ctrl(::UnitaryBlock)` can
+# dispatch (design §1.4: the one edit to the choke-point file). Dependency order:
+# ports (PortID/Port) → cert-type structs (CleanCert, referenced by TraceN) → the
+# channel-IR node structs + ChannelDAG → the UnitaryBlock struct + MatchedPair
+# (which closes the UnitaryBlock↔CleanCert mutual recursion). Only STRUCTS here;
+# the rich methods (replay, certify, block algebra) are included after
+# ctrl/algebra/constants, mirroring the Tensor/Seq struct(u2)/method(algebra) split.
+include("channel/ports.jl")
+include("channel/cert_types.jl")
+include("channel/dag.jl")
+include("kernel/unitary_block.jl")
 include("kernel/ctrl.jl")
 include("kernel/algebra.jl")
 include("kernel/constants.jl")
+# --- M8 channel IR: METHODS (after the kernel algebra they build on) --------
+# `replay.jl` = denoted_matrix(::UnitaryBlock) (small-scale matrix replay on
+# ancilla=|0⟩, TR8 cap); `cert.jl` = certify + port-role/effect-footprint analysis
+# (needs Ctrl, so after ctrl.jl); `block_algebra.jl` = adjoint/∘/⊗ producing
+# certified blocks (AdjointCert/SeqCert/ParCert); `builder.jl` = the mutable
+# DAG builder (freeze on certify — F28) that tests use to build DAGs directly.
+include("channel/replay.jl")
+include("channel/cert.jl")
+include("channel/block_algebra.jl")
+include("channel/builder.jl")
 
 # --- M2: FFI, Ad application, contexts, regions (bead Sturm.jl-dc6i) ---
 # Dependency-respecting order: wire identity → raw FFI → state lifecycle →
@@ -166,5 +188,17 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     QFT, P, WireRef, AbstractQubit,
     # M7 Bennett bridge query values (kernel `public`, 7 produces / 3 applies)
     OracleQuery, CompiledOracle
+
+# --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
+# The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and
+# effect nodes, the certified `UnitaryBlock` process value + `certify` sealer, the
+# closed `CleanCert` constructor set, and the mutable `DAGBuilder` tooling. All
+# reachable as `Sturm.certify`, `Sturm.UnitaryBlock`, …, never `using`-dumped.
+public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
+    PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,
+    Node, ApplyN, AllocN, TraceN, MeasureN, CasesN, NoiseN, KrausFamily,
+    is_barrier, has_barrier,
+    CleanCert, NoAncilla, PermClean, MatchedPair, SeqCert, ParCert, AdjointCert, XportCert,
+    DAGBuilder, input!, alloc!, apply_node!, trace!, measure!, noise!, freeze
 
 end # module Sturm
