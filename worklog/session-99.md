@@ -1,4 +1,45 @@
-# Session 99 — 2026-07-22 — Orchestrated: w5rw + vanm + addq cycle + M8 slices 1–2 SHIPPED
+# Session 99 — 2026-07-22/23 — Orchestrated: w5rw + vanm + addq cycle + **M8 COMPLETE (szx1 CLOSED, five slices)**
+
+## M8 completion addendum (2026-07-23)
+
+**szx1 CLOSED** — all five slices shipped, each orchestrator-reviewed with
+an independent confirmatory suite run before commit:
+
+- **Slice 3** (a5dbde8, parts 5–6): ChannelPass/UnitaryPass frameworks;
+  PASS_REGISTRY + boot lint **with proven teeth** (live phase-dropping
+  negative test); tier-1b `PhaseDelta` → `gphase(−δ)` reattached at the
+  single `_commit` sealing choke point; fuse1q/viewfusion/reassoc complete
+  under BOTH laws each; view-fusion **refuses −I pairs**; π/3 sentinel
+  mechanized; `within` combinator (MatchedPair tier-A provenance +
+  compute-field cross-check); XportCert live. **Wire-model revisit
+  checkpoint PASSED per-pass** — lineage-centric model final for M8.
+  Orchestrator-required: ReassocPass **k=2 law tests** (path proven
+  working; sentinel at depth 2). Helper rename CXp→m8_CXp (overwrite
+  warning under --warn-overwrite).
+- **Slice 4** (b28017c, part 7 DM half): `ClassicalBit{C}`/
+  `ClassicalWord{W,C}` tokens fill the F16 reserved cast slot;
+  `_instrument_record!` (pinch + quantum-identity death + record re-homed
+  on the SAME Orkan slot, region-owned) — no new physics primitive.
+  Tokens = **lazy derivations** over base record wires (exact,
+  enumeration-based, fan-in cap 16). DM `cases` = exact instrument sum
+  via per-config ctrl-off-record-wires with X-sandwich anti-controls
+  (orthogonal projectors ⇒ sequential = block sum). `shots` HOF.
+  **L5 in the mandatory phase form** (correlated X⊗Z record ≉ product of
+  marginals + coherence assert — pinched records are diagonal-blind).
+  3 placeholder-throw tests migrated to the token contract.
+- **Slice 5** (ab3cb4f, part 7 Tracing half): `TracingContext` = the
+  compiler — NULL Orkan handle, **zero FFI**; casts emit `MeasureN` +
+  wire tokens; `cases` → acyclic `CasesN` (K-deep binary tree);
+  Ruling-D **tracer pre-flight lint** (`trace_nonportable` listing at
+  Sturm-owned guard sites; host `if` stays native TypeError, documented
+  unrecordable); `DeferMeasurementPass` body + `DeadRecordEliminationPass`
+  as ChannelPasses (correctly OUTSIDE PASS_REGISTRY); `_replay_dm!`
+  reuses slice-4 physics; streaming(DM)≡materialized(Tracing) Choi on the
+  Z-sensitive teleport. Deferred → bead `xmrd` (flat classical-SSA node
+  vocabulary, i4ri §2.4).
+
+Suite across the milestone: **14971 → 25750**. M9 (`8oo9`) unblocked —
+deps 8tma ✓, kkr6 ✓, szx1 ✓; the m9-addq design doc is the spec.
 
 ## HANDOFF — state (session still live at last update; M8 slice 3 in flight)
 
