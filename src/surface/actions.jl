@@ -35,21 +35,27 @@
 # docs/physics/wharton_koch_quaternion_bloch.md (X, Z exact; HXH = Z).
 
 """
-    _here(q::QBool) -> AbstractContext
+    _here(q::AbstractQubit{C}) -> C
 
-Assert `q`'s owning context IS the active one and return it (fail-loud). WireIDs
-are per-context (`WireID(1)` exists in every context), so an escaped handle used
-under a different bound context would otherwise silently target the WRONG physical
-qubit — the exact bug `QBool` stores its `ctx` to catch (qbool.jl header; the same
-guard `Bool(q)` runs). ArgumentError (well-formed-but-forbidden, S13).
+Assert `q`'s owning context IS the active one and OPEN, and return it as the
+concrete `C` (fail-loud; the single-wire sibling of the `QInt` `_here`). Returning
+the CONCRETE `C` — not `current_context()` (whose static type is `AbstractContext`)
+— is what makes the downstream `_act!`/`apply!`/cast dispatch inference-clean
+(F16). WireIDs are per-context (`WireID(1)` exists in every context), so an escaped
+handle used under a different bound context would otherwise silently target the
+WRONG physical qubit — the exact bug the handle stores its `ctx` to catch.
+ArgumentError on cross-context (well-formed-but-forbidden, S13); ErrorException on
+a torn-down context (F16 §5.1), before any FFI touch.
 """
-@inline function _here(q::AbstractQubit)
-    q.ctx === current_context() || throw(ArgumentError(
+@inline function _here(q::AbstractQubit{C}) where {C}
+    ctx = contextof(q)
+    ctx === current_context() || throw(ArgumentError(
         "action on register $(q.wire): the handle belongs to a different context " *
         "than the active one — a handle escaped its context/region. WireIDs are " *
         "per-context, so an id collision across contexts would otherwise silently " *
         "target the wrong physical qubit."))
-    return q.ctx
+    _require_open(ctx, "action on register $(q.wire)")
+    return ctx
 end
 
 # --- Flips: ℤ₂ translation (X) and its Ĝ-dual modulation (Z) -------------
@@ -122,7 +128,7 @@ the result is the Bell pair Φ⁺ on `(r, c)`.
 """
 function Base.xor(b::Bool, r::AbstractQubit)
     ctx = _here(r)
-    f = QBool(false)                       # fresh |0⟩ in the active context
+    f = QBool(ctx, false)                   # fresh |0⟩ via the KNOWN typed ctx (no ScopedValue reread; F16)
     b && apply!(ctx, X, (f.wire,))          # fresh-PREP: uncontrolled (§3.9 alloc)
     _act!(ctx, ctrl(X), (r.wire, f.wire))   # ENTANGLE: control-wrapped under a `when`
     return f

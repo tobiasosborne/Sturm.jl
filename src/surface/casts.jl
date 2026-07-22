@@ -62,14 +62,11 @@ density context a scalar outcome is a trajectory (not a channel) and throws
 (ArgumentError, D3/§3.8 — use `@cases`/tokens (M8) or the Choi harness). Explicit
 `Bool(q)` does NOT warn; the implicit `convert(Bool, q)` path does (P2).
 """
-function Base.Bool(q::AbstractQubit)
-    ctx = q.ctx
-    ctx === current_context() ||
-        throw(ArgumentError("Bool(q): register $(q.wire) belongs to a different " *
-            "context than the active one — a handle escaped its context/region. " *
-            "(Handles store their owning context precisely to catch this: WireIDs " *
-            "are per-context, so id collisions across contexts would otherwise " *
-            "silently target the wrong qubit.)"))
+function Base.Bool(q::AbstractQubit{C}) where {C}
+    # `_here` returns the CONCRETE `C` (F16) after the cross-context (ArgumentError)
+    # and torn-down (ErrorException) guards — so `_measure_wire!(ctx, …)` dispatches
+    # statically on `C`, giving the Ruling-D exact return type (`Bool` on Eager).
+    ctx = _here(q)
     # Guardrail 1 (§3.5): measurement under a live `when` control is a loud error
     # BEFORE any backaction — measurement-under-ctrl is unrepresentable (§4.4).
     _assert_no_control(ctx, "measurement cast Bool(q)")

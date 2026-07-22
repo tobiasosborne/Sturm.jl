@@ -31,35 +31,63 @@
 # Fourier dual: docs/physics/chen_stoudenmire_white_qft_entanglement.md.
 
 """
-    QInt{W}(ctx, wires::NTuple{W,WireID})     [field constructor — internal]
-    QInt{W}(n::Integer)                       [preparation cast, cq]
+    QInt{W,C}(ctx::C, wires::NTuple{W,WireID})  [field constructor — internal]
+    QInt{W}(n::Integer)                         [preparation cast, cq]
+    QInt{W}(ctx::C, n::Integer)                 [typed worker; `public`]
 
 A width-`W` integer register handle: `W` wires (wire 1 = MSB) into a context that
-owns the state (§4.3), the ℤ_{2^W} analogue of `QBool`. `W` is the ONLY type
-parameter (§3.1); the context is an abstract FIELD (never a second parameter —
-the `QBool` "no `QInt{W,C}` metastasis" rule), acceptable because handles are not
-the hot loop.
+owns the state (§4.3), the ℤ_{2^W} analogue of `QBool`. `W` is the only
+USER-semantic type parameter (§3.1); the CONCRETE owning-context type `C` is a
+TRAILING internal execution parameter (F16), so `QInt{W}` remains a valid partial
+`UnionAll` — every `x::QInt{W} where {W}` signature keeps matching — while the
+`ctx::C` field is concrete, making handle ops inference-clean (Ruling D: the
+`Int(x)` return varies by context, so dispatch must reach `C`).
 
-`QInt{W}(n)` is the preparation cast: allocate `W` fresh |0⟩ wires (region-owned,
-§3.9) and set the bits of `n` with the EXACT kernel `X` (never `Ry(π)` — the
-§3.4 latent-phase discipline). `n ∉ 0:2^W−1` is a `DomainError` (a literal names
-a point in the ring; the chart is `[0, 2^W)`), whereas `add!` OVERFLOW WRAPS
+`QInt{W}(n)` is the preparation cast (a dynamic barrier over `current_context()`,
+so it infers as `QInt{W}`): allocate `W` fresh |0⟩ wires (region-owned, §3.9) and
+set the bits of `n` with the EXACT kernel `X` (never `Ry(π)` — the §3.4
+latent-phase discipline). `n ∉ 0:2^W−1` is a `DomainError` (a literal names a
+point in the ring; the chart is `[0, 2^W)`), whereas `add!` OVERFLOW WRAPS
 (ℤ_{2^W} is the group — documented, tested, never an error): the asymmetry is
-deliberate.
+deliberate. `QInt{W}(ctx::C, n)` is the inference-clean typed worker (`QInt{W,C}`).
 """
-struct QInt{W}
-    ctx::AbstractContext
+struct QInt{W,C<:AbstractContext} <: AbstractQRegister{C}
+    ctx::C
     wires::NTuple{W,WireID}
+
+    function QInt{W,C}(ctx::C, wires::NTuple{W,WireID}) where {W,C<:AbstractContext}
+        _require_concrete_context(C)
+        return new{W,C}(ctx, wires)
+    end
 end
 
-function QInt{W}(n::Integer) where {W}
+# Chart guard, shared by barrier and typed worker; runs BEFORE any context lookup.
+@inline function _check_qint_lit(::Val{W}, n::Integer) where {W}
     (0 ≤ n < (1 << W)) || throw(DomainError(n,
         "QInt{$W}(n): a preparation literal must name a point in 0:$( (1 << W) - 1 ) " *
         "(the ring ℤ_{2^$W}); got $n. Arithmetic wraps (`add!`), but a literal " *
         "outside the ring is a bug (D2/§3.2)."))
-    ctx = current_context()
-    ws = ntuple(_ -> allocate!(ctx), W)                 # W fresh |0⟩, region-owned (§3.9)
-    x = QInt{W}(ctx, ws)
+    return nothing
+end
+
+# Public zero-context barrier: reads `current_context()` once, hands to the worker.
+function QInt{W}(n::Integer) where {W}
+    _check_qint_lit(Val(W), n)
+    return QInt{W}(current_context(), n)
+end
+
+"""
+    QInt{W}(ctx::C, n::Integer) -> QInt{W,C}
+
+The context-explicit preparation cast (`public`, not exported): allocate `W`
+fresh |0⟩ wires in `ctx` and set the bits of `n`, returning an inference-clean
+`QInt{W,C}`. The hot-loop / internal-seam entry (avoids re-reading the
+ScopedValue); the ℤ_{2^W} analogue of `QBool(ctx, b)`.
+"""
+function QInt{W}(ctx::C, n::Integer) where {W,C<:AbstractContext}
+    _check_qint_lit(Val(W), n)
+    ws = ntuple(_ -> allocate!(ctx), Val(W))            # W fresh |0⟩ (Val(W) ⇒ inference-clean length; §3.9)
+    x = QInt{W,C}(ctx, ws)
     @inbounds for j in 1:W
         ((n >> (W - j)) & 1) == 1 && apply!(ctx, X, (ws[j],))   # wire j = bit 2^{W-j}; exact X
     end
@@ -67,27 +95,30 @@ function QInt{W}(n::Integer) where {W}
 end
 
 """
-    _adopt_qint(ctx, ws::NTuple{W,WireID}) -> QInt{W}
+    _adopt_qint(ctx::C, ws::NTuple{W,WireID}) -> QInt{W,C}
 
-INTERNAL seam: wrap ALREADY-live wires as a `QInt{W}` handle WITHOUT preparing
+INTERNAL seam: wrap ALREADY-live wires as a `QInt{W,C}` handle WITHOUT preparing
 anything (the analogue of `_adopt_qbool`). Used by the fresh-output value-world
 adders (surface/arithmetic.jl) and the Choi harness.
 """
-_adopt_qint(ctx::AbstractContext, ws::NTuple{W,WireID}) where {W} = QInt{W}(ctx, ws)
+_adopt_qint(ctx::C, ws::NTuple{W,WireID}) where {W,C<:AbstractContext} = QInt{W,C}(ctx, ws)
 
 """
-    _here(x::QInt) -> AbstractContext
+    _here(x::QInt{W,C}) -> C
 
-Assert `x`'s owning context is the active one and return it (fail-loud; the
-`QBool` `_here` for a multi-wire register). ArgumentError on an escaped handle
-(WireIDs are per-context — a cross-context id collision would silently target the
-wrong physical qubits).
+Assert `x`'s owning context is the active one and OPEN, and return it as the
+concrete `C` (fail-loud; the `QInt` sibling of the `AbstractQubit` `_here`).
+ArgumentError on an escaped handle (WireIDs are per-context — a cross-context id
+collision would silently target the wrong physical qubits); ErrorException on a
+torn-down (closed) context, before any FFI touch (F16 §5.1).
 """
-@inline function _here(x::QInt)
-    x.ctx === current_context() || throw(ArgumentError(
+@inline function _here(x::QInt{W,C}) where {W,C}
+    ctx = contextof(x)
+    ctx === current_context() || throw(ArgumentError(
         "action on QInt register $(x.wires): the handle belongs to a different " *
         "context than the active one — a handle escaped its context/region."))
-    return x.ctx
+    _require_open(ctx, "action on QInt register $(x.wires)")
+    return ctx
 end
 
 """
@@ -100,11 +131,8 @@ measured via `Bool(x[i])` (§8.5) — and on a cross-context handle, and (guardr
 1) under a live `when` control. Eager-only: on a density context each wire
 measurement throws (a scalar outcome is a trajectory, not a channel — §3.8).
 """
-function Base.Int(x::QInt{W}) where {W}
-    ctx = x.ctx
-    ctx === current_context() || throw(ArgumentError(
-        "Int(x): QInt register $(x.wires) belongs to a different context than the " *
-        "active one — a handle escaped its context/region."))
+function Base.Int(x::QInt{W,C}) where {W,C}
+    ctx = _here(x)
     _assert_no_control(ctx, "measurement cast Int(x)")
     # Partial-consumption guard (D2/§8.5): a set check on the single-sourced
     # consumed set + liveness, BEFORE any measurement — never a silent reinterpret.
@@ -141,11 +169,16 @@ parent). `reg`/`idx` are provenance for messages only; aliasing safety is alread
 guaranteed because `x[i].wire === x.wires[i]` (a `WireID` collision `apply!`
 catches — §8.4).
 """
-struct WireRef <: AbstractQubit
-    ctx::AbstractContext
+struct WireRef{C<:AbstractContext} <: AbstractQubit{C}
+    ctx::C
     wire::WireID
     reg::WireID     # provenance: the parent's MSB wire (messages only)
     idx::Int        # 1-based slice index (messages only)
+
+    function WireRef{C}(ctx::C, wire::WireID, reg::WireID, idx::Int) where {C<:AbstractContext}
+        _require_concrete_context(C)
+        return new{C}(ctx, wire, reg, idx)
+    end
 end
 
 """
@@ -155,9 +188,9 @@ end
 `x`'s, and only `x` (or a slice consuming it) traces it. `BoundsError` off
 `1:W` (the Base idiom).
 """
-function Base.getindex(x::QInt{W}, i::Integer) where {W}
+function Base.getindex(x::QInt{W,C}, i::Integer) where {W,C}
     (1 ≤ i ≤ W) || throw(BoundsError(x, i))
-    return WireRef(x.ctx, x.wires[i], x.wires[1], Int(i))
+    return WireRef{C}(x.ctx, x.wires[i], x.wires[1], Int(i))
 end
 
 # A returned slice escapes carrying its one borrowed wire (regions.jl).
@@ -168,14 +201,31 @@ _escaped_wires(r::WireRef) = [r.wire]
 # ---------------------------------------------------------------------------
 
 """
-    _dual_transform(::QInt{W}) -> QFT
+    duality(::Type{<:QInt{W}}) -> DualitySpec
 
-The character-group basis change F_G of a `QInt{W}` register: the forward DFT `F`
-on ℤ_{2^W} (`QFT(W, false)`, kernel/qft.jl). Unlike `QBool`'s self-dual `H`, this
-is F ≠ F† — the direction is pinned by the Pontryagin modulation test
-(surface/arithmetic.jl, §3.3). INTERNAL trait (P7), never a surface name.
+The F19 duality/bicharacter trait of a `QInt{W}` register (§3.3), CONTEXT-FREE:
+`QInt{W,EagerContext}` and `QInt{W,DensityMatrixContext}` describe the same
+Hilbert space, group ℤ_{2^W}, Fourier transform, and pairing. Its
+`transform = QFT(W, false)` is the forward DFT `F` on ℤ_{2^W} (kernel/qft.jl);
+unlike `QBool`'s self-dual `H`, F ≠ F† (the direction pinned by the Pontryagin
+modulation test, surface/arithmetic.jl). Its bicharacter is `ω^{xy}`,
+ω = e^{2πi/2^W}, declared `SymmetricPairing`. `_dual_transform` (views.jl) reads
+`.transform`. See kernel/views.jl for the trait machinery. INTERNAL trait (P7).
 """
-_dual_transform(::QInt{W}) where {W} = QFT(W, false)
+duality(::Type{<:QInt{W}}) where {W} =
+    DualitySpec(Cyclic2PowGroup{W}(), QFT(W, false), Pow2Bicharacter{W}(), SymmetricPairing())
+
+"""
+    action_group(::Type{<:QInt{W}}, ::ActionFamily) -> AbstractActionGroup
+
+The label group of a `QInt{W}` action FAMILY (F19), keeping the two DISTINCT
+group structures from being conflated (§3.4/D12): the additive `add!`/`dual(x)`
+world is cyclic ℤ_{2^W} (`Cyclic2PowGroup{W}`), while the transversal bitwise
+`x ⊻= y` world is (ℤ₂)^W (`BitVectorGroup{W}`). Same register, two group actions —
+`dual(x)` (the QFT) is the character group of the CYCLIC one, never the bitwise.
+"""
+action_group(::Type{<:QInt{W}}, ::AddFamily) where {W} = Cyclic2PowGroup{W}()
+action_group(::Type{<:QInt{W}}, ::XorFamily) where {W} = BitVectorGroup{W}()
 
 """
     dual(x::QInt{W}) -> DualView

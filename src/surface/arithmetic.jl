@@ -185,8 +185,9 @@ CNOT (`s ⊻= x`: `|x⟩|0⟩ ↦ |x⟩|x⟩`, entangled — NOT a clone; no-clo
 copying a superposed `x`). `x` stays live and recoverable. The value-world adders
 build on this so the input remains a valid register (reversible dataflow, P9).
 """
-function _fresh_copy(x::QInt{W}) where {W}
-    s = QInt{W}(0)
+function _fresh_copy(x::QInt{W,C}) where {W,C}
+    ctx = contextof(x)            # the caller already validated x via `_here`; reuse its typed ctx
+    s = QInt{W}(ctx, 0)           # fresh |0⟩^W via the KNOWN ctx (no ScopedValue reread; F16)
     xor(s, x)                     # s ⊻= x: transversal load (s starts |0⟩)
     return s
 end

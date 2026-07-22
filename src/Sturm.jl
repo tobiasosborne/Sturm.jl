@@ -67,9 +67,12 @@ include("context/density.jl")
 include("context/regions.jl")
 
 # --- M3: QBool, the boundary casts (bead Sturm.jl-77m2) ---------------
-# The FIRST surface vocabulary of the rebuild. `types/qbool.jl` (the register
+# The FIRST surface vocabulary of the rebuild. `types/register.jl` (the F16
+# context-indexed handle hierarchy `AbstractQRegister{C}`/`AbstractQubit{C}` +
+# the F15 number-like-handle contract) before `types/qbool.jl` (the register
 # handle + preparation cast) before `surface/casts.jl` (the measurement cast
-# dispatches on QBool); both after the M2 context layer they call into.
+# dispatches on QBool); all after the M2 context layer they call into.
+include("types/register.jl")
 include("types/qbool.jl")
 include("surface/casts.jl")
 
@@ -153,6 +156,12 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     statevector, density_matrix, apply_channel!, sqrt_u2,
     # M4 view machinery (kernel `public`, reachable as `Sturm.view`, not dumped)
     view, View, DualView,
+    # F16/F15 register hierarchy + traits (kernel `public`, not dumped)
+    AbstractQRegister, contextof, contexttype, register_style,
+    RegisterStyle, NumberLikeHandleStyle, AddressingModeStyle,
+    # F19 duality/bicharacter trait (kernel `public`, reachable as `Sturm.duality`)
+    duality, bicharacter, pairing_exponent, action_group,
+    DualitySpec, ActionFamily, AddFamily, XorFamily,
     # M6 kernel/type surface (kernel `public`, reachable as `Sturm.QFT`, not dumped)
     QFT, P, WireRef, AbstractQubit,
     # M7 Bennett bridge query values (kernel `public`, 7 produces / 3 applies)

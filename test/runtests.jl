@@ -109,6 +109,15 @@ end
 
 @testset "Sturm.jl boot lints" begin
 
+    # Method-ambiguity gate (F16/F15, bead vanm): the broad number-like-handle
+    # guards `==`/`isequal`/`isless(::AbstractQRegister, ::Any)` (register.jl) can
+    # clash with Base's `::Any`-methods (Missing/WeakRef); they are disambiguated
+    # explicitly. Pin the whole module ambiguity-free so a future broad method
+    # cannot silently reintroduce one.
+    @testset "no method ambiguities in Sturm" begin
+        @test length(detect_ambiguities(Sturm; recursive=true)) == 0
+    end
+
     @testset "Physics-cite lint" begin
         @testset "lint function catches a fabricated missing reference" begin
             # This is the "actually works" self-test the deliverable
@@ -290,5 +299,9 @@ end
 
     @testset "M7 — Bennett bridge: oracle, accumulate, DJ/BV, control" begin
         include("test_m7_bennett.jl") # §3.4/§7.4/§7.5/D9/D14 laws (needs Bennett loaded)
+    end
+
+    @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
+        include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
     end
 end

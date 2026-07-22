@@ -66,6 +66,11 @@ the idiomatic alternative). Fields:
 - `rng` — Julia-owned reproducibility (Orkan has no RNG, audit §6); `nothing`
   means the task-global default. Untyped: the measure-and-discard path is cold,
   and typing it would force a `Random` dependency `src/` may not take.
+- `closed` — lifecycle flag (F16 §5.1): set by `teardown!` when the Orkan
+  `state_t` is freed. A handle returned from `eager do … end` stores this
+  torn-down context; rebinding it with `@context` would otherwise reach freed
+  FFI storage, so `_require_open` (via `_here`) fails LOUD before any state
+  read/alloc/FFI touch. A pure safety check — it never alters a live channel.
 """
 mutable struct ContextCore
     state::OrkanStateRaw
@@ -82,12 +87,28 @@ mutable struct ContextCore
     strict::Bool
     wire_counter::Int
     rng::Any
+    closed::Bool
 end
 
 function ContextCore(state::OrkanStateRaw, storage::Cint, capacity::Int; rng=nothing, strict::Bool=false)
     return ContextCore(state, storage, capacity, 0, Int[], Dict{WireID,Int}(),
         Set{WireID}(), Dict{WireID,U2}(), Vector{WireID}[], WireID[],
-        Dict{WireID,Vector{WireID}}(), strict, 0, rng)
+        Dict{WireID,Vector{WireID}}(), strict, 0, rng, false)
+end
+
+"""
+    _require_open(ctx, op) -> ctx
+
+Fail loud if `ctx`'s Orkan `state_t` has been torn down (F16 §5.1). Called by
+`_here` before any operation touches state — a dangling handle from a closed
+`eager`/`density` block must not reach freed FFI storage. ErrorException (a
+lifecycle/liveness failure, not a well-formed-but-forbidden op — S13).
+"""
+@inline function _require_open(ctx::AbstractContext, op::AbstractString)
+    _core(ctx).closed && error(
+        "$op: the owning context has been torn down (its Orkan state is freed) — " *
+        "this is a dangling handle from a closed `eager`/`density` block (F16 §5.1).")
+    return ctx
 end
 
 """
@@ -218,7 +239,13 @@ resource form's `finally` — NEVER from a GC finalizer (audit §5: finalizer +
 FFI is unsafe; runs in arbitrary GC contexts). `state_free` is NULL-safe/
 idempotent, so a stray double-call is harmless, but the invariant is single-free.
 """
-teardown!(ctx::AbstractContext) = orkan_state_free!(_core(ctx).state)
+function teardown!(ctx::AbstractContext)
+    core = _core(ctx)
+    core.closed && return nothing          # idempotent (state_free is NULL-safe too)
+    orkan_state_free!(core.state)
+    core.closed = true                     # arm the dangling-handle guard (F16 §5.1)
+    return nothing
+end
 
 # --- Primitive gate vocabulary (what the Ad emitter lowers to) ----------
 #

@@ -96,16 +96,115 @@ struct View{V<:ProcessValue,H} <: AbstractView
     parent::H
 end
 
+# ===========================================================================
+# F19 — the explicit symmetric bicharacter / duality trait (§3.3)
+# ===========================================================================
+#
+# The dual view's basis change is only HALF the story: the physics that makes
+# `q̂ ⊻= r ≡ r̂ ⊻= q` (CZ symmetry, §7.3) a theorem is the register's PAIRING
+# B : G × Ĝ → U(1), and its symmetry is a PROPERTY THAT MUST BE DECLARED, never
+# inferred from the Fourier matrix (evaluation G × Ĝ → U(1) is not intrinsically
+# symmetric — F16 §8, alternatives rejected). So the trait carries four data as
+# TYPES: the label group `G`, the character transform `F` (the process value the
+# view applies), the selected bicharacter `B`, and the symmetry marker `S`. It is
+# CONTEXT-FREE by design: the Hilbert space, group, transform, and pairing do not
+# depend on how the register is executed. The CZ-symmetry law test consults the
+# declared `symmetry(...)`; a future non-symmetric self-dual register may keep
+# `dual` yet must NOT assert the alternative operand order equivalent.
+#
+# Physics/spec grounding: PRD-v2 §3.3 (dual, Pontryagin pairing), §7.3 (CZ
+# symmetry theorem). docs/physics/wharton_koch_quaternion_bloch.md (HXH = Z, the
+# self-dual H); docs/physics/chen_stoudenmire_white_qft_entanglement.md (the QFT
+# view on ℤ_{2^W}).
+
+"Label-group of a register's self-action (F19): ℤ₂, cyclic ℤ_{2^W}, or (ℤ₂)^W."
+abstract type AbstractActionGroup end
+struct Z2Group <: AbstractActionGroup end
+struct Cyclic2PowGroup{W} <: AbstractActionGroup end   # ℤ_{2^W} (the `add!`/`dual` world)
+struct BitVectorGroup{W} <: AbstractActionGroup end    # (ℤ₂)^W  (the transversal `⊻` world)
+
+"Action-family tag (F19): which group a `QInt` op acts through (add! vs ⊻)."
+abstract type ActionFamily end
+struct AddFamily <: ActionFamily end
+struct XorFamily <: ActionFamily end
+
+"""
+    Pow2Bicharacter{W}
+
+The selected nondegenerate pairing on ℤ_N × ℤ_N, N = 2^W:
+B_W(x,y) = ω^{xy}, ω = e^{2πi/N}. For W = 1 this is the ℤ₂ pairing (−1)^{xy}
+(so `QBool` and one `QInt` wire share one trait shape). Symmetric and
+nondegenerate; the exact integer exponent is exposed separately
+(`pairing_exponent`) so the law tests avoid floating-point round-off.
+"""
+abstract type AbstractBicharacter end
+struct Pow2Bicharacter{W} <: AbstractBicharacter end
+
+"Declared symmetry of the pairing (F19): a PROPERTY, never inferred (§3.3)."
+abstract type PairingSymmetry end
+struct SymmetricPairing <: PairingSymmetry end
+struct NonSymmetricPairing <: PairingSymmetry end
+
+"""
+    DualitySpec{G,F,B,S}(group, transform, bicharacter, symmetry)
+
+The complete duality specification of a register type (F19): the label group,
+the character-group transform `F_G` (a process value — `H` for ℤ₂, `QFT` for
+ℤ_{2^W}), the selected bicharacter, and the declared symmetry. Reached by the
+`duality(::Type)` trait; `transform`/`symmetry` accessors extract fields.
+"""
+struct DualitySpec{G<:AbstractActionGroup,F<:ProcessValue,B<:AbstractBicharacter,S<:PairingSymmetry}
+    group::G
+    transform::F
+    bicharacter::B
+    symmetry::S
+end
+
+transform(d::DualitySpec) = d.transform
+symmetry(d::DualitySpec) = d.symmetry
+
+"""
+    pairing_exponent(::Pow2Bicharacter{W}, x, y) -> Integer
+
+The EXACT integer exponent `k` with B_W(x,y) = ω^k, ω = e^{2πi/2^W}:
+`k = (x·y) mod 2^W`. Computed in exact integer arithmetic (no float error) so
+the bicharacter law tests (identity, bilinearity, nondegeneracy, symmetry) are
+exact for small `W`. `bicharacter` maps it to the phase.
+"""
+pairing_exponent(::Pow2Bicharacter{W}, x::Integer, y::Integer) where {W} =
+    mod(Int(x) * Int(y), 1 << W)
+
+"""
+    bicharacter(::Pow2Bicharacter{W}, x, y) -> ComplexF64
+
+The pairing phase B_W(x,y) = ω^{xy}, ω = e^{2πi/2^W}, via the exact exponent.
+"""
+function bicharacter(b::Pow2Bicharacter{W}, x::Integer, y::Integer) where {W}
+    N = 1 << W
+    return cispi(2 * pairing_exponent(b, x, y) / N)
+end
+
+"""
+    duality(::Type{<:AbstractQubit}) -> DualitySpec
+
+The F19 trait for a single-wire register (`QBool`, `WireRef`): G = ℤ₂
+(self-dual), transform = the exact kernel `H` (F = H = F†), pairing (−1)^{xy},
+declared symmetric. `QInt{W}` supplies its own cyclic specialization
+(types/qint.jl). CONTEXT-FREE (P7 trait).
+"""
+duality(::Type{<:AbstractQubit}) =
+    DualitySpec(Z2Group(), H, Pow2Bicharacter{1}(), SymmetricPairing())
+
 """
     _dual_transform(reg) -> ProcessValue
 
-The character-group basis change F_G for a register type (P7 trait). For `QBool`
-(G = ℤ₂, self-dual) it is the exact kernel `H` (F = H = F†;
-docs/physics/wharton_koch_quaternion_bloch.md). M6 adds
-`_dual_transform(::QInt{W}) = QFT_W` (F ≠ F†; the direction pinned by the
-Pontryagin unit test, §3.3). INTERNAL — never a surface name.
+The character-group basis change F_G for a register (P7 trait) — the `transform`
+component of its `duality` spec. For `QBool` it is the exact kernel `H` (ℤ₂
+self-dual; docs/physics/wharton_koch_quaternion_bloch.md); for `QInt{W}` it is
+`QFT(W, false)` (F ≠ F†; the direction pinned by the Pontryagin unit test, §3.3).
+INTERNAL — never a surface name; the view applies it, never stores it.
 """
-_dual_transform(::AbstractQubit) = H
+_dual_transform(x) = transform(duality(typeof(x)))
 
 """
     dual(q::QBool) -> DualView
@@ -181,6 +280,15 @@ per-op `when`-guardrail consumes exactly this resolver
 """
 _parent_wire(q::AbstractQubit) = q.wire
 _parent_wire(v::AbstractView) = _parent_wire(v.parent)
+
+# A view is an ADDRESSING MODE, not a number-like handle (F15): it re-addresses a
+# borrowed handle and does NOT ride P9. Its owning context and context type come
+# from the parent — the single source of truth (F16: no redundant `C` on the
+# wrapper; `DualView{QInt{W,C}}` already carries `C`).
+register_style(::Type{<:AbstractView}) = AddressingModeStyle()
+contextof(v::AbstractView) = contextof(v.parent)
+contexttype(::Type{<:DualView{H}}) where {H} = contexttype(H)
+contexttype(::Type{<:View{V,H}}) where {V,H} = contexttype(H)
 
 # A returned view escapes carrying its borrowed parent's wires (regions.jl).
 _escaped_wires(v::AbstractView) = _escaped_wires(v.parent)

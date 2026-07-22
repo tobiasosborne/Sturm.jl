@@ -14,15 +14,17 @@
 # the leaf-handle pattern M4 views (borrow a parent handle) and M6 `QInt{W}`
 # (`(ctx, NTuple{W,WireID})`) inherit.
 #
-# TYPE-STABILITY (the QBool{C} call, recorded once): `ctx::AbstractContext` is
-# an ABSTRACT field, so QBool is not a concrete-leaf type and handle ops take a
-# dynamic dispatch on `ctx`. This is DELIBERATE and acceptable — handles are not
-# in the hot loop (the hot loop is `apply!` over raw wires + the per-wire fusion
-# buffer, M2). We do NOT parameterize `QBool{C<:AbstractContext}`: the PRD's
-# surface names are `QBool` and `QInt{W}` (W the ONLY type parameter, §3.1), and
-# a context parameter would metastasize into `QInt{W,C}` and infect every
-# signature. The `@code_warntype` gate stays on the wire-level `apply!`/emit
-# path, never on handle construction.
+# TYPE-STABILITY (F16, bead vanm): `QBool{C}` carries the CONCRETE owning-context
+# type `C` as a trailing parameter, and its `ctx::C` field is therefore concrete.
+# Handle ops (`not!`, `⊻=`, `Bool`, `dual`) load `q.ctx` as `C` and dispatch
+# `_act!`/`apply!`/casts statically — closing the M4/M6 defect where an abstract
+# `ctx::AbstractContext` forced a dynamic dispatch on every action (Ruling D also
+# demands it: the cast return type varies by context, so dispatch must reach the
+# concrete context type). The context INSTANCE stays a field: `C` selects code,
+# object identity (`ctx === current_context()`) establishes ownership — two
+# `EagerContext`s share `C` yet must not mix (register.jl header). Public
+# construction crosses ONE dynamic function barrier over `current_context()`;
+# the typed worker `QBool(ctx::C, ...)` is the hot-loop / internal-seam entry.
 #
 # Physics/spec grounding: PRD-v2 §3.1–3.2 (casts, boundary algebra), §3.9
 # (allocation-is-initialization, regions), §4.3 (register = handle; Ad drops
@@ -30,24 +32,15 @@
 # Preparation value derivation: docs/physics/wharton_koch_quaternion_bloch.md
 # (the PINNED U(2) convention; Ry/Rz gate table, Eq 8).
 
-"""
-    AbstractQubit
-
-Supertype of every SINGLE-WIRE quantum handle: `QBool` (an owned register) and
-`WireRef` (a BORROWED slice `x[i]` of a `QInt`, M6 types/qint.jl). Both carry a
-`.ctx` and a `.wire`, so the single-wire surface family — the action family
-(`not!`, `⊻=`), the `dual` view, `when`, and the `Bool`/`convert` measurement
-casts — dispatches on `AbstractQubit` and is written ONCE (the `AbstractArray`
-reuse move; CLAUDE.md #13). The OWN-vs-BORROW distinction is NOT in these shared
-ops — it lives in construction (a `WireRef` never `allocate!`s) and in
-consumption (measuring a `WireRef` consumes the shared wire on the single-sourced
-set, a partial consumption of its parent register — PRD-v2 §4.5/§8.5).
-"""
-abstract type AbstractQubit end
+# `AbstractQubit{C}` (the single-wire supertype) now lives in types/register.jl,
+# parameterized by the owning-context type `C` — shared by `QBool{C}` and the M6
+# borrow `WireRef{C}`. See there for the OWN-vs-BORROW discipline.
 
 """
     QBool(p::Real, φ::Real = 0.0) -> QBool
     QBool(b::Bool)                -> QBool
+    QBool(ctx::C, b::Bool)        -> QBool{C}   [typed worker; `public`]
+    QBool(ctx::C, p::Real, φ = 0) -> QBool{C}   [typed worker; `public`]
 
 A single-qubit register handle: the quantum analogue of `Bool`. Its two forms
 are the PREPARATION cast (cq, §3.2):
@@ -58,15 +51,26 @@ are the PREPARATION cast (cq, §3.2):
   widens to Complex — D1). `φ` is unrestricted.
 - `QBool(b::Bool)` is the definite-bit cast: |0⟩ for `false`, |1⟩ for `true`.
 
-A `QBool` stores its owning `ctx` and `wire::WireID`; it is a LIVE handle —
+A `QBool{C}` stores its owning `ctx::C` and `wire::WireID`; it is a LIVE handle —
 consumed by `Bool(q)` (the qc cast, surface/casts.jl) and traced at region exit
-if neither consumed nor returned (§3.9). Two `QBool`s are never structurally
-equal (distinct wires); the boundary laws are state/channel-level, not `==` on
-handles (see D1 pole degeneracy, tested at the state level).
+if neither consumed nor returned (§3.9). Two `QBool`s have NO value equality
+(F15 — register.jl throws on `==`/`hash`); the boundary laws are state/channel-
+level, and `===` is the handle-identity test (D1 pole degeneracy, tested at the
+state level).
+
+The zero-context public forms read `current_context()` (a ScopedValue: its
+static type is `AbstractContext`, so `QBool(false)` INFERS as `QBool`, not
+`QBool{C}` — intrinsic to dynamic scope, F16 §4). Cross the function barrier or
+use the typed worker `QBool(ctx::C, b)` for an inference-clean hot loop.
 """
-struct QBool <: AbstractQubit
-    ctx::AbstractContext   # the OWNING context (§4.3: a register is a handle into a context)
+struct QBool{C<:AbstractContext} <: AbstractQubit{C}
+    ctx::C                 # the OWNING context, CONCRETE (§4.3; F16 inference)
     wire::WireID           # the M2 identity core (types/wire.jl)
+
+    function QBool{C}(ctx::C, wire::WireID) where {C<:AbstractContext}
+        _require_concrete_context(C)
+        return new{C}(ctx, wire)
+    end
 end
 
 """
@@ -88,26 +92,58 @@ docs/physics/wharton_koch_quaternion_bloch.md (Ry/Rz, Eq 8).
 """
 _prep_u2(p::Float64, φ::Float64) = Rz(φ) ∘ Ry(2 * asin(sqrt(p)))
 
-function QBool(p::Real, φ::Real = 0.0)
-    # Chart guard BEFORE any sqrt/asin: names p in the message (fail-loud), and
-    # NaN ≤ 1 is false so NaN throws here too. Never widened to Complex (D1).
+# Chart guard, shared by the barrier and the typed worker: names p (fail-loud),
+# and NaN ≤ 1 is false so NaN throws too. Runs BEFORE any context lookup, so an
+# invalid `p` is a DomainError even with no context bound (D1; never widened to
+# Complex).
+@inline function _check_qbool_prob(p::Real)
     (0.0 ≤ p ≤ 1.0) || throw(DomainError(p,
         "QBool(p, φ): p must be a probability in [0,1] (got $p). The (p,φ) " *
         "literal never widens to Complex (D1); it is the d=2 amplitude chart."))
-    ctx = current_context()
-    w = allocate!(ctx)                                # |0⟩, region-owned (§3.9)
-    apply!(ctx, _prep_u2(Float64(p), Float64(φ)), (w,))  # Float64 before the emit (D1)
-    return QBool(ctx, w)
+    return nothing
 end
 
-function QBool(b::Bool)
-    # Definite bit: |0⟩ needs no gate; |1⟩ is one EXACT kernel X (constants.jl),
-    # NOT Ry(π) — pre-empts the v0.1 latent-phase bug §3.4 names. `Bool <: Real`,
-    # so `QBool(true)` dispatches HERE (more specific), not the (p,φ) method.
-    ctx = current_context()
+# --- Public zero-context forms: the dynamic function barrier (F16 §4) -------
+# Each reads `current_context()` ONCE and hands off to the typed `QBool(ctx, …)`
+# worker. `QBool(false)` therefore INFERS as `QBool` (the ScopedValue is typed
+# `AbstractContext`); the worker `QBool(ctx::C, false)` infers `QBool{C}`.
+
+function QBool(p::Real, φ::Real = 0.0)
+    _check_qbool_prob(p)
+    return QBool(current_context(), Float64(p), Float64(φ))
+end
+
+# Definite bit: `Bool <: Real`, so `QBool(true)` dispatches HERE (more specific),
+# not the (p,φ) method.
+QBool(b::Bool) = QBool(current_context(), b)
+
+# --- Typed workers (concrete `ctx::C`): the hot-loop / internal-seam entry --
+# `public`, not exported — a context object is machinery, not an eighth surface
+# construct, but library hot allocation loops and internal seams (`false ⊻ r`,
+# `_fresh_copy`) call these directly to avoid re-reading the ScopedValue.
+
+"""
+    QBool(ctx::C, p::Real, φ::Real = 0.0) -> QBool{C}
+    QBool(ctx::C, b::Bool)                -> QBool{C}
+
+The context-explicit preparation cast: allocate a fresh |0⟩ in `ctx` and prepare
+it, returning an inference-clean `QBool{C}`. The advanced/context-layer analogue
+of `apply!(ctx, …)` — NO new surface construct. Use inside a `C`-typed function
+barrier for allocation-heavy loops (F16 §4). `φ` defaults to 0.
+"""
+function QBool(ctx::C, p::Real, φ::Real = 0.0) where {C<:AbstractContext}
+    _check_qbool_prob(p)
+    w = allocate!(ctx)                                   # |0⟩, region-owned (§3.9)
+    apply!(ctx, _prep_u2(Float64(p), Float64(φ)), (w,))  # Float64 before the emit (D1)
+    return QBool{C}(ctx, w)
+end
+
+# Definite bit: |0⟩ needs no gate; |1⟩ is one EXACT kernel X (constants.jl), NOT
+# Ry(π) — pre-empts the v0.1 latent-phase bug §3.4 names.
+function QBool(ctx::C, b::Bool) where {C<:AbstractContext}
     w = allocate!(ctx)
     b && apply!(ctx, X, (w,))
-    return QBool(ctx, w)
+    return QBool{C}(ctx, w)
 end
 
 """
@@ -135,7 +171,7 @@ harness (test/choi.jl) to hand a Bell-prepared system half to a channel `f`, and
 by M4 views / M6 slices later. NOT the surface literal — a stray `WireID` can
 never be mistaken for a preparation.
 """
-_adopt_qbool(ctx::AbstractContext, w::WireID) = QBool(ctx, w)
+_adopt_qbool(ctx::C, w::WireID) where {C<:AbstractContext} = QBool{C}(ctx, w)
 
 # A returned single-wire handle escapes its region carrying its one wire
 # (regions.jl `_escaped_wires`; the strict-mode survivor set + region re-homing).
