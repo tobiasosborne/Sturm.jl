@@ -6,9 +6,14 @@ A Julia quantum programming language where functions are channels, the
 quantum-classical boundary is a type boundary, and QECC is a higher-order
 function.
 
-**Spec:** `Sturm-PRD-v2.md` (normative). `Sturm-PRD.md` (v0.1) remains for
-the parts v2 explicitly carries over — contexts, Orkan FFI, Bennett bridge,
-QECC-as-HOF, promotion, channel-IR passes discipline.
+**Spec:** `Sturm-PRD-v2.md` is the **sole normative** spec. `Sturm-PRD.md`
+is **historical (v0.1)** — kept only for reference. Carry-over is
+**per-contract, not blanket**: contexts, Orkan FFI, Bennett bridge,
+QECC-as-HOF, promotion, and the channel-IR passes discipline each have an
+explicit verdict (re-derived / verbatim-re-verified / gated on M11) in
+PRD-v2 §10 and `Sturm-v2-IMPLEMENTATION-PLAN.md` §7. Two v0.1 imports are
+explicitly **barred**: the Choi-only pass-correctness criterion (F3,
+phase-blind) and scalar DM measurement.
 
 ## ⚠ REBOOT STATUS (2026-07-04)
 
@@ -126,8 +131,13 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
     in-place; `x += a` on a bare register is a lost-binding trap.
     Views are addressing modes, not numbers — they do not ride P9.
     Angles live in the kernel (process values: `U2` quaternion+phase,
-    `Perm`, `UnitaryDAG`) and are reached only through library HOFs.
-    **If your program reads like a circuit diagram, it is wrong. If it
+    `Perm`, and the certified `UnitaryBlock` — the M8 rename/split of
+    v0.1's `UnitaryDAG` into a channel-level `ChannelDAG` + a `<:
+    ProcessValue` `UnitaryBlock`) and are reached only through library
+    HOFs. **`within(V) do … end`** (the compute/uncompute combinator M8
+    adds, PRD-v2 §4.1a/§4.2) is **`public` kernel/library API, NOT an
+    eighth surface construct** (TR3, ruled session 98) — the surface stays
+    seven. **If your program reads like a circuit diagram, it is wrong. If it
     mentions a gate, a rotation angle, or a process value, it is not
     surface code. If it reads like ordinary Julia with a few casts and
     views, it is probably right.**
@@ -217,6 +227,17 @@ carries over verbatim.
    makes `a ⊻= b` and `b ⊻= oracle(f, x)` physical operations rather
    than rebinds. Scope is the bijective action family ONLY — never
    ring ops (`+`/`*` between registers allocate fresh outputs; P9).
+   **The measurement casts `Bool(q)` / `Int(x)` are the SECOND registered
+   constructor exception** (F13 = Option D, ruled session 98; PRD-v2 §3.6):
+   one spelling in every context, returning the classical system the q→c
+   channel outputs as faithfully as the context allows — a **value**
+   (Eager: a point state IS its value), a **record handle** (DM), or a
+   **wire handle** (Tracing/Hardware). A constructor named `Bool` may thus
+   return a non-`Bool` under DM/Tracing; this is the knowing exception. The
+   three q→c meanings stay distinct operations — *sample* (Eager-native),
+   *record* (the cast, everywhere), *assert* (`postselect`, explicit, §3.6).
+   Registers are **number-like handles**, not `Number`/`Integer` subtypes
+   (F15): coherent `<` returns a `QBool`, never a host `Bool`.
 3. **Type stability.** Check hot paths with `@code_warntype`.
 4. **No unnecessary dependencies.** Core Sturm.jl depends only on Orkan
    (via `ccall`). Only `Test` in extras.

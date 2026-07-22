@@ -1,8 +1,22 @@
 # Sturm.jl — Product Requirements Document
 
+> ⚠ **HISTORICAL (v0.1). Superseded by `Sturm-PRD-v2.md`, which is the sole
+> normative spec.** This document records the v0.1 state — including the
+> condemned θ/φ Bloch-rotation primitive layer (PRD-v2 §1) and the scalar
+> DM-measurement / non-consuming-cast debates that v2 resolves. It is kept
+> for the *parts v2 explicitly re-derives or carries* — but carry-over is
+> per-contract, not blanket: see `Sturm-PRD-v2.md` §10 and
+> `Sturm-v2-IMPLEMENTATION-PLAN.md` §7 for each contract's verdict
+> (re-derived / verbatim-re-verified / gated on M11). Do not treat any
+> statement here as normative where it conflicts with PRD-v2. In
+> particular, the "no `measure()` function" framing of P2 below and the
+> `measure` verb in §2 are v0.1 vocabulary; the v2 surface spells
+> measurement as the consuming casts `Bool(q)` / `Int(x)` (PRD-v2 §3.6,
+> F13 = Option D).
+
 ## Status
 
-This document describes what Sturm.jl *is* today plus the guiding axioms. The axioms (§1) are non-negotiable; the rest is current-state documentation and forward vision.
+This document describes what Sturm.jl *was* at v0.1 plus the guiding axioms. The axioms (§1) are non-negotiable and carry into v2; the rest is historical v0.1-state documentation (see the banner above).
 
 ## One-line summary
 

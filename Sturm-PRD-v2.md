@@ -23,10 +23,16 @@ fixed (Chen–Stoudenmire–White, §9) and the §3.9/§4.2 positioning
 hardened against Silq, current Q#, and "Control as a Constructor"
 (arXiv:2508.21756). Normative code blocks in this document are
 doctest-linted from milestone 0 (bead `hn90`) — round 6's meta-lesson.
-It supersedes the primitive-layer sections of `Sturm-PRD.md` (the θ/φ
-rotation surface) and restates the affected axioms. Everything not explicitly changed here —
+It supersedes `Sturm-PRD.md` **in full**: that document is now **historical**
+(v0.1 state — the θ/φ rotation surface), and this PRD is the sole normative
+spec. Carry-over from v0.1 is **not** blanket. Each carried contract —
 contexts, Orkan FFI, the Bennett bridge, QECC-as-HOF, promotion, the
-channel-IR passes discipline — carries over from v0.1.
+channel-IR passes discipline — has an explicit verdict (re-derived,
+carried-verbatim-and-re-verified, or gated on a later milestone), tabled in
+§10 and in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7. **Nothing is silently
+imported;** in particular v0.1's Choi-only pass-correctness criterion (F3:
+Choi is phase-blind) and its scalar DM measurement are explicitly overturned
+here.
 
 > The one-paragraph summary: v0.1's axioms were right and its primitive layer
 > was wrong. The two Bloch-angle rotations are *coordinates pretending to be
@@ -274,9 +280,24 @@ view **swaps translation and modulation** (the Fourier intertwining
 relation: a conjugated translation *is* a modulation — so `x̂ += a`
 kicks phases on x, `add!(x, a)` read in the dual picture *is* the
 per-wire phase program, and for `QBool` the swap is the familiar pair
-`not!` ↦ X, `not!(dual(·))` ↦ Z); the CZ symmetry `q̂ ⊻= r ≡ r̂ ⊻= q`
+`not!` ↦ X, `not!(dual(·))` ↦ Z); and the CZ symmetry `q̂ ⊻= r ≡ r̂ ⊻= q`
 is the symmetry of the pairing G × Ĝ → U(1). This is P7 achieved *by
-the surface*: one theorem covers every abelian register. The
+the surface*: one theorem covers every abelian register.
+
+**The bicharacter is a carried trait, and its symmetry is a stated law
+(F19).** CZ symmetry is *not* a consequence of Pontryagin duality alone.
+A chosen self-duality `j : G → Ĝ` induces the bicharacter
+`B(x, y) = j(y)(x)`; the pairing is nondegenerate by construction but
+**evaluative, not intrinsically symmetric** — `B(x,y) = B(y,x)` is an
+*additional* law. It holds for the pinned cyclic pairing `B(x,y) = ω^{xy}`
+(the convention every stock register uses), which is why
+`q̂ ⊻= r ≡ r̂ ⊻= q` is a theorem *here*. Accordingly the `dual` trait
+carries a **selected nondegenerate bicharacter** and **declares whether it
+is symmetric**; the universal CZ-symmetry test is asserted only for
+registers whose trait declares symmetry. Note too that `QInt` carries two
+distinct group structures on the same wires — additive ℤ_{2^W} and bitwise
+XOR (ℤ₂)^W — so each action family is indexed by its group; there is not
+one unique "register group" underlying every action. The
 sign-fixing **Pontryagin unit test** (required) pins every "fixed-once"
 convention at once: `superpose!(x); x̂ = dual(x); x̂ += a;
 Int(dual(x)) == a` — modulation shifts the dual outcome by exactly `a`
@@ -445,6 +466,24 @@ in-place `x*y` or `x^2` is not even a bijection of the register
 (irreversible), and a mutating `+` would silently clobber inputs under
 generic read-reuse code — P9 is a pillar, so `+` allocates.
 
+**Registers are number-*like handles*, not numeric types (F15).** A
+register is not a `Number`/`Integer` subtype and must not pretend to be
+one: Julia's numeric ecosystem assumes non-effectful arithmetic, a usable
+`==`/`hash`, total conversions, and concrete scalar comparisons — none of
+which a quantum handle honestly provides (its `⊻`/`+=` action forms are
+effectful, and a coherent `<` **cannot** return a classical `Bool` without
+measurement; a coherent comparator returns a `QBool`, which cannot drive an
+ordinary Julia `if`). So "registers are numeric types" is downgraded to
+**number-like handles with a published operator/trait interface**: the
+register type exports the exact supported operator/trait surface (the ring
+ops it allocates fresh outputs for, the action family it registers
+in-place, the casts, `dual`, `when`), and specifies that coherent
+comparison yields a `QBool`, never a host `Bool`. "Generic arithmetic and
+comparison code rides P8/P9" holds only within that published surface;
+**branch-heavy generic functions are routed through `oracle`**, where
+Bennett restores value semantics by construction — it is not a promise that
+arbitrary `f(x::Integer)`-style code dispatches on a register.
+
 **Caveat on the generic-f path (P8/P9), mechanism corrected (r6):**
 `b ⊻= f(x)` with a hand-written generic `f` is unsafe for multi-step
 logic either way the operators could have been defined. Under the
@@ -479,8 +518,11 @@ oracle ships a soundness bug.
 `when(q) do … end` **stays on the surface**: it reads as control flow,
 which is normal programming. Its semantics is new:
 
-> `when(q, body)` ≡ trace `body` to a unitary-witnessed process value `V`;
-> apply `ctrl(V)` to `(q, wires of body)`.
+> `when(q, body)` ≡ trace `body` to a value carrying a **structural
+> clean-ancilla certificate** (§4.1a) — a state-independent proof
+> (`NoAncilla`, `PermClean` (Bennett `(★)`), or `MatchedPair` (`within`
+> compute/uncompute)) that the composite is a fixed-port unitary `V` on the
+> surviving wires — then apply `ctrl(V)` to `(q, wires of body)`.
 
 The guardrails are soundness requirements, not lints. Guardrails 1 and 2
 are Bădescu–Panangaden's own Conditions III and I (their §1); the
@@ -488,16 +530,17 @@ unitary-witness requirement is exactly the Yuan–Villanyi–Carbin
 soundness/completeness pair (Thms 4.8/4.9); guardrail 3 is the
 non-monotonicity result (§1.1):
 
-1. The body must trace to a **unitary-witnessed** value: any **measurement
-   (qc) cast** (`Bool`, `Int`), `ptrace!`, `cases`, or noise channel inside
-   `when` is a **loud error**. Canonical fresh-|0⟩ allocation — spelled
-   `QBool(false)` — is *permitted*: it is the blessed alloc-inside-`when`
-   scratch pattern (the compute–uncompute lemma below), a preparation
-   *without* backaction, not a qc cast. An arbitrary literal `QBool(p, φ)`
-   (p ∉ {0}, or φ ≠ 0) under `when` is neither — controlled preparation is
-   phase-ambiguous (different unitary extensions of the preparation differ
-   by a global phase observable under outer `ctrl`), so it awaits an
-   explicit ruling and is a loud error naming **D15** until then.
+1. The body must trace to a value carrying a **structural clean-ancilla
+   certificate** (§4.1a). Any **measurement (qc) cast** (`Bool`, `Int`),
+   `ptrace!`, `cases`, or noise channel inside `when` prevents certification
+   and is a **loud error**. Canonical fresh-|0⟩ allocation — spelled
+   `QBool(false)` — remains the blessed alloc-inside-`when` scratch pattern
+   (the certified compute–uncompute lemma below), a preparation *without*
+   backaction, not a qc cast. An arbitrary literal `QBool(p, φ)` (p ∉ {0},
+   or φ ≠ 0) under `when` is admitted only inside a certified
+   compute/uncompute unitary block whose ancilla the §3.9 witness cleans
+   (**D15**, ruled option (b)); a bare such literal — with no matched
+   uncompute — is a loud error naming **D15**.
 2. The body must not operate on the control register — loud error.
 3. No unbounded recursion/iteration under `when` — bounded unrolling only.
 
@@ -518,17 +561,20 @@ accident, and it fixes the enforcement story per context:
   nonempty is a loud error (v0.1 defect §8.1's fix, promoted to
   semantics). Guardrail 2 is a per-op aliasing check that **sees
   through views** (`when(q) do not!(dual(q)) end` is aliased — views
-  resolve to parent wires). Clean-ancilla exit (§3.9): assert the
-  ancilla's |1⟩-block norm is exactly 0 before dealloc — cheap on a
-  statevector. Streaming soundness for alloc-inside-`when` is the
-  compute–uncompute lemma: alloc (uncontrolled) → ctrl(U) → dealloc
-  (uncontrolled) equals ctrl(dealloc ∘ U ∘ alloc) *provided* U cleans
-  the ancilla in the control=1 branch — the §3.9 witness is exactly
-  that proviso, and an unclean ancilla under a superposed control would
-  decohere the control, which is why the unwitnessed case errs loudly.
-- **Tracing (materialize):** the body traces to a `UnitaryDAG` with
-  witness; guardrails are checked on the DAG; materialization is what
-  enables the §4.2 reassociation pass and ctrl-of-DAG fusion.
+  resolve to parent wires). Clean-ancilla exit (§3.9): the **certificate**
+  (§4.1a) is the witness — it proves, for *all* inputs, that `V` returns
+  the ancilla to |0⟩ in the control-firing branch, which is exactly the
+  compute–uncompute proviso (alloc (uncontrolled) → ctrl(U) → dealloc
+  (uncontrolled) equals ctrl(dealloc ∘ U ∘ alloc)). On Eager the runtime
+  |1⟩-marginal check is retained as a **debug cross-check that the
+  certificate was honoured** — sound fail-fast per run, never itself the
+  witness (a single input state cannot certify a universally-quantified
+  containment condition, so an unclean ancilla under a superposed control
+  decoheres the control and the unwitnessed case errs loudly).
+- **Tracing (materialize):** the body traces to a `ChannelDAG` that
+  `certify`s to a `UnitaryBlock` (§4.1); guardrails are checked on the DAG;
+  materialization is what enables the §4.2 reassociation pass and
+  ctrl-of-block fusion.
 - **Required law test:** streaming and materialized execution of the
   same body denote the same channel (Choi-compared on small instances).
 
@@ -541,27 +587,117 @@ the `not!` sandwich (`not!(q); when(q) do … end; not!(q)`) or `cases`
 after measurement — blessed here so Grover-style zero-reflections don't
 go hunting for an `unless`.
 
-### 3.6 `cases` — the classical branch (Kleisli layer)
+### 3.6 Classical outcomes and `cases` (the Kleisli layer)
 
-Unchanged in role: branching on measurement outcomes is `cases`/`@cases`,
-the operational shadow of dynamic lifting (Proto-Quipper, POPL 2023
-arXiv:2204.13041). **D3 is RESOLVED (r6):** under `TracingContext`,
-`Bool(q)` returns a `ClassicalBit` token and `Int(x)` a `ClassicalInt`
-token — Proto-Quipper's *parameter* (circuit-generation-time value) as
-opposed to a *state* (execution-time value); `if token` / `token && …`
-throw a descriptive error pointing to `cases`. The shipped precedent is
-qrisp's Jasp (a measured value is a dynamic tracer; the host `if` is
-refused; branching goes through a dedicated construct), with
-Proto-Quipper-Dyn as the type-theoretic backing. **`cases` does not
-scale to 2^W branch tables and is not asked to:** the blessed pattern
-for wide outcomes is *measure → (traced) classical computation →
-classically-parameterized circuit* — a `ClassicalInt` flows through
-ordinary Julia arithmetic/indexing, and only *branching* on it is
-diverted to `cases`. Under Eager this is literally ordinary code; under
-Tracing it is dynamic lifting at full width, again the Jasp model
-(dynamic loop bounds and indices, compiled once, no 2^W table). The
-QROM measurement-based-uncompute case that motivated the worry lowers
-this way.
+**One spelling, three faithful renderings (F13 = Option D, ruled).** A
+consuming observation is `Bool(q)` / `Int(x)` — the same measurement cast
+in *every* context. The cast denotes the q→c channel; its return is the
+classical system that channel outputs, represented as faithfully as the
+context allows: a **value** under an eager or explicit trajectory (`shots`)
+context (a point state IS its value — an ordinary Julia scalar); a
+**record handle** under exact `DensityMatrixContext` (the distribution
+inside ρ); a **wire handle** under `TracingContext` and hardware
+compilation (no state yet). This is a **registered exception** to the
+Julia constructor convention (`Bool(·)` returning a non-`Bool` under
+DM/Tracing), adopted knowingly alongside `not!` and the view op-assigns
+(CLAUDE.md Julia-conv 2). The operational shadow is dynamic lifting
+(Proto-Quipper, POPL 2023 arXiv:2204.13041); the record/wire is
+Proto-Quipper's *parameter* (circuit-generation-time value) as opposed to
+a *state* (execution-time value). The shipped precedent is qrisp's Jasp
+(a measured value is a dynamic tracer; the host `if` is refused; branching
+goes through a dedicated construct), with Proto-Quipper-Dyn as the
+type-theoretic backing.
+
+Under DM/Tracing/Hardware the returned **token** — a `ClassicalBit` or a
+fixed-width `ClassicalWord{W}` — is a handle to the instrument's classical
+record Σᵢ|i⟩⟨i|_C ⊗ ρ̃ᵢ (physically the measured wire, pinched and kept
+live — the shipped instrument channel, not a new primitive). Tokens are
+**not** subtypes of `Bool`, `Integer`, or `Number`; they form a restricted
+finite SSA language. The circuit is built by ordinary Julia run **once** at
+build time — static loops, static indices, and register widths are all
+concrete; the *only* non-concrete value is a token. A token may flow
+through: (T1) `cases`/`@cases` as a branch discriminant; (T2) the
+register's total finite-group primitives (`xor`/`⊻`/`!`/`~` on bits;
+`+`/`-`, constant `*`, constant shift mod 2^W, and static bit-slice on
+words; comparison against a build-time constant) producing new tokens;
+(T3) a bounded `select(t, table)` or a total `ClassicalTable` lookup;
+(T4) a classical return value. **Width changes are explicit.**
+
+A token in **control-flow or indexing position** — `if`/`&&`/`||`/`?:`/
+`while`, `arr[t]`, `iterate(t)`, an allocation size, value-dispatch, a
+process-value/`U2`/type-parameter/FFI argument — is rejected, mostly by
+Julia's own `TypeError`/`MethodError`, and by descriptive Sturm errors
+where Sturm owns the method. `if token` and short-circuit Boolean syntax
+produce Julia's native non-boolean `TypeError` on the token's type; Sturm
+does **not and cannot** replace that message (only the token's *unqualified*
+type name surfaces — the earlier PRD promise of a descriptive Sturm error
+on `if token` is withdrawn as unimplementable). This is dynamic lifting
+with a restricted classical layer — **not** arbitrary Julia compiled once
+(Julia cannot trace host `if`/`for`/indexing on a symbolic value; pretending
+it can was the defect). Under Eager, tokens do not exist: outcomes are
+scalars and ordinary `if` applies.
+
+Runtime classical branching is explicit:
+
+```julia
+@cases Bool(m) begin
+    false => nothing         # identity branch
+    true  => not!(dual(ψ))   # correction branch
+end
+```
+
+The binary shorthand `@cases selector begin body end` means `true => body`,
+`false => identity`. Multiway cases use concrete disjoint labels plus an
+optional final `_` default and must cover the selector domain. The selector
+is evaluated **once**. `@cases`/`cases` accept a classical selector or an
+explicit observation (`@cases Bool(m)` / `cases(Bool(q)) do … end`); a bare
+quantum register is rejected (F30). The **portable idiom everywhere** is
+`cases(Bool(q))` / `@cases Bool(m)`.
+
+Tokens are **copyable, not affine**: reusing a token in multiple `cases`
+refers to the same measurement record (a classical outcome is physically
+copyable — forcing tokens affine would break repeated feed-forward and the
+M11 syndrome path). Executors retain the joint record Σ_γ|γ⟩⟨γ|_C ⊗ ρ̃_γ
+until the distinguishing classical values are dead (their record traced
+out); **immediate summation of measurement branches while any token or
+derived value remains live is forbidden** — it destroys feed-forward
+correlation.
+
+Every `cases` arm begins with the same quantum environment and must end
+with the same quantum **port signature**: identical live `WireID`s,
+register shapes, consumed status, ownership, and borrow/view relationships.
+A port consumed in only some arms, a surviving branch-local allocation, or
+a branch-dependent returned handle is a loud join error. **`cases` returns
+`nothing`;** quantum φ values are not inferred, and a branch-dependent
+*classical* value is built with `select`. **`cases` does not scale to 2^W
+branch tables and is not asked to:** wide feed-forward is a finite
+classical SSA over concrete unrolled structure (a static `for j in 1:W`
+per-bit conditioned circuit — the semiclassical/Pauli-frame pattern),
+never an implicit 2^W-arm outcome table. The QROM measurement-based-
+uncompute case that motivated the worry lowers this way. Tracing lowers
+observation to `MeasureNode`, classical computation to typed SSA nodes, and
+branching to an acyclic `CasesNode` with nested channel regions; there are
+no symbolic loop backedges or general φ nodes in M8.
+
+**The three meanings, kept distinct (postselection).** "Measurement
+returns a `Bool`" has three physically coherent readings, and one name
+silently covering two of them is the silent-wrongness pattern this project
+exists to kill: **sample** it (Born-rule dice — Eager/trajectory only);
+**record** it (the TP instrument — what the cast `Bool(q)` denotes in every
+context); **assert** it (postselect: the outcome is an *input*, the state
+pays weight tr = p_b). These stay three distinct surface operations. The
+assert path is the explicit opt-in `postselect(record, v)` — never a mode
+of a cast: it denotes ρ ↦ P_v ρ P_v, which **factors through the record**
+as the TP instrument (the §3.2 pinch) followed by the classical effect
+⟨v| on the record wire. TP-record execution stays the DM default; entering
+the CP trace-non-increasing regime is always loud in the source and the
+result visibly carries or exposes the weight p (weights multiply under
+composition). `postselect` is **banned under `when`** (controlled
+postselection is as unrepresentable as controlled measurement — guardrail
+1 covers it with no change). Law tests stay on TP-record semantics by
+default; a postselected comparison must **declare its weight convention**
+(raw J vs conditional J/p) explicitly — a silent choice is a wm28-class
+blindness.
 
 ### 3.7 Universality of the surface (claim, with proof obligation)
 
@@ -607,7 +743,7 @@ superseded by:
 | # | Surface form | Role | Lowering (kernel) |
 |---|---|---|---|
 | 1 | `QBool(p, φ=0)` / `QBool(b)` (D1) | preparation cast (cq) | allocate + literal `U2` |
-| 2 | `Bool(q)`, `Int(x)` — consuming | measurement cast (qc) | instrument; consumes handle |
+| 2 | `Bool(q)`, `Int(x)` — consuming | measurement cast (qc); one spelling, returns a scalar (Eager/`shots`) or a record/wire **token** (DM/Tracing/Hardware) — F13 = Option D | instrument; consumes handle; classical record/token |
 | 3 | `a ⊻= b`, `not!(a)`, `add!(x, ±a)`, P8 mixed forms | the action family: translations / flips / entanglement (D12) | kernel X / T_a / `ctrl(X)` |
 | 4 | `dual(q)`; bound-view actions `q̂ ⊻= r`, `x̂ += a` | conjugate view (Pontryagin) + Ĝ-modulations (D11) | conjugation by F_G |
 | 5 | `when(q) do … end` | coherent control | trace/stream body → `ctrl(V)` (D13) |
@@ -622,21 +758,38 @@ G-translations and their Ĝ-duals, with views as the addressing mode
 needs the library; if a library function needs an angle, it builds a
 process value.
 
-**Context portability (normative table).** Exactly one row of the
-surface is context-sensitive:
+**Context portability (normative table).** The context-sensitive rows are
+the measurement return and host branching (F13 = Option D — one spelling,
+context-faithful return):
 
-| Construct | Eager | DM | Tracing | Hardware |
+| Construct | Eager | Exact DM | Tracing | Hardware |
 |---|---|---|---|---|
 | casts, action family, `dual`, `when`, `oracle` | ✓ | ✓ | ✓ | ✓ |
-| `if` / `&&` on a measured outcome | ✓ | ✓ | ✗ token error → use `cases` (D3) | ✓ |
-| `cases` / `@cases` | ✓ | ✓ (exact, both branches) | ✓ (`CasesNode`) | ✓ |
+| `Bool(q)` / `Int(x)` return | scalar | record token | wire token | wire token |
+| host `if` / `&&` / `\|\|` on the outcome | ✓ | ✗ → `cases` | ✗ → `cases` | ✗ → `cases` |
+| whitelisted finite classical SSA (T2/T3, §3.6) | ordinary Julia | ✓ | ✓ | capability-checked |
+| `cases` / `@cases` | selected arm | all correlated arms (exact) | `CasesNode` | device conditional |
+| token-bounded loop / arbitrary token index | n/a after scalar | ✗ | ✗ | ✗ |
+
+`cases` is the **one fully portable** branch construct (in Eager it runs
+the taken arm). `if`/`&&` is the Eager-only ergonomic shortcut, valid
+exactly where outcomes are scalars. Hardware compilation checks classical
+opcode, width, table, and dynamic-branch capabilities before submission; an
+unsupported feature is a compile error, never a silent lowering to host
+retrace or independent shots. Completed hardware **shot results** are
+ordinary Julia values only *after* execution; mid-circuit hardware feedback
+remains token-plus-`cases`.
 
 **DensityMatrixContext executes channels, not trajectories
-(normative).** Measurement and `cases` on the DM context apply the full
-instrument — all branches evolve, weighted, block-accumulated (each
-branch's local ancillae traced to the common output signature first;
-Born weights ride in the unnormalized branches). One run therefore
-yields the *exact* channel, which is what makes the Choi-level test
+(normative).** Measurement therefore yields a **token** (a handle to the
+still-live classical record), never a scalar `Bool`; `cases` on the DM
+context applies the full instrument — all branches evolve, weighted,
+block-accumulated (each branch's local ancillae traced to the common
+output signature first; Born weights ride in the unnormalized branches),
+and the record is traced (summed) only at the token's last use —
+immediate block-accumulation would destroy feed-forward correlation. One
+run therefore yields the *exact* channel, which is what makes the
+Choi-level test
 discipline (rule 12) cheap: `Choi(teleport) ≈ Choi(id)` is a
 deterministic one-run assertion, no shot averaging. Trajectory sampling
 remains available as an explicit shot API. Harness note: the Choi state
@@ -653,6 +806,52 @@ probe a *coherent* input (pinching and identity coincide on diagonal
 inputs), and teleport-class channel tests must probe a Z-*sensitive*
 state (|i⟩ or |+⟩) — the X-outcome-labeling bug class turns teleport
 into a Z-error channel invisible to Z-basis probes (wm28's family).
+
+**Why three contexts exist — the trichotomy (normative preamble).** Eager,
+DM, and Tracing are not three simulators of one thing; they exist for
+categorically different reasons, and Ruling D's single measurement spelling
+renders the *same* classical system three ways because of it:
+
+1. **Eager — runtime semantics.** The execution model of hardware capable
+   of projective *mid-circuit* measurement with feed-forward (trapped ions
+   et al.), and the prototyping/shot-statistics simulator. Outcomes are
+   real at the moment they occur; values flow; host `if` works. Hardware
+   relates to Eager at *runtime only* — device programs are compiled via
+   Tracing, then execute Eager-like. A point state IS its value, which is
+   why `Bool(q)` returning a raw scalar here is faithful, not a shortcut.
+2. **DM — physical denotation.** The platonic state of the system under
+   channels: the normative semantics, where the law tests (one-run Choi)
+   and correctness licenses live. The record semantics of §3.6 **is the
+   principle of deferred measurement expressed as types** — the record wire
+   is "the measurement not yet read," carried as correlation until last use.
+3. **Tracing — the compiler.** The IR for optimization reasoning.
+   Measurement is a first-class named node with a Bool-typed output wire;
+   `cases` nodes are its consumers; both are the barriers of the §4.2 pass
+   discipline. Canonical measurement optimizations live here: the
+   **deferred-measurement rewrite** (for no-MCM backends: measure +
+   `cases`-on-record → coherent control off the unmeasured wire + terminal
+   measurement; license = Choi equality, defined in DM) and **dead-record
+   elimination** (a record never consumed is pinching; the wire subsequently
+   traced collapses the node chain to a trace).
+
+The cast is not uninteresting on no-MCM hardware — terminal readout is
+still the cast, and the boundary algebra (qc∘cq = id, cq∘qc = pinching,
+§3.2) is context-independent normative structure; what is MCM-specific is
+the *value-returning, branch-on-it* usage.
+
+**The traceable-subset cost of one spelling (accepted, D).** The IR node
+identity is spelling-independent — a measure node is recorded whether the
+user wrote `Bool(q)` or anything else — so "the compiler must see the
+measurement" does not by itself pick a spelling. The genuine surface
+consequence is **program classification**: a program branching via host
+`if Bool(q)` is Eager-pinned and cannot be traced even in principle (the
+trace would record one branch); a program in token-plus-`cases` vocabulary
+traces, optimizes, and ports. Under Option D (one spelling) that boundary
+is **use-site-dependent** — the same text is compiler-food iff its outcomes
+flow only through T1–T4, discovered at trace time by failure rather than
+lexically at a glance. This is the accepted cost of Ruling D; because it
+cannot be lexical, it is **mandated** as a tracer **pre-flight lint** that
+lists each offending use site.
 
 ### 3.9 Scope is the Stinespring boundary
 
@@ -781,14 +980,22 @@ Mechanics, in order of the frictions they resolve:
   per-shot unraveling — or the Stinespring option, keeping the wire alive
   but inaccessible as explicit environment. Density contexts trace
   exactly.
-- **Inside `when`, the boundary is checked.** Alloc-inside-`when` is the
-  clean-ancilla pattern (compute–use–uncompute); there the body must stay
-  unitary, so scope exit requires the |e_G⟩/unitarity witness — under
-  which the deallocation is not a trace at all (the composite is unitary
-  on the surviving wires). Without the witness, guardrail 1 (§3.5) fires
-  loudly. Trace under `ctrl` is never a quiet degradation; it is
-  unrepresentable (§4.4). Bennett `Perm` bodies carry the witness by
-  construction.
+- **Inside `when`, ordinary trace is forbidden.** A body-local canonical
+  ancilla may leave scope only through a certified deallocation
+  (`TraceN`), interpreted as the coisometry `I ⊗ ⟨0|` on the
+  structurally-proved reachable clean subspace `(I−ιι†)Wι=0` (§4.1a) —
+  under which the deallocation is not a trace at all (the composite is
+  unitary on the surviving wires). If no structural clean-subspace proof
+  exists, the body is a channel with an environment and cannot become a
+  process value; guardrail 1 (§3.5) fires loudly. The Eager |1⟩-marginal
+  check is retained only as a **debug assertion** of a previously
+  established certificate — never itself the witness (a single input state
+  cannot certify a universally-quantified containment condition). Bennett
+  `Perm` artifacts supply a clean certificate by checked
+  compute-copy-uncompute construction; a bare `Perm` proves unitarity on
+  **all** of its ports but not cleanliness of an arbitrarily designated
+  subset. Trace under `ctrl` is never a quiet degradation; it is
+  unrepresentable (§4.4).
 - **Ownership: views borrow.** Scope exit traces *owned* registers only.
   `dual(q)`, `view(V, q)`, and `x[i]` borrow; their death traces nothing.
   Returning a view of a dying local is a loud error (or an explicit
@@ -857,8 +1064,25 @@ element — data, not denotation. One abstract type, trait-stratified:
   classical-reversible corner is the best-behaved under control, as
   befits a Bennett-centric language, and that one-line closure fact is
   the proof.
-- `UnitaryDAG` — a `Channel`-style DAG carrying a unitarity witness
-  (produced by tracing `when` bodies and library circuits).
+- `ChannelDAG` — the effect-typed channel IR (typed quantum in/out ports
+  that need not match, plus classical token ports); nodes carry process
+  values, never gate names. It is **not** a process value: it sits on the
+  channel level of §4.4 and `ctrl(::ChannelDAG)` is unrepresentable (P4).
+- `UnitaryBlock{N} <: ProcessValue` — a `ChannelDAG` **certified**
+  (`certify`) to denote a fixed-port unitary on its `N` surviving wires:
+  `N` in-ports `== N` out-ports **with identical resource lineage** (a
+  unitary is *square* — an endomorphism on the same ordered physical
+  boundary, not merely same-width), every internal allocation matched by a
+  certified deallocation covered by a structural clean-subspace certificate
+  (§4.1a). Only `UnitaryBlock` is a process value; only it may be
+  controlled. Allocation is an isometry and deallocation a coisometry — the
+  composite is unitary on surviving ports *exactly when the certificate
+  holds*, which is why a boolean `unitary=true` flag on a DAG is rejected
+  (it proves neither port equality nor the clean-ancilla theorem, F2). `N`
+  is a type parameter (type-stable `ctrl`/`⊗`/`apply!` width dispatch,
+  mirroring `QInt{W}`); the internal `Perm`/oracle ancilla widths stay
+  runtime data inside the frozen body. Produced by tracing `when` bodies
+  and library circuits.
 - Future per-register-type structures (P7): **U(d)** values for `QMod{d}`
   (phase-carrying: a definite representative is φ + `SU(d)` modulo the ℤ_d
   center, `(S, φ) ~ (ζS, φ − arg ζ)`, ζ^d = 1 — `SU(d)` *alone* would
@@ -871,6 +1095,60 @@ element — data, not denotation. One abstract type, trait-stratified:
 
 A register type declares its symmetry structure the way a Julia number type
 declares its arithmetic. The kernel is parametric in it.
+
+### 4.1a The clean-ancilla certificate
+
+A `UnitaryBlock` is minted from a `ChannelDAG` only by a **structural
+clean-ancilla certificate** — an algebraic proof term, produced by a
+**closed** set of physics-grounded constructors, that the block's frozen
+phase-fixed program `W` satisfies the universal containment
+`(I − ιι†) W ι = 0` (F1's clean-subspace condition: `W` maps
+`H_D ⊗ |0⟩_A` back into itself for *all* data, so `U = ι†Wι` is unitary on
+`H_D` and `Tr_A[W(ρ⊗|0⟩⟨0|)W†] = UρU†` — the Stinespring dilation
+contract). The checker validates each constructor against exact node
+identities, port roles, and frozen process values; **no `isapprox`,
+statevector, density matrix, Choi matrix, or sampled execution participates
+in constructing a certificate** — the state check survives only as a debug
+cross-check (§3.5). The constructor set:
+
+- **`NoAncilla`** — the body allocates no ancilla; the composite is a
+  product of fixed-port unitaries, unitary by closure of U(d).
+- **`PermClean`** — the body is a single `Perm` (or `ctrl^k` of one) with
+  declared ancilla ports; Bennett's `(★)` guarantees
+  `P_f : |x⟩|t⟩|0⟩ ↦ |x⟩|t⊕f(x)⟩|0⟩` for every input (a theorem about the
+  generator structure, not a runtime observation), and `ctrl(Perm)=Perm`
+  keeps it phase-free under control. This is F2's "Perm-by-construction",
+  and the `oracle` path produces exactly it.
+- **`MatchedPair`** — the only constructor that introduces fresh ancilla:
+  the `within(V) do … end` combinator, denoting `C† ∘ M ∘ C`. The uncompute
+  is `adjoint(C)` (structurally the same value reversed), so whatever `C`
+  wrote into scratch, `C†` erases, for all inputs. The load-bearing side
+  condition — `M` does not disturb scratch's computational value — is
+  enforced **structurally** by a port-role / effect-footprint analysis:
+  inside the body, scratch handles may appear only as control
+  (`when(scratch) do … end`), never as an `_act!` target; a write to
+  scratch is an aliasing error at trace time. Soundness is Bennett
+  compute/uncompute plus the §4.2 control-scope-narrowing law.
+- **`SeqCert` / `ParCert`** — certificates compose along `∘` and `⊗` (a
+  clean block ∘/⊗ a clean block on the same / disjoint ports is clean),
+  letting `certify` fold a `ChannelDAG` bottom-up.
+- **`AdjointCert`** — if `W` leaves the clean subspace invariant, unitarity
+  forces `W†` to as well; `adjoint(::UnitaryBlock)` reverses the program.
+- **`XportCert`** — an exact pass rewrite that preserves the boundary
+  transports the certificate, so a certified block can survive a pass.
+
+`certify` refuses loudly (fail-fast) if the DAG contains any
+`MeasureN`/`CasesN`/`NoiseN` (channel-level barriers — the seam where the
+classical-control IR of §3.6 attaches), or any allocation not matched to a
+certified deallocation, or if boundary lineage in ≠ out. Acquisition is
+**combinator-carried** (`within` ⇒ `MatchedPair`, `oracle` ⇒ `PermClean`,
+ancilla-free ⇒ `NoAncilla`) — sound by construction, no inference and no
+SMT/solver in M8; a syntactic matched-uncompute verifier and dense
+below-cutoff checks are follow-on/test-only, never certificate-construction
+routes. The adversarial input-dependent program `a = QBool(false); a ⊻= r;
+# drop a` is rejected **structurally** even on an Eager run with `r=|0⟩`
+where the debug marginal is 0 (the checker sees an unmatched target write
+to `a`) — acceptance no longer depends on runtime input (F1).
 
 ### 4.2 The algebra (normative laws = required tests)
 
@@ -933,6 +1211,38 @@ Two further normative constraints, both bought with other people's bugs:
   most-repeated non-trivial idiom in the v0.1 library must not remain
   hand-rolled.
 
+**Pass law (normative — replaces v0.1's Choi-only criterion).** Pass
+correctness is stratified by value kind:
+
+- A **channel pass** (`ChannelDAG → ChannelDAG`, crossing a
+  measurement/`cases`/noise barrier) need only preserve the typed CPTP
+  denotation — Choi/diamond equivalence.
+- A **unitary-block pass** (`UnitaryBlock → UnitaryBlock`) must preserve
+  the phase-fixed `U(d)` representative: either (a) `P(v) ≈ v` under
+  process-value equality (phase-inclusive, mod only the physical ℤ₂
+  double cover — the *same* `≈` that already refuses to merge +I with −I,
+  §4.1; **never** `choi`, which quotients U(1)); or (b) `P` returns a
+  proved phase delta `U' = e^{iδ}U` and the trusted `commit` reattaches
+  `e^{−iδ}` (a `gphase(−δ)` on one boundary qubit) **before** the result may
+  become a `UnitaryBlock`. A pass may **not** take a `UnitaryBlock` to a
+  `ChannelDAG`.
+
+Every unitary pass carries **two** required law tests: direct representative
+equality (`P(v) ≈ v`) **and** equality of the `ctrl`-wrapped pre/post
+channels (`Choi(Ad(ctrl(P(v)))) ≈ Choi(Ad(ctrl(v)))`). **Choi equality of
+the *uncontrolled* values is not a unitary-pass proof** — `Ad_U = Ad_{e^{iα}U}`
+while `C(U) ≠ C(e^{iα}U)`, so a Choi-only pass may silently insert or delete
+a global phase that becomes observable the moment its output reaches `ctrl`
+(the Cirq/Qiskit/pytket controlled-decomposition bug class; Tang–Wright
+Thm 1.1). A `π/3` phase sentinel is a required "test of the test":
+`Choi(Ad(I)) ≈ Choi(Ad(gphase(π/3)))` **but**
+`Choi(Ad(ctrl(I))) ≉ Choi(Ad(ctrl(gphase(π/3))))`. Enforcement mirrors the
+`ctrl` choke point: unitary passes are mechanically restricted to
+`UnitaryBlock`s and cannot cross barriers (a barrier-containing DAG never
+promotes, §4.1a); a `PASS_REGISTRY` + boot lint asserts every registered
+unitary pass has its phase-faithful law test — a pass cannot ship without
+it.
+
 ### 4.3 Application: the adjoint representation
 
 States are never user-facing; a register is a handle into a context that
@@ -951,7 +1261,8 @@ does). Dispatch is (value kind × context kind):
 | `U2` | Euler ZYZ → existing Orkan `rz/ry/rz` (phase droppable *here only*) | same, as conjugation |
 | `ctrl(·)`, multi-register | controlled decomposition → `orkan_cx` etc. | same |
 | `Perm` | replay stored reversible circuit (Bennett artifact) | same |
-| `UnitaryDAG` | replay nodes | replay nodes |
+| `UnitaryBlock` | certified scratch alloc; replay phase-fixed instructions; certified zero-release (`Ad` may quotient phase only at leaf application) | same |
+| `ChannelDAG` | channel executor; **never** `ctrl` | channel executor |
 
 **Channel-level values** (Kraus families — noise) apply through the same
 surface. On a density context: Kraus→superop (existing path). On a pure
@@ -964,12 +1275,15 @@ performance choice, never a semantic one.
 
 | Level | Objects | Operations | `ctrl`? |
 |---|---|---|---|
-| Process values | `U2`, `Perm`, `UnitaryDAG` | `∘`, `⊗`, `adjoint`, `ctrl` | ✔ closed |
-| Channels | denotations; casts, noise, `ptrace!`, `cases` | composition, tensor | ✘ impossible, by theorem |
+| Process values | `U2`, `Perm`, `UnitaryBlock` | `∘`, `⊗`, `adjoint`, `ctrl` | ✔ closed |
+| Channels | denotations; casts, noise, `ptrace!`, `cases`, `ChannelDAG` | composition, tensor | ✘ impossible, by theorem |
 
 Denotation (value → channel) is a quotient, always available, never
 invertible. Measurement was never a process value; therefore
-measurement-under-`ctrl` is not an error case — it is *unrepresentable*.
+measurement-under-`ctrl` is not an error case — it is *unrepresentable*. A
+certificate (§4.1a) promotes one particular frozen, fixed-port unitary
+trace to a process value; it does **not** invert `Ad`, control a channel,
+or infer a phase representative from a Choi matrix.
 
 ### 4.5 Linearity: surface B, single mechanism
 
@@ -1053,9 +1367,15 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   every primitive visibly has channel type (consume inputs, produce
   outputs). Process *applications* lie in `im(Ad)`; a program is a composite
   in the symmetric monoidal category **generated by** those applications
-  together with preparation, instruments, classical control, and trace —
-  measurement, discard, reset, and noise are CPTP but *not* unitary
-  conjugations, so they lie outside `im(Ad)` itself (§4.4's stratification).
+  together with preparation, instruments, classical control, trace, **and
+  classical effects (postselection)** — measurement, discard, reset, and
+  noise are CPTP but *not* unitary conjugations, so they lie outside
+  `im(Ad)` itself (§4.4's stratification). Because the explicit
+  `postselect` surface (§3.6) is in the generating set, the honest
+  denotation class is **CP trace-non-increasing**, with the trace carrying
+  the accumulated postselection probability (weights multiply under
+  composition); TP-record execution stays the default, and subnormalization
+  is reachable *only* through the explicit effect surface, never silently.
 - **P2 — The boundary is a cast.** Unchanged, sharpened by the boundary
   algebra (§3.2): qc ∘ cq = id, cq ∘ qc = pinching.
 - **P3 — Operations are operations.** Unchanged (Stinespring fallback makes
@@ -1073,11 +1393,14 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   channel algebra, casts, `dual`, `when`/`ctrl`, and promotion never
   mention dimension. Finite d, CV, and (via discrete symmetry structures)
   anyons are instances, not extensions.
-- **P8 / P9 — Promotion; registers are numeric types.** Unchanged in
-  mechanism, *scoped* in promise (D12): the generic path covers
-  arithmetic and comparison operators (value world — fresh outputs,
+- **P8 / P9 — Promotion; registers are number-like handles.** Unchanged in
+  mechanism, *scoped* in promise (D12) and *reworded* (F15): registers are
+  **number-like handles with a published operator/trait interface**, not
+  `Number`/`Integer` subtypes (§3.4) — coherent `<` returns a `QBool`, not
+  a host `Bool`. The generic path covers arithmetic and comparison
+  operators within that published surface (value world — fresh outputs,
   inputs live); bitwise logic on registers is action-world (`⊻`
-  mutates — the registered exception) and generic bitwise code goes
+  mutates — the registered exception) and generic/branch-heavy code goes
   through `oracle`, where Bennett restores value semantics by
   construction. Views are not numeric and do not ride P9 at all.
 
@@ -1131,10 +1454,11 @@ was too poor to state what the algorithm means. (Bug filed:
 reversing it turns this listing into a *Z-error channel that Z-marginal
 tests cannot see* — wm28's failure class reproduced from the convention
 side — so the required Choi test probes |i⟩ or |+⟩, never just Z
-states. And the `&&`-corrections make this listing **Eager/DM/Hardware
-only**: under Tracing, measurement returns a token (D3) and the
-branching must be `cases` — or use the deferred variant below, which is
-fully context-portable.
+states. And the `&&`-corrections make this listing **Eager/`shots`
+only**: under DM, Tracing, and Hardware, `Bool(dual(ψ))`/`Bool(b)` return
+a record/wire token (§3.6, F13 Option D) on which host `&&` fails, so the
+branching must be `cases` — `cases(Bool(dual(ψ)))` — or use the deferred
+variant below, which is fully context-portable.
 
 ### 7.1b Teleportation, deferred — the same channel, no branching
 
@@ -1280,15 +1604,16 @@ a^{2⁰} factor.
 
 §3.7's universality argument as running code: the literal is the
 resource, `cases` is the adaptive step, and the correction ladder
-terminates on native Z. (`@cases m …` measures `m` — consuming it — and
-runs the branch on outcome 1; under Tracing it captures both branches,
-§3.6.)
+terminates on native Z. (`@cases Bool(m) …` measures `m` — the qc cast
+consumes it — and runs the branch on outcome 1; a bare `@cases m` on the
+unmeasured register is rejected, F30; under DM/Tracing the observation
+returns a record/wire token and both branches are captured, §3.6.)
 
 ```julia
 function inject_S!(ψ::QBool)
     m = QBool(0.5, π/2)       # |i⟩ — the S resource is a literal (D1)
     m ⊻= ψ                    # entangle: CNOT, target m, control ψ
-    @cases m begin
+    @cases Bool(m) begin
         not!(dual(ψ))         # outcome 1: Z-correction — native (§3.3)
     end
     return ψ
@@ -1297,7 +1622,7 @@ end
 function inject_T!(ψ::QBool)
     m = QBool(0.5, π/4)       # magic_T() — the T resource
     m ⊻= ψ
-    @cases m begin
+    @cases Bool(m) begin
         inject_S!(ψ)          # outcome 1: S-correction — the ladder recurses,
     end                       # and inject_S!'s own correction is native Z
     return ψ
@@ -1488,16 +1813,28 @@ as found on v0.1:
     non-public — do not call Base's internals). (iii) The worked
     counter-example for the two-groups theorem is §7.5 (BV), a required
     test.
-- **D3 — dynamic lifting: RESOLVED (2026-07-10, review r6).** Ruling in
-  §3.6: `ClassicalBit`/`ClassicalInt` tokens under `TracingContext`
-  (Proto-Quipper's *parameter* vs *state*); `if token` errors
-  descriptively toward `cases`; and the 2^W scale question is answered
-  by **blessing measure → traced classical computation →
-  classically-parameterized circuit as ordinary code** — `cases` is for
-  branching, never for outcome tables. Shipped precedent: qrisp's Jasp
-  (dynamic tracer + `control()`, width-scalable traced classical
-  feedback, no 2^W table); type-theoretic backing: Proto-Quipper-Dyn.
-  (v0.1's hardcoded-`false` `ClassicalRef` remains unacceptable.)
+- **D3 — dynamic lifting: RESOLVED (r6), REFINED by F13 = Option D
+  (2026-07-21, session 98).** Ruling in §3.6: measurement is the single
+  spelling `Bool(q)`/`Int(x)` in **every** context, returning the classical
+  system the cast outputs as faithfully as the context allows — a scalar
+  (Eager/`shots`), a **record** token (DM), a **wire** token (Tracing/
+  Hardware). Tokens are `ClassicalBit`/`ClassicalWord{W}` (`ClassicalWord{W}`
+  replaces the earlier `ClassicalInt`: the measurement domain is the finite
+  basis ℤ_{2^W}, width in the IR type, arithmetic wraps mod 2^W) — a
+  restricted finite SSA (T1–T4, §3.6), copyable not affine, Proto-Quipper's
+  *parameter* vs *state*. A token in control-flow/indexing position is
+  rejected; `if token` / `token && …` raise **Julia's native, non-
+  interceptable** `TypeError` (the earlier promise of a *descriptive Sturm*
+  error on `if token` is withdrawn — unimplementable; only the token's
+  unqualified type name surfaces). The 2^W scale question is answered by
+  **blessing measure → traced classical computation → classically-
+  parameterized circuit as ordinary code** — `cases` is for branching,
+  never for outcome tables. Shipped precedent: qrisp's Jasp (dynamic tracer
+  + `control()`, width-scalable traced classical feedback, no 2^W table);
+  type-theoretic backing: Proto-Quipper-Dyn. (v0.1's hardcoded-`false`
+  `ClassicalRef` remains unacceptable.) Because the compiler-food subset is
+  use-site-dependent under one spelling (§3.8 trichotomy), a tracer
+  pre-flight lint listing each non-portable use site is mandated.
 - **D4 — materializing views: resolved by counterexample.** Grover's
   diffusion conjugates live entangled registers by H^⊗n — a view
   materialized as a process. Answer: kernel value + library wrap (§5).
@@ -1595,13 +1932,21 @@ as found on v0.1:
   the julialang #249/#3217 risk acknowledged). `x += a` on a bare
   register is legal but is the lost-binding pattern (D10 strict mode
   flags it). Construct 3 is the action family; `not!` is its ℤ₂ case.
-- **D13 — `when` operational semantics: RESOLVED (2026-07-10, review
-  r6).** Ruling in §3.5: streaming execution licensed by the `ctrl`
-  homomorphism law (Eager: runtime guardrails — cast-under-control is
-  a loud error, aliasing sees through views, clean-ancilla asserted at
-  |1⟩-norm 0; Tracing: materialize `UnitaryDAG` + witness, enabling
-  reassociation and fusion). Required law test: streaming ≡
-  materialized at the Choi level.
+- **D13 — `when` operational semantics: RESOLVED (r6), AMENDED by the M8
+  design gate (2026-07-21, `5hr7`).** Ruling in §3.5: streaming execution
+  licensed by the `ctrl` homomorphism law (Eager: runtime guardrails —
+  cast-under-control is a loud error, aliasing sees through views;
+  Tracing: materialize). **Amendment:** the Eager |1⟩-marginal observation
+  is a **debug assertion, not a witness** (a single input state cannot
+  certify a universally-quantified clean-subspace condition); both Eager
+  and Tracing record a structural unitary transcript, and a body with
+  scratch is accepted only when that transcript seals as a fixed-boundary
+  `UnitaryBlock` carrying a universal clean-subspace **certificate**
+  (§4.1a — `NoAncilla`/`PermClean`/`MatchedPair`/…), never a boolean
+  unitarity flag. The required law is representative-preserving streaming
+  equivalence (phase-inclusive `≈`) **plus** a `ctrl`-wrapped Choi
+  comparison (§4.2 pass law) — Choi equality of the uncontrolled bodies
+  alone is not sufficient.
 - **D14 — the BennettVM contract. RESOLVED (2026-07-10, Tobias):
   ruling (A), circuit-only bridge.** The ONLY artifact that crosses the
   Bennett→Sturm boundary is a reversible circuit convertible losslessly
@@ -1616,21 +1961,25 @@ as found on v0.1:
   cross; if Bennett ever grows MBU it must return a DISTINCT type, not
   a `ReversibleCircuit`. Revisit as a new decision point if BennettVM
   matures into a backend candidate (option C of the audit).
-- **D15 — arbitrary `QBool(p, φ)` literals inside `when` (OPEN).**
-  Guardrail 1 (§3.5) bans measurement casts and permits only canonical
-  fresh-|0⟩ allocation (`QBool(false)`) as controlled scratch — that case
-  is closed by the compute–uncompute lemma. A general literal `QBool(p, φ)`
+- **D15 — arbitrary `QBool(p, φ)` literals inside `when`: RESOLVED
+  (2026-07-21, session 98 — Tobias), option (b).** Guardrail 1 (§3.5) bans
+  measurement casts and permits canonical fresh-|0⟩ allocation
+  (`QBool(false)`) as controlled scratch — that case is closed by the
+  certified compute–uncompute lemma (§4.1a). A general literal `QBool(p, φ)`
   with p ∉ {0} or φ ≠ 0 is a preparation channel/isometry with **no
   canonical controlled implementation**: distinct unitary extensions of the
   preparation differ by a global phase that becomes observable under outer
-  `ctrl` — the same phase-ambiguity §1 and D6/F9 turn on. Until ruled, such
-  a literal inside `when` is a **loud error** naming this decision, never a
-  silent lowering (fail-loud, CLAUDE.md §1). Candidate resolutions, none yet
-  chosen: (a) forbid them outright; (b) admit them only as part of a
-  certified compute/uncompute unitary block whose ancilla the §3.9 witness
-  cleans; (c) pin one phase convention and *prove* it control-stable. This
-  is a genuine open point — do not invent the ruling (raised by the GPT-5.6
-  review, F12).
+  `ctrl` — the same phase-ambiguity §1 and D6/F9 turn on. **Ruling: option
+  (b)** — such a literal is admitted **only inside a certified
+  compute/uncompute unitary block** (a `MatchedPair`, §4.1a) whose ancilla
+  the §3.9 witness cleans, so the phase ambiguity is discharged by the
+  matched uncompute; a bare literal under `when` with no matched uncompute
+  remains a **loud error** naming D15 (fail-loud, CLAUDE.md §1). The
+  rejected alternatives: (a) forbid outright (too strong — TR3's
+  `QBool(false)` scratch pattern and the injection ladder need controlled
+  prep); (c) pin one phase convention and prove it control-stable (a
+  standalone research burden option (b) sidesteps). Raised by the GPT-5.6
+  review (F12).
 - **Citations TODO (rule 4; audited twice — r6 corrections baked in).**
   Before implementation, `docs/physics/` distillations for:
   Bădescu–Panangaden 1511.01567 (Conditions I/III ↔ guardrails 2/1 —
@@ -1677,11 +2026,31 @@ as found on v0.1:
 
 ## 10. What survives from v0.1 (migration sketch)
 
-**Survives unchanged:** contexts + Orkan FFI; `Channel` DAG + passes +
-measurement-barrier discipline (the DAG *gains* a unitarity witness and
-becomes a kernel process value); Bennett bridge; casts (minus the
-non-consuming debate — v2 confirms consuming); `cases`; promotion; QECC;
-`ptrace!`; the entire test-discipline and physics-citation regime.
+**Carry-over is per-contract, never blanket (F31).** The blanket "everything
+carries over" claim is replaced by an explicit verdict for each carried
+contract — **(a)** already re-derived in v2, **(b)** carried verbatim and
+re-verified against the live source, or **(c)** needs re-derivation (gated
+on the milestone that consumes it). Nothing is silently imported. Full
+provenance in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7; the summary:
+
+| # | Carried contract | Verdict | Where / why |
+|---|---|---|---|
+| 1 | Contexts (Abstract/Eager/DM/Tracing, regions, propagation) | **(a) re-derived** | §3.9 (regions = Stinespring boundary), §3.8 portability, `Base.ScopedValues` replacing task-local storage; shipped at M2. v0.1's DM `if`/`&&` on a scalar outcome is **overturned** (DM returns a token; exact instrument sum; scalar only in `shots`). |
+| 2 | Orkan FFI (ccall names/shapes, handle ownership, ZYZ singularity) | **(b) verbatim, re-verified** | ABI facts, not design choices; re-verified by measurement against live headers at M2 (24/24 signatures), never trusted from the branch. |
+| 3 | Bennett bridge (oracle artifact, D9 accumulate, strategy selection) | **(a) re-derived** | M7; D9 + D14 (circuit-only) ruled; MBU-under-`ctrl` exclusion + MSB/LSB choke point are v2-native. |
+| 4 | Promotion (P8 overloads, two-world registry, P9) | **(a) re-derived** | §3.4/D12; shipped at M6. F15 sharpens "numeric types" → **number-like handles** with a published trait interface (§3.4/§6). |
+| 5 | Channel-IR passes discipline (partition at measurement barriers) | **(a) re-derived — load-bearing half by `5hr7`** | The barrier-partition idea is a **type invariant** in v2 (a barrier-containing `ChannelDAG` never promotes to `UnitaryBlock`, §4.1a). v0.1's **Choi-only pass-correctness criterion is unsafe (F3) and barred** — replaced by phase-inclusive `≈` + `ctrl`-wrapped tests + `PASS_REGISTRY` lint (§4.2). |
+| 6 | QECC-as-HOF (`encode(ch, code) :: Channel → Channel`) | **(c) NEEDS re-derivation — gates M11** | F8: the single signature conflates protecting noise, encoding a state, and fault-tolerant lifting. Re-typed into `encode_state` / `effective_logical_noise` / `fault_tolerant_lift` — an explicit gate on M11. Not consumed until M11, so no shipped code depends on it. |
+
+Verdict counts: **(a) re-derived = 4 · (b) verbatim = 1 · (c) gated on M11
+= 1.**
+
+**Survives (per the table above):** contexts + Orkan FFI; the channel IR +
+passes + measurement-barrier discipline (v0.1's single witnessed DAG splits
+into `ChannelDAG` + certified `UnitaryBlock`, §4.1 — the Choi-only pass
+criterion is *not* carried); Bennett bridge; casts (minus the non-consuming
+debate — v2 confirms consuming); `cases`; promotion; `ptrace!`; the entire
+test-discipline and physics-citation regime. QECC re-typed at M11.
 
 **Rewritten:** `qbool.jl` surface (BlochProxy deleted); `gates.jl`
 (constants move to kernel); `patterns.jl` / `arithmetic.jl` (shrink onto

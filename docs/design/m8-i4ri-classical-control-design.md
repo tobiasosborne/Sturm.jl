@@ -528,6 +528,16 @@ P4-forbidden). M8 must wire `cases`/`measure` through `_assert_no_control`.
 
 ## 7. Proposed PRD replacement wording (paste-ready **after** the F13 ruling)
 
+> **✅ APPLIED to `Sturm-PRD-v2.md` (session 98, bead `w5rw`), RE-SPELLED to
+> Option D per §14.** These blocks are the historical Option-A staging;
+> **do not paste them verbatim** — the shipped PRD wording (§3.6, §3.8, and
+> the §7.1/§7.6 consequential edits) follows §14's consequential-re-spelling
+> list: every `measure(q)` below reads `Bool(q)` (resp. `Int(x)`), the
+> portable idiom is `cases(Bool(q))` / `@cases Bool(m)`, `ClassicalInt`
+> reads `ClassicalWord{W}`, and L3's DM/Tracing *throw* is dropped (the cast
+> returns a record/wire handle; only `convert(Bool, ·)` / typed `Bool` slots
+> stay loud). The blocks are retained as the design record.
+
 > The blocks below assume Option A (`measure`). If Tobias rules otherwise,
 > substitute the chosen verb/spelling; the physics is unchanged.
 

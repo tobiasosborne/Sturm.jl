@@ -133,10 +133,12 @@ end
     blocks = extract_julia_blocks(PRD_PATH)
 
     # Session 94 recorded 11 ```julia blocks in Sturm-PRD-v2.md at the
-    # r6 prototype stage; pin the count so a silently-truncated extractor
-    # (or a PRD edit that drops an example) is caught even if every
-    # remaining block still happens to lower cleanly.
-    @test length(blocks) == 11
+    # r6 prototype stage; session 98 (w5rw, Ruling D) added the §3.6
+    # `@cases Bool(m)` classical-branching example, bringing the count to
+    # 12. Pin the count so a silently-truncated extractor (or a PRD edit
+    # that drops an example) is caught even if every remaining block still
+    # happens to lower cleanly.
+    @test length(blocks) == 12
 
     for b in blocks
         parts = split(strip(b.code), '\n'; keepempty = false)

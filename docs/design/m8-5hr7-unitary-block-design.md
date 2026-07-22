@@ -442,6 +442,14 @@ This design keeps the boundary with the parallel `i4ri` classical-control round 
 
 ## 7. PRD replacement wording (staged — paste only after §8 rulings)
 
+> **✅ APPLIED to `Sturm-PRD-v2.md` (session 98, bead `w5rw`) with TR1–TR8
+> ruled as recommended (§8; RULINGS in the i4ri doc §14).** The
+> `UnitaryDAG` → `ChannelDAG` + `UnitaryBlock{N}` rename/split, the §4.1a
+> certificate section, the §4.2 pass law, the §4.3/§4.4 amendments, and the
+> D13 amendment are in the shipped PRD. §7.4's F10 reword was already
+> present in the PRD's §1.1 (rlhj patch) and was left as-is (reconciled, not
+> re-applied). Blocks retained as the design record.
+
 > These blocks are written against the **current** working-tree text (re-verified; the shipped §3.5 guardrail-1 already reads
 > "any **measurement (qc) cast** (`Bool`, `Int`), `ptrace!`, `cases`, or noise channel … is a **loud error**" and already
 > permits `QBool(false)`). Line numbers will have drifted by paste time; match by landmark.
