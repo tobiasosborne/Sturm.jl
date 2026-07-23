@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# bench/ — own environment (M12 bead Sturm.jl-gmx0; synthesis convergent core
+# #8): Sturm via dev path, stdlibs only. The core Project.toml is untouched.
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Sturm = "fcbab5b2-4b8e-43e2-8ec6-8804d7a8d72e"
+
+[sources]
+Sturm = {path = ".."}

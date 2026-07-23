@@ -17,3 +17,4 @@ docs/literature/quantum_simulation/.browser-profile/
 .claude/scheduled_tasks.lock
 docs/literature/*_src/
 docs/literature/*.pdf
+bench/out/

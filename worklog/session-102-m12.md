@@ -177,3 +177,47 @@ STURM_TEST_HEAVY=1). S4/S7/S8/S10 as ruled; stub tests repurposed.
   AUTO_COMMUTING_GATE = 2048), frontier protocol vs the Zlokapa envelope +
   QSP overlay, Auto-regret table, proxy-K vs exact-K disagreement rate.
   E2 tight order-2 min path still gated on the distillation (S13 follow-on).
+
+## Implementer addendum (gmx0, phase 4 — bench/ frontier harness SHIPPED)
+
+`bench/` (own env, Sturm dev-pathed, stdlibs only): `hamsim/{families,
+groundtruth,frontier,run}.jl` + README (~1100 LOC); `bench/out/` gitignored.
+All families normalized to λ = 1 (ZAH's Σa = 1) so t IS λt and the envelope
+is cross-family comparable — one recorded bench choice. Full grid: 34
+families × t ∈ {0.5..32} × ε ∈ {1e-2..1e-4}, exec tier 135 s, analytic 346 s.
+1293 exec self-checks (exp_count == trajectory length) green; per-family
+Orkan seeded-replay cross-check ≤ 1e-9; zero bound violations.
+
+- **Frontier reads as the ZAH theorem**: T2 owns structured chains and every
+  tight-ε cell; QD owns loose-ε/short-t and flat tails at L = 1024
+  everywhere; C2 owns the head-heavy interior (exp coeffs at L ≥ 256 for all
+  ε; powerlaw-2 at 1e-4). Measured winners shift one order up (T4, and C2
+  sooner) — certified bounds punish high orders harder than reality.
+- **Auto regret** (chosen/best certified): exec 85.7% regret = 1, max 1.82;
+  analytic 63.3% = 1, p90 = 4.4, max 43.5 (ising-W64 t=16 ε=1e-4, chose QD
+  over T2). Failure mode is ONE-SIDED: norm1 surrogates inflate α by 2e3–3e9×
+  on structured chains (alpha CSV), so Auto over-picks QDrift; it never
+  under-picks. exp-L256: regret up to 15 (misses C2). Fix candidates (not
+  applied): let the surrogate use alpha_comm_pairs (O(L²), exact, order 1)
+  as a Trotter-row hint, or a budgeted exact-α probe in dispatch.
+- **Bound slack** (certified/measured, exec): QD 2.1–3.0 (tight!); T2
+  11–83; T4 24–453; T6 88–3.3e3; C2 12–75; C4 43–484. Measured QD N ≈
+  0.33–0.47 × 4t²/ε. Measured cost / envelope ∈ [2.08, —] — the Ω(·) shape
+  is respected with constant ≥ 2 across the whole executed grid.
+- **R4**: ALPHA_MAXWORDS_DEFAULT = 4e6 HIT on all five L=1024-W16 random
+  2-local families at order 4, layer 5 (support 4e6+; order 2 exact still
+  fine at L = 1024); recommend KEEP 4e6 (blowup throws in ~30 s — a bigger
+  cap only buys slower failures; random 2-local support is 4^W-bound).
+  AUTO_COMMUTING_GATE = 2048 never gates (max L = 1024); worst-case
+  fully-commuting scan at L = 2048 is 6.8 ms — could be raised to 8192
+  (~0.1 s) if bigger commuting families appear; no urgency.
+- Gotchas: (a) shell-quoted `julia -e` eats `'Z'` char literals — script
+  files for anything with chars; (b) one --fast run printed a winner label
+  contradicting the SAME cell's best_cost two statements later (never
+  reproduced, CSVs were consistent); winners scan rewritten as an explicit
+  STRATS-order loop with an in-loop consistency assert; (c) iscommuting
+  timing in-run is early-exit-biased (13 µs at L=1024 non-commuting vs
+  1.8 ms commuting) — R4 numbers must use the commuting worst case;
+  (d) `time()`-based probe thresholds make alpha-mode selection
+  wall-clock-dependent across machines — modes are RECORDED per row, so
+  runs are self-describing (CSV-identical reruns need same-machine).
