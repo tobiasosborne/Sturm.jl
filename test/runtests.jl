@@ -387,4 +387,8 @@ end
         include("test_m9_shor.jl")      # §4/§9.5/§9.6: shor_order post-processing + statistical
         include("test_m9_ledger.jl")    # §7.6 injection ladder + §8 defect-ledger closure
     end
+
+    @testset "M10 — library HOFs: Grover amplify/find, phase_estimate, Trotter evolve!" begin
+        include("test_m10_library.jl")  # §5 HOFs: sin²((2k+1)θ), dyadic QPE, Trotter E1/E2
+    end
 end

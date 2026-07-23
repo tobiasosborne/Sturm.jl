@@ -180,6 +180,19 @@ include("bennett/inplace.jl")
 include("library/modular.jl")
 include("library/shor.jl")
 
+# --- M10: library HOFs — Grover (amplify/find), phase estimation, Trotter
+# (bead Sturm.jl-8fo5) --------------------------------------------------------
+# `library/grover.jl` (`amplify`/`find`/`interfere!` — nested-`when` + `not!(dual)`
+# multi-ctrl Z, `superpose!`/`interfere!` H^⊗n materialization, Bennett-bridge
+# marker); `library/qpe.jl` (`phase_estimate` — the §7.7 phase-sample structure with
+# a caller unitary, `Int(dual(k))` readout); `library/evolve.jl` (`evolve!` — first/
+# second-order Trotter of e^{−iHt} over weighted Pauli words). All reuse shipped
+# surface/kernel verbs (`when`, `dual`, `not!`, `superpose!`, `oracle`, `region`,
+# `_act!`, kernel U2 values) — no new surface construct, no duplicated primitive.
+include("library/grover.jl")
+include("library/qpe.jl")
+include("library/evolve.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -228,6 +241,14 @@ export cases, @cases
 # kernel/library `public` (reachable as `Sturm.…`, never `using`-dumped).
 export QMod, mulmod!, shor_order
 
+# --- Surface M10 library HOFs (exported; PRD-v2 §5, M10) ----------------------
+# The physicist-facing HOFs of §5, exported to match the M9 library verbs
+# (`mulmod!`/`shor_order`): `amplify`/`find` (Grover), `phase_estimate` (QPE),
+# `evolve!` (Trotter Hamiltonian simulation), `interfere!` (the DJ/BV closing
+# Walsh–Hadamard). The internal builders (`grover_iterations`, `_mcz_all_ones!`,
+# `PauliTerm`) are kernel/library `public` — reachable as `Sturm.…`, not dumped.
+export amplify, find, phase_estimate, evolve!, interfere!
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -254,7 +275,10 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     CompiledInplacePerm, AbstractInplaceProof, FullSpaceMulProof,
     InverseContractError, permclean_cert,
     NonCoprimeBaseError, OrderFindingFailure,
-    _cf_denominator, _minimize_order, _shor_phase_sample, _ideal_mulmod_perm
+    _cf_denominator, _minimize_order, _shor_phase_sample, _ideal_mulmod_perm,
+    # M10 library HOF internals (kernel/library `public`, reachable as `Sturm.…`)
+    grover_iterations, _mcz_all_ones!, _grover_diffuse!, _phase_mark_oracle!,
+    PauliTerm, _pauli_exp!
 
 # --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
 # The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and
