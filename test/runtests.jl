@@ -65,6 +65,19 @@ function find_controlled_lowerings(text::AbstractString)
 end
 
 """
+    find_inplace_constructions(text) -> Vector{String}
+
+Return every `_compiled_inplace_perm(` CONSTRUCTION token in `text` — the private
+inner constructor of a `CompiledInplacePerm` (the M9 in-place-`Perm` artifact).
+Pure string function — the M9 choke-point lint (bead Sturm.jl-8oo9, design §3;
+mirrors the `_ctrl` choke point): the ONLY constructor of a `CompiledInplacePerm`
+is `_compiled_inplace_perm`, reachable only through `compile_inplace_perm`, and it
+appears in `src/` ONLY in `src/bennett/inplace.jl`. Self-tested below.
+"""
+find_inplace_constructions(text::AbstractString) =
+    [m.match for m in eachmatch(r"_compiled_inplace_perm\(", text)]
+
+"""
     find_ccalls(text) -> Vector{String}
 
 Every `ccall` token (`@ccall` and bare `ccall`). Pure string function — the M2
@@ -166,6 +179,8 @@ end
             @test find_controlled_lowerings("orkan_cx(state, c, t)") == ["orkan_cx"]
             @test find_controlled_lowerings("a controlled gate") == ["controlled"]
             @test find_controlled_lowerings("the control wire") == String[]
+            @test find_inplace_constructions("x = _compiled_inplace_perm(Val(W), p, s, c)") == ["_compiled_inplace_perm("]
+            @test find_inplace_constructions("compile_inplace_perm(pair)") == String[]
         end
 
         @testset "Ctrl construction appears only in src/kernel/ctrl.jl" begin
@@ -177,6 +192,23 @@ end
                     text = read(joinpath(root, fname), String)
                     toks = find_ctrl_constructions(text)
                     if rel == "src/kernel/ctrl.jl"
+                        @test !isempty(toks)          # the choke point itself constructs
+                    else
+                        @test isempty(toks)           # nowhere else may
+                    end
+                end
+            end
+        end
+
+        @testset "CompiledInplacePerm construction appears only in src/bennett/inplace.jl" begin
+            src_dir = joinpath(REPO_ROOT, "src")
+            for (root, _dirs, files) in walkdir(src_dir)
+                for fname in files
+                    endswith(fname, ".jl") || continue
+                    rel = relsrc(root, fname)
+                    text = read(joinpath(root, fname), String)
+                    toks = find_inplace_constructions(text)
+                    if rel == "src/bennett/inplace.jl"
                         @test !isempty(toks)          # the choke point itself constructs
                     else
                         @test isempty(toks)           # nowhere else may
@@ -346,5 +378,13 @@ end
 
     @testset "F16/F15/F19 — context-parameterized handles, number-like contract, bicharacter" begin
         include("test_vanm_context_param.jl")  # bead Sturm.jl-vanm (representation-only refactor)
+    end
+
+    @testset "M9 — QMod, in-place-Perm compiler, mulmod!, order finding (bead 8oo9)" begin
+        include("test_m9_qmod.jl")      # §3.1/§5/§6: QMod{N,W,C}, F23 casts, ctw2 guards
+        include("test_m9_inplace.jl")   # §3: the in-place-Perm compiler contract + tiers
+        include("test_m9_modular.jl")   # §2/§9.1/§9.4: mulmod! full-space bijection + channel
+        include("test_m9_shor.jl")      # §4/§9.5/§9.6: shor_order post-processing + statistical
+        include("test_m9_ledger.jl")    # §7.6 injection ladder + §8 defect-ledger closure
     end
 end

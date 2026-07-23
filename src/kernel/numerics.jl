@@ -87,6 +87,27 @@ test-time predicate.
 const PERM_EQ_MAXW = 20
 
 """
+    _shift_width_guard(W, op)
+
+Loud width guard for the latent `1 << W` overflow class (bead ctw2 / F23, design
+§5): a signed host `1 << W` overflows to `typemin` at `W = Sys.WORD_SIZE-1` and
+wraps beyond, so any `mod(a, 1<<W)` / `1<<j` path that admits `W ≥ Sys.WORD_SIZE-1`
+would SILENTLY WRAP. The action-family and dual-view modulation paths
+(`add!`, `x̂ += a`, the `QInt` literal range check) admit exactly
+`1 ≤ W ≤ Sys.WORD_SIZE-2` and throw a `DomainError` above it — unreachable under
+the backend qubit budget, but fail-loud rather than silent (CLAUDE.md #1). This is
+representation-only: every shipped test runs at tiny `W`, unchanged.
+"""
+@inline function _shift_width_guard(W::Integer, op::AbstractString)
+    (1 ≤ W ≤ Sys.WORD_SIZE - 2) || throw(DomainError(W,
+        "$op: width W=$W is outside the machine-shift range 1:$(Sys.WORD_SIZE - 2) — " *
+        "`1 << W` would overflow a signed host Int (ctw2/F23). This path is " *
+        "unreachable under the backend qubit budget; the guard fails loud rather " *
+        "than silently wrapping (CLAUDE.md #1)."))
+    return nothing
+end
+
+"""
     TWO_PI
 
 `2π` as a `Float64` (`6.283185307179586`), used by the cheap in-range phase

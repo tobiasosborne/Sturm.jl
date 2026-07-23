@@ -76,6 +76,7 @@ Overflow WRAPS (ℤ_{2^W} is the group). Returns the same handle (D12 in-place).
 """
 function add!(x::QInt{W}, a::Integer) where {W}
     ctx = _here(x)
+    _shift_width_guard(W, "add!")                             # ctw2/F23: no silent `1<<W` wrap
     a = mod(a, 1 << W)
     F = QFT(W, false)
     apply!(ctx, F, x.wires)                                   # F — uncontrolled
@@ -164,6 +165,7 @@ state); shifts `Int(dual(x))` by `+a` (the sign pin).
 function Base.:+(v::DualView{<:QInt{W}}, a::Integer) where {W}
     x = v.parent
     ctx = _here(x)
+    _shift_width_guard(W, "x̂ += a (dual-view modulation)")    # ctw2/F23: no silent `1<<W` wrap
     a = mod(a, 1 << W)
     @inbounds for j in 1:W
         _act!(ctx, P(-2π * a / (1 << j)), (x.wires[j],))      # D_{-a}: NEGATIVE angle (intertwiner II)

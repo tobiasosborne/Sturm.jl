@@ -166,6 +166,20 @@ include("surface/cases.jl")
 # cases seams that M3/M6/cases.jl forward-reference — all resolved at call time.
 include("context/tracing.jl")
 
+# --- M9: QMod, the in-place-Perm compiler, mulmod!, shor_order (bead 8oo9) ---
+# `types/qmod.jl` (the ℤ_N register handle, static modulus F24) needs the M2
+# context layer + kernel `X`. `bennett/inplace.jl` (the in-place-Perm compiler
+# contract: verify_inverse_pair / compile_inplace_perm / CompiledInplacePerm, its
+# private `_compiled_inplace_perm` choke point) needs `CompiledOracle` +
+# `_BENNETT_BACKEND` (M7), `Perm`/`MCX`/`PERM_EQ_MAXW` (M1), `_act!`/`_free_clean!`
+# (M5/M7), `PortID`/`PermClean` (M8). `library/modular.jl` (`mulmod!` + the
+# registered `FullSpaceMulProof`) needs both. `library/shor.jl` (`shor_order` +
+# `_shor_phase_sample`) needs `QMod`/`mulmod!`/`when`/`region`/`BigInt(dual)`.
+include("types/qmod.jl")
+include("bennett/inplace.jl")
+include("library/modular.jl")
+include("library/shor.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -207,6 +221,13 @@ export oracle
 # library, NOT an 8th surface construct.
 export cases, @cases
 
+# --- Surface M9 capstones (exported; PRD-v2 §3.1/§3.4/§7.7, M9) ---------------
+# `QMod` (the ℤ_N register + preparation cast), the registered in-place action
+# `mulmod!`, and the order-finding entry `shor_order`. The in-place-Perm compiler
+# machinery, the exceptions, the CF/LCM helpers, and `_shor_phase_sample` are
+# kernel/library `public` (reachable as `Sturm.…`, never `using`-dumped).
+export QMod, mulmod!, shor_order
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -226,7 +247,14 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     # M6 kernel/type surface (kernel `public`, reachable as `Sturm.QFT`, not dumped)
     QFT, P, WireRef, AbstractQubit,
     # M7 Bennett bridge query values (kernel `public`, 7 produces / 3 applies)
-    OracleQuery, CompiledOracle
+    OracleQuery, CompiledOracle,
+    # M9 QMod + in-place-Perm compiler + order finding (kernel/library `public`)
+    modulus, _modwidth,
+    verify_inverse_pair, compile_inplace_perm, VerifiedInversePair,
+    CompiledInplacePerm, AbstractInplaceProof, FullSpaceMulProof,
+    InverseContractError, permclean_cert,
+    NonCoprimeBaseError, OrderFindingFailure,
+    _cf_denominator, _minimize_order, _shor_phase_sample, _ideal_mulmod_perm
 
 # --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
 # The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and

@@ -171,8 +171,16 @@ The EXACT integer exponent `k` with B_W(x,y) = ω^k, ω = e^{2πi/2^W}:
 the bicharacter law tests (identity, bilinearity, nondegeneracy, symmetry) are
 exact for small `W`. `bicharacter` maps it to the phase.
 """
-pairing_exponent(::Pow2Bicharacter{W}, x::Integer, y::Integer) where {W} =
-    mod(Int(x) * Int(y), 1 << W)
+function pairing_exponent(::Pow2Bicharacter{W}, x::Integer, y::Integer) where {W}
+    # ctw2/F19 guard sweep: `Int(x)*Int(y)` overflows a signed host Int once
+    # `2W > Sys.WORD_SIZE-2` (values `< 2^W`), and `1<<W` once `W ≥ Sys.WORD_SIZE-1`.
+    # Harmless at law-test widths (tier cutoff W≤20); fail loud above rather than
+    # silently wrapping the exponent (CLAUDE.md #1).
+    (1 ≤ 2W ≤ Sys.WORD_SIZE - 2) || throw(DomainError(W,
+        "pairing_exponent: width W=$W would overflow the host-Int product Int(x)*Int(y) " *
+        "(need 2W ≤ $(Sys.WORD_SIZE - 2)); this path is a small-W law-test helper."))
+    return mod(Int(x) * Int(y), 1 << W)
+end
 
 """
     bicharacter(::Pow2Bicharacter{W}, x, y) -> ComplexF64

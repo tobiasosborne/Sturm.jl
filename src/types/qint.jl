@@ -63,6 +63,7 @@ end
 
 # Chart guard, shared by barrier and typed worker; runs BEFORE any context lookup.
 @inline function _check_qint_lit(::Val{W}, n::Integer) where {W}
+    _shift_width_guard(W, "QInt{$W}(n) literal range check")   # ctw2/F23: no silent `1<<W` wrap
     (0 ≤ n < (1 << W)) || throw(DomainError(n,
         "QInt{$W}(n): a preparation literal must name a point in 0:$( (1 << W) - 1 ) " *
         "(the ring ℤ_{2^$W}); got $n. Arithmetic wraps (`add!`), but a literal " *
@@ -122,19 +123,43 @@ torn-down (closed) context, before any FFI touch (F16 §5.1).
 end
 
 """
+    _int_host_width_guard(ctx, W)
+
+F23 host-scalar width guard: `Int(x)` is an *honest machine-`Int`* cast, so on a
+context whose `Int(x)` returns a host `Int` (Eager) it admits exactly
+`1 ≤ W ≤ Sys.WORD_SIZE-1` (every unsigned `W`-bit outcome fits a signed host
+`Int`) and throws BEFORE any backaction for `W ≥ Sys.WORD_SIZE` — never silently
+widening to `BigInt` (`BigInt(x)` is the explicit wide cast). On contexts whose
+`Int(x)` returns a fixed-width record TOKEN (DM/Tracing → `ClassicalWord{W}`) the
+limit does not apply — the token carries the width, no host scalar is formed
+(PRD-v2 §3.2, F23). `W ≤ 0` is rejected everywhere.
+"""
+@inline function _int_host_width_guard(::EagerContext, W::Int)
+    (1 ≤ W ≤ Sys.WORD_SIZE - 1) || throw(ErrorException(
+        "Int(QInt{$W}) cannot represent every $W-bit outcome on this " *
+        "$(Sys.WORD_SIZE)-bit host (need 1 ≤ W ≤ $(Sys.WORD_SIZE - 1)); use " *
+        "`BigInt(x)`. Rejected before measurement (F23)."))
+    return nothing
+end
+@inline _int_host_width_guard(::AbstractContext, W::Int) =
+    (W ≥ 1 || throw(ErrorException("Int(QInt{$W}): width must be ≥ 1 (F23).")); nothing)
+
+"""
     Int(x::QInt{W}) -> Int | ClassicalWord{W}
 
 The MEASUREMENT cast (qc, §3.2), THE measurement spelling in every context
 (Ruling D, §3.6/§14): measure all `W` wires in the computational basis (MSB-first,
 `n = Σ x_j 2^{W−j}`). Fails loud BEFORE any backaction on a PARTIALLY-consumed
 register — a wire already measured via `Bool(x[i])` (§8.5) — on a cross-context
-handle, and (guardrail 1) under a live `when` control. The RETURN varies by
+handle, and (guardrail 1) under a live `when` control, and — the F23 bound — when
+`W ≥ Sys.WORD_SIZE` on a host-`Int` context (use `BigInt(x)`). The RETURN varies by
 context: a real `Int` on EAGER (measure+consume, unchanged); a `ClassicalWord{W}`
 record TOKEN on DM (`_cast_int(::DensityMatrixContext, …)`, surface/tokens.jl —
 the pinched record, summed at region exit / `discard!`).
 """
 function Base.Int(x::QInt{W,C}) where {W,C}
     ctx = _here(x)
+    _int_host_width_guard(ctx, W)     # F23: fail BEFORE any backaction, host-Int contexts only
     _assert_no_control(ctx, "measurement cast Int(x)")
     # Partial-consumption guard (D2/§8.5): a set check on the single-sourced
     # consumed set + liveness, BEFORE any measurement — never a silent reinterpret.
@@ -283,7 +308,69 @@ first), then the consuming computational-basis `Int(parent)`. `F` is APPLIED her
 function Base.Int(v::DualView{<:QInt{W}}) where {W}
     x = v.parent
     ctx = _here(x)
+    _int_host_width_guard(ctx, W)     # F23: fire BEFORE the Fourier transform (backaction)
     _assert_no_control(ctx, "Fourier-basis measurement cast Int(dual(x))")
     apply!(ctx, _dual_transform(x), x.wires)   # F, uncontrolled (fuses into no 1q buffer; QFT emits directly)
     return Int(x)
+end
+
+"""
+    BigInt(x::QInt{W,C}) -> BigInt
+
+The WIDE consuming (qc) measurement cast (F23, PRD-v2 §3.2, Δ3): measure all `W`
+wires in the computational basis (MSB-first, `n = Σ x_j 2^{W-j}`) and return a
+`BigInt`, valid for EVERY width `W ≥ 1` — where `Int(x)` would throw for
+`W ≥ Sys.WORD_SIZE`. `BigInt` is a Base constructor, so returning a `BigInt` from
+`BigInt(x)` is honest (unlike making `Int(x)` widen); it is the same measurement
+cast spelled with a constructor, NOT a new `measure` verb (Ruling D). The natural
+spelling for Shor's Fourier sample `BigInt(dual(k))` (§7.7). Same fail-loud order
+as `Int(x)` (partial-consumption / cross-context guards), minus the host-scalar
+width bound. On DM/Tracing the return is the fixed-width record token (Ruling D).
+"""
+function Base.BigInt(x::QInt{W,C}) where {W,C}
+    ctx = _here(x)
+    W ≥ 1 || throw(ErrorException("BigInt(QInt{$W}): width must be ≥ 1."))
+    _assert_no_control(ctx, "measurement cast BigInt(x)")
+    dead = filter(w -> is_consumed(ctx, w) || !haskey(_core(ctx).wire_to_slot, w),
+                  collect(x.wires))
+    isempty(dead) || error(
+        "BigInt(x): register $(x.wires) is partially consumed — wire(s) $(dead) are dead " *
+        "(a slice `x[i]` was measured via `Bool(x[i])`, or the register was traced). " *
+        "Measure the remaining wires explicitly; do not `BigInt(x)` a holed register (D2/§8.5).")
+    return _cast_bigint(ctx, Val(W), x.wires)
+end
+
+"""
+    _cast_bigint(ctx::EagerContext, Val(W), wires) -> BigInt
+
+The Eager (trajectory) wide qc: measure each wire MSB-first, reassemble the
+integer as a `BigInt` (`big(1) << (W-j)`), mark each consumed (§4.5). Other
+contexts return their fixed-width record token via `_cast_int` (Ruling D).
+"""
+function _cast_bigint(ctx::EagerContext, ::Val{W}, wires::NTuple{W,WireID}) where {W}
+    n = big(0)
+    @inbounds for j in 1:W
+        _measure_wire!(ctx, wires[j]) && (n |= (big(1) << (W - j)))   # MSB-first reassembly
+        mark_consumed!(ctx, wires[j])
+    end
+    return n
+end
+# Off Eager, a wide cast reduces to the context's own record token (Ruling D).
+_cast_bigint(ctx::AbstractContext, ::Val{W}, wires::NTuple{W,WireID}) where {W} =
+    _cast_int(ctx, Val(W), wires)
+
+"""
+    BigInt(v::DualView{<:QInt{W}}) -> BigInt
+
+The wide Fourier-basis measurement cast (F23): apply the register's `F` (uncontrolled,
+the `Int(dual(x))` pattern), then the wide computational-basis `BigInt(parent)`.
+The natural spelling for the Shor phase sample `BigInt(dual(k))` (§7.7).
+"""
+function Base.BigInt(v::DualView{<:QInt{W}}) where {W}
+    x = v.parent
+    ctx = _here(x)
+    W ≥ 1 || throw(ErrorException("BigInt(dual(x)): width must be ≥ 1."))
+    _assert_no_control(ctx, "Fourier-basis measurement cast BigInt(dual(x))")
+    apply!(ctx, _dual_transform(x), x.wires)   # F, uncontrolled
+    return BigInt(x)
 end
