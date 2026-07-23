@@ -136,3 +136,54 @@ function _build_sweep(hs::PauliSum{W}, order::Integer, τ::Float64) where {W}
     end
     return sweep
 end
+
+"""
+    composite_outer_slots(order) -> Vector{Tuple{Symbol,Float64}}
+
+One outer STEP of the Hagan–Wiebe composite channel as a slot list — the SAME
+Suzuki recursion (eqs 3.14–3.16) applied to the two-element list [A, B]
+instead of scalar stage scales (HW Def 5.1, docs/physics/
+hagan_wiebe_2023_composite.md def:higher_order_loop). The second-order base
+is the Strang sandwich `𝒰_A(τ/2)∘𝒰_B(τ/2)∘𝒰_B(τ/2)∘𝒰_A(τ/2)` — read as
+APPLICATION order (left to right) `[(:A,½),(:B,½),(:B,½),(:A,½)]` — and the
+order-2p list is the flattening through the SHARED `_stage_scales` γ vector:
+`[(kind, γᵢ·s) for γᵢ in γ, (kind, s) in base]` (scales multiply; one code
+path with the pure-Trotter recursion, synthesis convergent core #5).
+
+Slot semantics: an `:A` slot replays one FULL inner order-2p Suzuki sweep of
+the head at duration `scale·τ` (Υ·L_A exponentials — matched inner/outer
+order, HW main.tex line 490); a `:B` slot draws `N_B` FRESH qDrift samples of
+the tail at duration `scale·τ` (R2 — per-invocation N_B and fresh draws,
+verified against Lemma lem:diamond_dist_higher_order's per-channel error
+accounting and the `Υ(ΥL_A + N_B)` cost line). Negative scales (outer p ≥ 2)
+are R3-covered: HW bound every slot via |1−4u_k| ≤ 1 ⇒ |t_i| ≤ t, and both
+per-slot bounds are even in t_i — |dt| in error accounting, sign in angles.
+
+Loud invariants at every generation (no truncation ANYWHERE — v0.1 lesson 3):
+`Σ_A scale = Σ_B scale = 1` (within 64·eps·len), slot count `= 2Υ` with Υ of
+each kind, EXACT palindromicity (mirrored entries are identical
+subexpressions of the palindromic γ).
+"""
+function composite_outer_slots(order::Integer)
+    (iseven(order) && 2 ≤ order ≤ 2 * SUZUKI_MAX_P) || throw(DomainError(order,
+        "composite_outer_slots: the outer order must be an even 2 ≤ order ≤ " *
+        "$(2 * SUZUKI_MAX_P) (docs/physics/hagan_wiebe_2023_composite.md, Def 5.1)."))
+    γ = suzuki_stage_scales(order ÷ 2)              # asserts Σ=1 + palindrome
+    base = ((:A, 0.5), (:B, 0.5), (:B, 0.5), (:A, 0.5))
+    slots = Tuple{Symbol,Float64}[(kind, g * s) for g in γ for (kind, s) in base]
+    Υ = suzuki_sweep_count(order)
+    length(slots) == 2Υ || error(
+        "composite_outer_slots(order = $order): $(length(slots)) slots ≠ 2Υ = " *
+        "$(2Υ) — a broken recursion.")
+    sA = sum(s for (k, s) in slots if k === :A; init = 0.0)
+    sB = sum(s for (k, s) in slots if k === :B; init = 0.0)
+    (abs(sA - 1) ≤ 64 * eps() * length(slots) && abs(sB - 1) ≤ 64 * eps() * length(slots)) ||
+        error("composite_outer_slots(order = $order): Σ_A = $sA, Σ_B = $sB " *
+              "drifted from 1 — first-order consistency violated.")
+    slots == reverse(slots) || error(
+        "composite_outer_slots(order = $order): the slot list is not exactly " *
+        "palindromic — the recursion implementation broke its structural symmetry.")
+    count(t -> t[1] === :A, slots) == Υ || error(
+        "composite_outer_slots(order = $order): A-slot count ≠ Υ = $Υ.")
+    return slots
+end

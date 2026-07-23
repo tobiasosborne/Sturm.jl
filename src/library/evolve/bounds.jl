@@ -2,11 +2,13 @@
 #
 # Copyright (C) 2026 Tobias Osborne
 #
-# This file is part of Sturm.jl. Milestone M12 phase 1 (bead Sturm.jl-elsf):
-# the error-bound machinery — the EXACT α_comm engine (synthesis convergent
-# core #3; proposal B §4 + proposal A §4), the Trotter step/error-bound
-# registry (S13), `BoundReport` auditability (S6), and THE single
-# diamond↔spectral factor-2 pin (S5, proposal A D-A3).
+# This file is part of Sturm.jl. Milestone M12 phases 1+2 (beads Sturm.jl-elsf
+# / Sturm.jl-8yzf): the error-bound machinery — the EXACT α_comm engine
+# (synthesis convergent core #3; proposal B §4 + proposal A §4), the Trotter
+# step/error-bound registry (S13), the qDrift EXACT transcendental N criterion
+# (S4), the Hagan–Wiebe composite resource rules (S7 + Fact HW), `BoundReport`
+# auditability (S6), and THE single diamond↔spectral factor-2 pin (S5,
+# proposal A D-A3).
 #
 # ── ε CONVENTION (S5 — pinned once, here) ───────────────────────────────────
 # `ε` everywhere in M12 means the FULL diamond norm ‖·‖_⋄. Campbell states
@@ -302,4 +304,302 @@ function trotter_error_bound(hs::PauliSum{W}, t::Real, r::Integer;
         "× r (thm:trotter_cost)",
         (spectral = spectral, α = α, t = T, r = Int(r), order = ord, Υ = Υ,
          alpha_mode = alpha_mode))
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  M12 phase 2 (bead Sturm.jl-8yzf): qDrift + composite resource rules
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ── THE qDRIFT CRITERION (S4 — exact, windowless) ───────────────────────────
+# Campbell's appendix bounds ONE qDrift segment (duration t/N, sample j with
+# p_j = |a_j|/λ, apply exp(−i·sign(a_j)·(λt/N)·P_j)) in the halved diamond
+# distance by the EXACT remainder series d ≤ Σ_{n≥2} x^n/n! = e^x − 1 − x,
+# x = 2λ|t|/N (docs/physics/campbell_2019_qdrift.md, Thm 1 / App. B — the
+# "(or solve exact expression in appendix)" pseudocode line). Subadditivity
+# over N segments and the ×2 full-diamond pin (S5) give
+#
+#     ‖𝒰(t) − 𝓔^{∘N}‖_⋄ ≤ 2N(e^{2λ|t|/N} − 1 − 2λ|t|/N)  =: f(N).      (S4)
+#
+# f is STRICTLY decreasing in N: with g(x) = e^x − 1 − x, d/dN [N·g(c/N)]
+# = g(x) − x·g′(x) = e^x(1 − x) − 1 < 0 for all x > 0 (log-inequality
+# x + log(1−x) < 0). So "the least N with f(N) ≤ ε" is well-posed and found
+# by a doubling bracket + integer bisection — no closed-form validity window
+# (the HW restatement's ε < λt·ln2/2 exists only to license THEIR closed form
+# N = 4λ²t²/ε via e^x ≤ 2; the exact criterion needs none).
+#
+# ── DIRECTION OF THE ASYMPTOTE (deviation from the proposal-A property) ─────
+# Since e^x − 1 − x > x²/2 STRICTLY for x > 0, f(N) > 4λ²t²/N, so the exact
+# criterion demands MORE samples than the naive asymptote:
+#     ⌈4λ²t²/ε⌉ ≤ N_exact ≈ 4λ²t²/ε + 2λ|t|/3,
+# (verified numerically; proposal A's "N_exact ≤ ⌈4λ²t²/ε⌉" has the
+# inequality backwards). The named test pins the correct two-sided sandwich
+# and the ratio → 1. The exact criterion IS tighter than the honest
+# window-form closed bound (Campbell's full-diamond (4λ²t²/N)e^{2λ|t|/N}):
+# f(N) ≤ that for all N, so N_exact ≤ the window-form N wherever the window
+# holds. NOTE (worklog flag): HW eq qdrift_diamond_distance requotes
+# Campbell's HALVED-distance bound as the FULL norm — a factor-2-optimistic
+# transcription; Sturm's f(N) keeps Campbell's own convention, honestly ×2.
+
+"The S4 criterion value f(N) = 2N(e^{2λ|t|/N} − 1 − 2λ|t|/N) — full ‖·‖_⋄."
+function _qdrift_criterion(λ::Float64, T::Float64, N::Integer)
+    x = 2.0 * λ * T / N
+    return 2.0 * N * (expm1(x) - x)          # expm1: accurate for small x
+end
+
+"""
+    qdrift_error_bound(λ, t, N) -> BoundReport
+
+The PROVEN full-diamond error bound of `N` qDrift samples at coupling weight
+`λ` and time `t`: `value = 2N(e^{2λ|t|/N} − 1 − 2λ|t|/N)` — Campbell's exact
+remainder series composed over `N` segments, ×2 through the S5 convention
+(docs/physics/campbell_2019_qdrift.md, Thm 1 / eq δ — Campbell's d is the
+HALVED diamond distance; the file-header note pins the conversion). The
+inverse direction of [`qdrift_samples`](@ref); what the T5 channel test
+asserts against, untuned.
+"""
+function qdrift_error_bound(λ::Real, t::Real, N::Integer)
+    N ≥ 1 || throw(DomainError(N, "qdrift_error_bound: need N ≥ 1 samples."))
+    λ ≥ 0 || throw(DomainError(λ, "qdrift_error_bound: λ = Σ|a_j| is ≥ 0 by construction."))
+    T = abs(Float64(t))
+    return BoundReport(_qdrift_criterion(Float64(λ), T, N), :campbell_exact_series,
+        "docs/physics/campbell_2019_qdrift.md — Thm 1 / App. B exact series; " *
+        "halved-distance ×2 per the S5 pin (eq δ)",
+        (λ = Float64(λ), t = T, N = Int(N)))
+end
+
+"""
+    qdrift_samples(λ, t, ε) -> BoundReport
+
+The least integer `N` with `2N(e^{2λ|t|/N} − 1 − 2λ|t|/N) ≤ ε` (`ε` = FULL
+diamond norm, S5) — the EXACT transcendental criterion of S4
+(docs/physics/campbell_2019_qdrift.md, Thm 1: the appendix's exact remainder
+series, not the asymptote), solved by doubling bracket + integer bisection
+(f strictly decreasing in N — proof in the section header above). No
+validity-window special case exists (S4 kills it). Properties pinned by the
+named test: `⌈4λ²t²/ε⌉ ≤ N ≤ ⌈4λ²t²/ε⌉ + ⌈2λ|t|/3⌉ + 2`, ratio → 1.
+
+`inputs.bound` is the realized criterion value f(N) ≤ ε — the untuned number
+the T5 channel conformance test compares the exact ensemble Choi distance to.
+"""
+function qdrift_samples(λ::Real, t::Real, ε::Real)
+    (isfinite(ε) && ε > 0) || throw(DomainError(ε,
+        "qdrift_samples: ε must be a finite positive full-diamond-norm target."))
+    λ ≥ 0 || throw(DomainError(λ, "qdrift_samples: λ = Σ|a_j| is ≥ 0 by construction."))
+    lam = Float64(λ)
+    T = abs(Float64(t))
+    citation = "docs/physics/campbell_2019_qdrift.md — Thm 1 (exact appendix " *
+               "series, S4); ×2 halved-distance pin (S5)"
+    if lam == 0.0 || T == 0.0                    # no non-identity weight: exact at N = 1
+        return BoundReport(1.0, :campbell_exact_N, citation,
+            (λ = lam, t = T, ε = Float64(ε), bound = 0.0))
+    end
+    hi = 1
+    while _qdrift_criterion(lam, T, hi) > ε
+        hi ≥ 2^62 && error(
+            "qdrift_samples: N exceeded 2^62 without meeting ε = $ε — the " *
+            "requested (λ, t, ε) is out of reach; raise ε or lower |t|.")
+        hi *= 2
+    end
+    lo = max(1, hi ÷ 2)                          # f(lo) may fail, f(hi) holds
+    while lo < hi                                # invariant: f(hi) ≤ ε
+        mid = (lo + hi) ÷ 2
+        if _qdrift_criterion(lam, T, mid) ≤ ε
+            hi = mid
+        else
+            lo = mid + 1
+        end
+    end
+    return BoundReport(Float64(hi), :campbell_exact_N, citation,
+        (λ = lam, t = T, ε = Float64(ε), bound = _qdrift_criterion(lam, T, hi)))
+end
+
+# ── COMPOSITE RESOURCES (Fact HW / HW Thm 2.1; S7) ──────────────────────────
+#
+# For the canonical split A = terms 1:K, B = the tail, outer/inner order 2k
+# matched (HW's own convention, main.tex line 490):
+#
+#   P(T) = T^{2k+1}·(4Υ^{2k+1}/(2k+1))·(Υ·α_comm(A,2k) + α_comm({A,B},2k))
+#                                       (HW eq def:p_of_t)
+#   Q(T) = 4Υλ_B²T²/N_B                 (HW eq def:q_of_t)
+#   r    = ⌈(P/ε)^{1/2k} + Q/ε⌉         (HW thm:higher_order_cost_fixed)
+#   cost = Υ(ΥL_A + N_B)·r operator exponentials.
+#
+# We carry R_P := (P/ε)^{1/2k} (the product-formula repetition weight) and
+# R_Q := 4Υλ_B²T²/ε (the qDrift weight at N_B = 1), so r = ⌈R_P + R_Q/N_B⌉.
+#
+# NEGATIVE-dt SLOTS (research step R3 — CLOSED against the tex): outer p ≥ 2
+# stages carry a (1−4u_k) < 0 scale. HW's Lemma lem:diamond_dist_higher_order
+# bounds every slot duration via |1−4u_k| ≤ 1 ⇒ |t_i| ≤ t — the ABSOLUTE
+# value — and both per-slot error bounds are even in t_i (Trotter spectral
+# bounds use |t|; the qDrift bound is quadratic). So negative-dt B-slots are
+# covered by the SAME accounting: |dt| in error bookkeeping, sign in angles.
+# Composite is NOT restricted to outer order 2.
+
+"R_P and R_Q of the Fact-HW step rule (see section header). Exact α by default."
+function _composite_RP_RQ(hs::PauliSum{W}, K::Integer, t::Real, ε::Real;
+                          order::Integer = 2, alpha_mode::Symbol = :exact,
+                          maxwords::Integer = ALPHA_MAXWORDS_DEFAULT) where {W}
+    (iseven(order) && 2 ≤ order ≤ 2 * SUZUKI_MAX_P) || throw(DomainError(order,
+        "composite: the (matched inner/outer) order must be an even 2 ≤ order ≤ " *
+        "$(2 * SUZUKI_MAX_P) (docs/physics/hagan_wiebe_2023_composite.md, Def 5.1)."))
+    (isfinite(ε) && ε > 0) || throw(DomainError(ε,
+        "composite: ε must be a finite positive full-diamond-norm target."))
+    L = nterms(hs)
+    0 < K < L || throw(DomainError(K,
+        "_composite_RP_RQ: interior split 0 < K < L = $L required (K = 0/L " *
+        "normalize to pure QDrift/Trotter plans BEFORE any composite arithmetic)."))
+    k = order ÷ 2
+    Υ = suzuki_sweep_count(order)
+    T = abs(Float64(t))
+    (αA, αAB) = alpha_comm_cross(hs, K, order; mode = alpha_mode, maxwords)
+    λB = hs.tail_λ[K + 1]
+    P = T^(2k + 1) * (4.0 * Float64(Υ)^(2k + 1) / (2k + 1)) * (Υ * αA + αAB)
+    R_P = (P / ε)^(1 / (2k))
+    R_Q = 4.0 * Υ * λB^2 * T^2 / ε
+    return (R_P = R_P, R_Q = R_Q, αA = αA, αAB = αAB, λB = λB, Υ = Υ, k = k, T = T)
+end
+
+"""
+    composite_nb(K, Υ, R_P, R_Q) -> Int
+
+The S7 default `N_B`: stationary point of the RELAXED cost
+`Υ(ΥK + N_B)(R_P + R_Q/N_B)` — `N_B* = √(Υ·K·R_Q/R_P)` (the same structure as
+HW's Lemma lem:optimal_nb_higher_order, docs/physics/hagan_wiebe_2023_composite.md
+§(e)) — then an integer scan {⌊N_B*⌋−1 … ⌈N_B*⌉+1} ∩ [1,∞) on the TRUE ceiled
+cost `Υ(ΥK + n)·⌈R_P + R_Q/n⌉` (ties → smaller n). `R_P = 0` (fully commuting
+head + zero cross term) makes the stationary point diverge — HW note the
+degeneracy; the relaxed optimum then sits at r = 1, i.e. `N_B* = R_Q` (the
+paper's "any N_B > 0" case pinned to the cost-optimal choice).
+"""
+function composite_nb(K::Integer, Υ::Integer, R_P::Float64, R_Q::Float64)
+    R_Q ≥ 0 || error("composite_nb: R_Q = $R_Q < 0 — an internal inconsistency.")
+    nbstar = R_P > 0 ? sqrt(Υ * K * R_Q / R_P) : max(R_Q, 1.0)
+    isfinite(nbstar) || error(
+        "composite_nb: the stationary N_B* is not finite ($nbstar) — check the " *
+        "(t, ε) scale.")
+    lo = max(1, floor(Int, nbstar) - 1)
+    hi = max(lo, min(ceil(Int, nbstar) + 1, 2^40))
+    best_n = 0
+    best_c = Inf
+    for n in lo:hi
+        r = max(1.0, ceil(R_P + R_Q / n))
+        c = Υ * (Υ * K + n) * r
+        if c < best_c                                # ties → smaller n (first hit)
+            best_c = c
+            best_n = n
+        end
+    end
+    return best_n
+end
+
+"""
+    composite_steps(hs::PauliSum, K, t, ε; order = 2, N_B, alpha_mode = :exact,
+                    maxwords = ALPHA_MAXWORDS_DEFAULT) -> BoundReport
+
+The proven outer repetition count `r = ⌈(P/ε)^{1/2k} + Q/ε⌉` of the order-`2k`
+composite channel at head size `K` and `N_B` samples per B-slot (Fact HW —
+docs/physics/zlokapa_2026_hamsim_lower_bounds.md eq:HW-cost, reproduced from
+docs/physics/hagan_wiebe_2023_composite.md thm:higher_order_cost_fixed), with
+EXACT α_comm by default. `value` is r; `inputs` carries the full audit trail
+(K, N_B, αA, αAB, λ_B, Υ, R_P, R_Q — the cost is `Υ(ΥK + N_B)·r`).
+"""
+function composite_steps(hs::PauliSum{W}, K::Integer, t::Real, ε::Real;
+                         order::Integer = 2, N_B::Integer,
+                         alpha_mode::Symbol = :exact,
+                         maxwords::Integer = ALPHA_MAXWORDS_DEFAULT) where {W}
+    N_B ≥ 1 || throw(DomainError(N_B, "composite_steps: need N_B ≥ 1 samples per B-slot."))
+    pq = _composite_RP_RQ(hs, K, t, ε; order, alpha_mode, maxwords)
+    r = _steps_ceil(pq.R_P + pq.R_Q / N_B, "composite_steps(order = $order)")
+    return BoundReport(Float64(r), :hw_fact_thm21,
+        "docs/physics/hagan_wiebe_2023_composite.md — thm:higher_order_cost_fixed " *
+        "(Fact HW, docs/physics/zlokapa_2026_hamsim_lower_bounds.md eq:HW-cost)",
+        (K = Int(K), N_B = Int(N_B), order = Int(order), Υ = pq.Υ, t = pq.T,
+         ε = Float64(ε), αA = pq.αA, αAB = pq.αAB, λB = pq.λB,
+         R_P = pq.R_P, R_Q = pq.R_Q, alpha_mode = alpha_mode))
+end
+
+"""
+    composite_error_bound(hs::PauliSum, K, t, r; order = 2, N_B,
+                          alpha_mode = :exact, maxwords = …) -> BoundReport
+
+The inverse direction (T11 conformance): the PROVEN full-diamond error bound
+of the order-`2k` composite channel at `r` outer iterations —
+`value = P(T)/r^{2k} + Q(T)/r` (HW's per-iteration bound × r, eqs
+def:p_of_t/def:q_of_t + eq:err_to_err_per_iter). Untuned; the exact ensemble
+superoperator distance is asserted ≤ this value.
+"""
+function composite_error_bound(hs::PauliSum{W}, K::Integer, t::Real, r::Integer;
+                               order::Integer = 2, N_B::Integer,
+                               alpha_mode::Symbol = :exact,
+                               maxwords::Integer = ALPHA_MAXWORDS_DEFAULT) where {W}
+    r ≥ 1 || throw(DomainError(r, "composite_error_bound: need r ≥ 1 outer iterations."))
+    N_B ≥ 1 || throw(DomainError(N_B, "composite_error_bound: need N_B ≥ 1."))
+    # P/Q at a reference ε = 1 (they are ε-free; _composite_RP_RQ folds ε only
+    # into R_P/R_Q, so recover P = R_P^{2k}·ε and Q = R_Q·ε at ε = 1).
+    pq = _composite_RP_RQ(hs, K, t, 1.0; order, alpha_mode, maxwords)
+    k = pq.k
+    P = pq.R_P^(2k)
+    Q = pq.R_Q / N_B
+    return BoundReport(P / Float64(r)^(2k) + Q / r, :hw_composite_error,
+        "docs/physics/hagan_wiebe_2023_composite.md — eqs def:p_of_t/def:q_of_t " *
+        "× eq:err_to_err_per_iter (thm:higher_order_cost_fixed proof)",
+        (K = Int(K), N_B = Int(N_B), r = Int(r), order = Int(order), Υ = pq.Υ,
+         t = pq.T, αA = pq.αA, αAB = pq.αAB, λB = pq.λB, P = P, Q = Q,
+         alpha_mode = alpha_mode))
+end
+
+"""
+    composite_k(hs::PauliSum, t, ε; order = 2, N_B = nothing,
+                alpha_mode = :exact, maxwords = …) -> Int
+
+The default head size `K` (S6 ruling chain): seed with the ZAH optimal-split
+second-moment rule — the least `K` with `Σ_{j>K} a_j²·t² ≤ ε` (the λ-free
+restatement of `Σ_{j>K*}(a_j/λ)² ≤ ε/(λt)²`; docs/physics/
+zlokapa_2026_hamsim_lower_bounds.md, Lemma "Optimal deterministic-randomized
+split" — read off the precomputed `tail_m2` suffix table) — then LOCAL
+refinement on the TRUE Fact-HW cost at the candidates {⌈K₀/2⌉, K₀, min(2K₀,L)}
+(proposal A §6.1; three budget-guarded α_comm calls per interior candidate).
+Endpoint candidates cost as their pure strategies (K = 0 → the S4 qDrift N;
+K = L → the Trotter step rule) so the refinement can degenerate honestly.
+Ties → larger K (the deterministic-leaning tie-break, S8 spirit).
+"""
+function composite_k(hs::PauliSum{W}, t::Real, ε::Real;
+                     order::Integer = 2, N_B::Union{Integer,Nothing} = nothing,
+                     alpha_mode::Symbol = :exact,
+                     maxwords::Integer = ALPHA_MAXWORDS_DEFAULT) where {W}
+    (isfinite(ε) && ε > 0) || throw(DomainError(ε,
+        "composite_k: ε must be a finite positive full-diamond-norm target."))
+    L = nterms(hs)
+    L == 0 && return 0
+    T = abs(Float64(t))
+    T == 0.0 && return 0
+    # second-moment seed: least K with tail_m2[K+1]·T² ≤ ε (tail_m2 nonincreasing)
+    K0 = L
+    for K in 0:L
+        if hs.tail_m2[K + 1] * T^2 ≤ ε
+            K0 = K
+            break
+        end
+    end
+    Υ = suzuki_sweep_count(order)
+    cands = sort(unique(clamp.([cld(K0, 2), K0, min(2 * K0, L)], 0, L)))
+    best_K = -1
+    best_c = Inf
+    for K in cands
+        c = if K == 0
+            qdrift_samples(hs.λ, T, ε).value
+        elseif K == L
+            Υ * L * trotter_steps(hs, T, ε; order, alpha_mode, maxwords).value
+        else
+            pq = _composite_RP_RQ(hs, K, T, ε; order, alpha_mode, maxwords)
+            n = N_B === nothing ? composite_nb(K, pq.Υ, pq.R_P, pq.R_Q) : Int(N_B)
+            r = max(1.0, ceil(pq.R_P + pq.R_Q / n))
+            Υ * (Υ * K + n) * r
+        end
+        if c < best_c || (c == best_c && K > best_K)   # ties → larger K
+            best_c = c
+            best_K = K
+        end
+    end
+    return best_K
 end

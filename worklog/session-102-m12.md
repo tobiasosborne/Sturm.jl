@@ -126,3 +126,54 @@ runtests. Suite 25750 → **27122 green**. S3/S9 implemented as ruled.
   rule, optimal-K, S10 DM+randomized guard (must land WITH randomized
   execution — today the planning stub fires first), trajectory(plan, rng),
   T5–T8/T11 channel harness (ze22), bench frontier (gmx0), E2 tight path.
+
+## Implementer addendum (8yzf + ze22, phases 2+3 — randomized strategies SHIPPED)
+
+`src/library/evolve/` gains `auto.jl` (+~380 LOC across bounds/plans/suzuki/
+evolve); `test/test_m12_random.jl` (176 asserts CI + 3 HEAVY) wired into
+runtests after test_m12_hamsim. Suite 27122 → **27298 green** (27301 w/
+STURM_TEST_HEAVY=1). S4/S7/S8/S10 as ruled; stub tests repurposed.
+
+- **Proposal-A property test was BACKWARDS**: "N_exact ≤ ⌈4λ²t²/ε⌉" is false
+  — e^x−1−x > x²/2 strictly, so the S4 exact criterion demands MORE than the
+  naive asymptote: ⌈4λ²t²/ε⌉ ≤ N_exact ≈ 4λ²t²/ε + 2λ|t|/3 (verified
+  numerically; the correct two-sided sandwich is the named test). The exact
+  criterion IS tighter than the honest windowed closed form — the S4 ruling's
+  intent survives; only the inequality direction in A §5's test was wrong.
+- **HW misquote flag**: HW eq qdrift_diamond_distance restates Campbell's
+  HALVED-distance bound as the FULL norm (factor-2 optimistic; Campbell's own
+  raw full-norm bound is 4λ²t²/N·e^x, distillation-verified). Sturm's S4
+  criterion keeps Campbell's convention honestly ×2. Fact HW's Q-term is used
+  VERBATIM for Composite (as ruled) — its qDrift component inherits HW's
+  optimistic quote; T11's exact-ensemble conformance passes with big margin,
+  but if a future adversarial case grazes the bound, revisit Q → 2Q.
+- **R2 CLOSED** (tex): Lemma lem:diamond_dist_higher_order expands the outer
+  step as Υ pairs 𝒰_B(t_i)∘𝒰_A(t_i), each 𝒰̃_B an independent qDrift channel
+  (fresh draws, per-invocation N_B); each 𝒰̃_A a FULL inner order-2k sweep
+  (matched orders, line 490) — hence the Υ(ΥL_A + N_B) cost. NOTE the
+  distillation §(b) line "𝒰_A replaced by its L_A-term first-order Trotter
+  sweep" contradicts the cost formula (that's the §4 first-order construction
+  leaking into the higher-order paragraph); the cost line pins the truth.
+- **R3 CLOSED** (tex, same lemma): negative (1−4u_k) outer scales are covered
+  by HW's own |1−4u_k| ≤ 1 ⇒ |t_i| ≤ t accounting, and both per-slot bounds
+  are even in t_i — |dt| in bounds, sign in angles. Composite NOT restricted
+  to outer order 2.
+- Gotchas: (a) top-level replay tests must be up-to-phase — the uncontrolled
+  Ad path drops U2.φ at application (§4.3, `_emit_u2!`), so gphase/H/S†
+  phases are unphysical at top level (T9 already pins ctrl-visibility);
+  a phase-sensitive opnorm compare of a seeded qDrift replay fails by O(1).
+  (b) `Composite(order = 2, K, N_B, …)` without the leading `;` passes K
+  POSITIONALLY — no positional ctor exists, loud MethodError, but easy typo.
+  (c) Statistics is NOT in test extras — hand-roll mean/stderr/quantile.
+- Design decisions argued in-file: K = 0 degeneration with BOTH N_B+steps
+  pinned maps to QDrift N = steps·Υ·N_B (exp_count-preserving); partial pins
+  across a degeneration throw; K = L + pinned N_B throws. TracingContext is
+  guarded alongside DM (one traced trajectory = the S10 bug class at the DAG
+  level) — an extension beyond the letter of S10, same physics. Auto's
+  composite candidate uses the second-moment K* seed only (norm1, no
+  refinement); the chosen strategy's planner re-derives K with exact-α
+  refinement (S8's division of labor).
+- Leftovers for gmx0 (bench): R4 calibration (ALPHA_MAXWORDS_DEFAULT,
+  AUTO_COMMUTING_GATE = 2048), frontier protocol vs the Zlokapa envelope +
+  QSP overlay, Auto-regret table, proxy-K vs exact-K disagreement rate.
+  E2 tight order-2 min path still gated on the distillation (S13 follow-on).

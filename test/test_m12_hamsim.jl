@@ -414,27 +414,15 @@ using Sturm: eager, statevector, _core, orkan_state_set!,
         @test_throws DomainError runq(x -> evolve!(x, H, 1.0; steps = 0))
         @test_throws DomainError runq(x -> evolve!(x, H, 1.0; order = 3))
 
-        # phase-2 stubs (bead Sturm.jl-8yzf): randomized/Auto planning throws LOUD
+        # phase 2 LANDED (bead Sturm.jl-8yzf): the former stubs now PLAN — the
+        # deep randomized/Auto laws live in test_m12_random.jl; here we pin
+        # only that no code path silently falls back to a stub or to Trotter.
         hs = PauliSum{2}(H)
-        for alg in (QDrift(), Composite(order = 2), Auto())
-            err = try
-                plan_evolution(alg, hs, 1.0; ε = 1e-3)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-            @test occursin("phase 2", err.msg) && occursin("8yzf", err.msg)
-        end
-        @test_throws ErrorException runq(x -> evolve!(x, H, 1.0; alg = QDrift(), ε = 1e-2))
-        # the bare-with-ε call resolves to Auto ⇒ must hit the stub, never silently Trotter
-        err = try
-            runq(x -> evolve!(x, H, 1.0; ε = 1e-3))
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException && occursin("phase 2", err.msg)
+        @test plan_evolution(QDrift(), hs, 1.0; ε = 1e-2) isa Sturm.QDriftPlan{2}
+        @test plan_evolution(Composite(order = 2), hs, 1.0; ε = 1e-2) isa Sturm.EvolvePlan{2}
+        @test plan_evolution(Auto(), hs, 1.0; ε = 1e-2) isa Sturm.EvolvePlan{2}
+        # the bare-with-ε call resolves to Auto and RUNS end-to-end (S3 as ruled)
+        @test runq(x -> evolve!(x, H, 1.0; ε = 1e-2)) isa QInt{2}
     end
 
     # =====================================================================

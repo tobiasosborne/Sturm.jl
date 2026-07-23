@@ -11,9 +11,9 @@
 # strategy a property of the METHOD — `Trotter(order = 4)` is reusable across
 # accuracies.
 #
-# QDrift/Composite carry randomized-execution parameters; their PLANNING is
-# M12 phase 2 (bead Sturm.jl-8yzf) — the structs, validation and vocabulary
-# ship now so the surface is stable, and planning fails LOUD (plans.jl).
+# QDrift/Composite carry randomized-execution parameters; their planning
+# lives in plans.jl (phase 2, bead Sturm.jl-8yzf), the Auto dispatch rule in
+# auto.jl, and the resource formulas (S4 exact N, S7 N_B, Fact HW) in bounds.jl.
 
 """
     EvolveAlg
@@ -55,11 +55,13 @@ end
 Campbell's qDRIFT randomized compiler (docs/physics/campbell_2019_qdrift.md,
 Thm 1): `N` i.i.d. samples `j ∼ |a_j|/λ`, each applying
 `exp(−i·sign(a_j)·(λt/N)·P_j)`. `N = nothing` derives the sample count from
-`ε` (the exact transcendental criterion, S4). `rng = nothing` draws from the
-context RNG (`shots`-friendly); an explicit RNG pins the sampled trajectory.
-
-M12 phase 1 ships the descriptor only — PLANNING/EXECUTION is phase 2 (bead
-Sturm.jl-8yzf) and currently fails loud.
+`ε` (the exact transcendental criterion `2N(e^{2λ|t|/N} − 1 − 2λ|t|/N) ≤ ε`,
+S4 — `qdrift_samples`). `rng = nothing` draws from the context RNG
+(`shots`-friendly); an explicit RNG pins the sampled trajectory (precedence:
+strategy rng > context rng > global — a named test). One `evolve!` call =
+ONE trajectory; the ε guarantee is the ENSEMBLE channel's (a single
+trajectory is ~√ε — docs/physics/chen_2021_concentration_random_products.md).
+Loud error on DM/Tracing contexts (S10) and under a live `when` frame.
 """
 struct QDrift <: EvolveAlg
     N::Union{Int,Nothing}
@@ -76,11 +78,12 @@ The Hagan–Wiebe composite channel (docs/physics/hagan_wiebe_2023_composite.md,
 Def 5.1 / Thm 2.1): an order-`2p` Suzuki HEAD over the `K` largest-|a| terms
 interleaved with fresh-sampled qDrift batches (`N_B` samples per B-slot) over
 the tail, `steps` outer iterations. Every `nothing` is derived from `ε` and
-the prefix tables (optimal-K, docs/physics/zlokapa_2026_hamsim_lower_bounds.md
-Lemma 7). `K = 0`/`K = L` normalize to pure QDrift/Trotter plans.
-
-M12 phase 1 ships the descriptor only — PLANNING/EXECUTION is phase 2 (bead
-Sturm.jl-8yzf) and currently fails loud.
+the prefix tables (`composite_k`: the ZAH optimal-split second-moment seed +
+Fact-HW refinement, docs/physics/zlokapa_2026_hamsim_lower_bounds.md Lemma
+"Optimal deterministic-randomized split"; `composite_nb`: the S7 stationary
+point + integer scan; `composite_steps`: Fact HW). `K = 0`/`K = L` normalize
+to pure QDrift/Trotter plans BEFORE scheduling (one code path). Randomized:
+loud error on DM/Tracing contexts (S10) and under a live `when` frame.
 """
 struct Composite <: EvolveAlg
     order::Int
@@ -111,9 +114,9 @@ Strategy auto-dispatch: pick the proven-cost argmin among the candidate
 strategies at the call's `ε` (which is REQUIRED — a bare `evolve!` with
 neither `ε=` nor explicit resources is a loud `ArgumentError`, S3 as ruled).
 Zero fields by design (S8/B §6): anything tunable belongs on the concrete
-strategies; kwargs can be added later without breaking `Auto()`.
-
-M12 phase 1 ships the descriptor only — the dispatch rule is phase 2 (bead
-Sturm.jl-8yzf) and currently fails loud.
+strategies; kwargs can be added later without breaking `Auto()`. The dispatch
+rule is `evolve_plan` (auto.jl): exactness fast paths, then the proven-cost
+argmin over {QDrift, Trotter(2p), Composite(2p, K*)} on norm-bound surrogate
+costs, with the CHOSEN strategy planned at exact α (S8 merge).
 """
 struct Auto <: EvolveAlg end

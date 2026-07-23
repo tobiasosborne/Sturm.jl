@@ -191,21 +191,22 @@ include("library/shor.jl")
 include("library/grover.jl")
 include("library/qpe.jl")
 
-# --- M12 phase 1: Hamiltonian-simulation strategy layer (bead Sturm.jl-elsf) --
+# --- M12: Hamiltonian-simulation strategy layer (beads Sturm.jl-elsf/8yzf) ---
 # `library/evolve/` supersedes the M10 single-file `evolve.jl` (design:
 # docs/design/m12-synthesis.md, S14 layout). Dependency order: symplectic Pauli
 # algebra → PauliTerm + canonical PauliSum{W} (+ model families) → Suzuki stage
-# scales + sweep builder → bounds (exact α_comm DP, trotter_steps/error_bound,
-# BoundReport, THE diamond↔spectral ×2 pin) → strategy descriptors → plans
-# (plan_evolution / trajectory / exp_count; phase-2 stubs fail loud) → executor
-# + `evolve!` entry (S3/S9 as ruled). Randomized strategies (QDrift/Composite
-# planning, Auto dispatch, bench/) are M12 phase 2 (bead Sturm.jl-8yzf).
+# scales + sweep/outer-slot builders → bounds (exact α_comm DP, Trotter/qDrift/
+# composite step + error rules, BoundReport, THE diamond↔spectral ×2 pin) →
+# strategy descriptors → plans (plan_evolution / trajectory / exp_count for
+# Trotter + QDrift + Composite) → Auto dispatch (evolve_plan, S8 merge) →
+# executor + `evolve!` entry (S3/S9/S10 as ruled). bench/ is bead Sturm.jl-gmx0.
 include("library/evolve/pauli.jl")
 include("library/evolve/hamiltonian.jl")
 include("library/evolve/suzuki.jl")
 include("library/evolve/bounds.jl")
 include("library/evolve/strategies.jl")
 include("library/evolve/plans.jl")
+include("library/evolve/auto.jl")
 include("library/evolve/evolve.jl")
 
 # --- Surface scaffolding (exported; region vocabulary users type) -----
@@ -310,7 +311,13 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     alpha_comm, alpha_comm_pairs, alpha_comm_cross, AlphaCommBlowup,
     ALPHA_MAXWORDS_DEFAULT, trotter_steps, trotter_error_bound, BoundReport,
     EvolveAlg, EvolvePlan, TrotterPlan, plan_evolution, trajectory, exp_count,
-    ising_chain, heisenberg_chain, powerlaw_chain
+    ising_chain, heisenberg_chain, powerlaw_chain,
+    # M12 phase 2 (bead Sturm.jl-8yzf): randomized plans + resource rules +
+    # Auto dispatch (all library `public`, reachable as `Sturm.…`, not dumped)
+    QDriftPlan, CompositePlan, qdrift_samples, qdrift_error_bound,
+    composite_steps, composite_error_bound, composite_nb, composite_k,
+    composite_outer_slots, evolve_plan, EvolveChoice, PlanRow,
+    AUTO_COMMUTING_GATE
 
 # --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
 # The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and

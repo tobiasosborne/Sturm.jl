@@ -106,6 +106,82 @@ function _execute_plan!(ctx::AbstractContext, x::QInt{W}, plan::TrotterPlan{W}) 
     return nothing
 end
 
+# --- Randomized execution (M12 phase 2, bead Sturm.jl-8yzf) ------------------
+
+"""
+    _assert_randomized_legal(ctx, what)
+
+The two now-reachable guards of S10 + B §1.4, fired BEFORE any emission:
+
+- **DM context** ⇒ `error()` naming M11: one sampled trajectory is one
+  UNRAVELLING of the qDrift/composite channel; executing it on a density
+  matrix would silently present a single branch as the CPTP average — the
+  exact bug class Principle 1 kills. The DM lowering of the ensemble is
+  M11's mixture value (KrausFamily/NoiseN, channel/dag.jl). The same
+  argument bans TRACING (a recorded trajectory would materialize the wrong
+  channel DAG) — guarded here too, same physics, distinct message.
+- **live `when` frame** ⇒ loud error (the `_assert_no_control` shape): the
+  qDrift guarantee is a CHANNEL statement, and ctrl of a mixture ≠ the
+  mixture of ctrls — conditioning turns each branch's harmless global phase
+  into a RELATIVE phase the mixing lemma never averages
+  (docs/physics/campbell_2017_mixing_unitaries.md, the a² + 2b premise is
+  unconditioned; docs/physics/hastings_2016_incoherent_errors.md).
+  Deterministic strategies remain legal inside `when` (S9 as ruled).
+"""
+function _assert_randomized_legal(ctx::AbstractContext, what::AbstractString)
+    ctx isa DensityMatrixContext && error(
+        "evolve!($what): a randomized strategy samples ONE trajectory — one " *
+        "unravelling of the qDrift/composite CHANNEL — and running it on a " *
+        "density-matrix context would silently misrepresent the CPTP average " *
+        "(S10). The DM lowering of the ensemble is M11's mixture value " *
+        "(KrausFamily/NoiseN); until it lands, run randomized strategies under " *
+        "`eager`/`shots`, or use a deterministic strategy (legal on DM).")
+    ctx isa TracingContext && error(
+        "evolve!($what): a randomized strategy samples ONE trajectory; tracing " *
+        "it would materialize a single unravelling as if it were the channel " *
+        "(the S10 bug class at the DAG level). The traced form of the ensemble " *
+        "is M11's mixture value; trace a deterministic strategy instead.")
+    isempty(_core(ctx).control_stack) || error(
+        "evolve!($what) is forbidden under a live `when` frame: the qDrift " *
+        "guarantee is a CHANNEL statement (a mixture of unitaries), and ctrl " *
+        "of a mixture ≠ the mixture of ctrls — conditioning turns per-branch " *
+        "global phases into relative phases the mixing lemma premises never " *
+        "average (docs/physics/campbell_2017_mixing_unitaries.md; " *
+        "docs/physics/hastings_2016_incoherent_errors.md). Deterministic " *
+        "strategies remain legal inside `when` (S9).")
+    return nothing
+end
+
+"""
+    _plan_rng(plan, ctx)
+
+RNG precedence (pinned by a named test): the strategy's explicit `rng` if
+set, else the context core's rng (the SAME stream `shots`/`_draw` thread —
+`nothing` means Julia's task-global stream, matching `_draw`'s convention in
+context/abstract.jl).
+"""
+_plan_rng(plan, ctx::AbstractContext) = plan.rng !== nothing ? plan.rng : rng(ctx)
+
+function _execute_plan!(ctx::AbstractContext, x::QInt{W}, plan::QDriftPlan{W}) where {W}
+    _assert_randomized_legal(ctx, "QDrift")
+    hs = plan.ham
+    hs.c_I == 0 || _act!(ctx, gphase(-hs.c_I * plan.t), (x.wires[1],))
+    for (j, θ) in trajectory(plan, _plan_rng(plan, ctx))
+        _pauli_exp!(ctx, x, hs.words[j], θ)
+    end
+    return nothing
+end
+
+function _execute_plan!(ctx::AbstractContext, x::QInt{W}, plan::CompositePlan{W}) where {W}
+    _assert_randomized_legal(ctx, "Composite")
+    hs = plan.ham
+    hs.c_I == 0 || _act!(ctx, gphase(-hs.c_I * plan.t), (x.wires[1],))
+    for (j, θ) in trajectory(plan, _plan_rng(plan, ctx))
+        _pauli_exp!(ctx, x, hs.words[j], θ)
+    end
+    return nothing
+end
+
 """
     evolve!(x::QInt{W}, H, t::Real;
             alg = nothing, ε = nothing, steps = nothing, order = nothing) -> x
@@ -120,10 +196,13 @@ merged — exactly equal, `e^{−iaP}e^{−ibP} = e^{−i(a+b)P}`; S12 changelog
 Strategy selection (`alg`, exported vocabulary): `Trotter(order=…, steps=…)`
 (deterministic Suzuki — docs/physics/suzuki_1991_fractal_decomposition.md,
 docs/physics/childs_2019_trotter_error.md,
-docs/physics/hagan_wiebe_2023_composite.md), `QDrift(…)`, `Composite(…)`,
-`Auto()` (phase 2, bead Sturm.jl-8yzf — currently loud errors). `ε` is the
-target accuracy in the FULL diamond norm (S5), used to derive whatever
-resources the strategy left free. Resolution rules (every violation throws):
+docs/physics/hagan_wiebe_2023_composite.md), `QDrift(N=…, rng=…)` (Campbell's
+randomized compiler — docs/physics/campbell_2019_qdrift.md), `Composite(…)`
+(the Hagan–Wiebe head/tail interleave — docs/physics/hagan_wiebe_2023_composite.md),
+`Auto()` (the proven-cost argmin over the candidate set — auto.jl,
+docs/physics/zlokapa_2026_hamsim_lower_bounds.md). `ε` is the target accuracy
+in the FULL diamond norm (S5), used to derive whatever resources the strategy
+left free. Resolution rules (every violation throws):
 
 1. `steps`/`order` kwargs with no `alg` are the M10 sugar for
    `Trotter(order = something(order, 2), steps = …)` — same circuit as M10,
@@ -141,6 +220,16 @@ resources the strategy left free. Resolution rules (every violation throws):
 
 Deterministic strategies are legal inside `when` (S9): the whole evolution
 lowers `ctrl^k` through the kernel choke point — QPE on `e^{−iHt}` composes.
+
+Randomized strategies (`QDrift`/`Composite`, and `Auto` when it picks one)
+execute ONE sampled trajectory per call — the `shots` HOF owns the shot loop;
+the ε guarantee is a property of the shot-averaged CHANNEL, a single
+trajectory is only ~√ε-close (campbell_2019_qdrift.md "Diamond norm
+distance"; docs/physics/chen_2021_concentration_random_products.md). They are
+loud errors on a DM/Tracing context (S10 — the ensemble's lowering is M11's
+mixture value) and under a live `when` frame (ctrl of a mixture ≠ mixture of
+ctrls). RNG: the strategy's `rng` if set, else the context core's rng (the
+`shots` stream), else Julia's global stream — precedence pinned by a test.
 
 ```julia
 # evolve a 2-qubit register under H = Z⊗Z + ½ X⊗I for time t, second order
@@ -181,7 +270,7 @@ function evolve!(x::QInt{W}, H, t::Real;
     hs = PauliSum{W}(H)                                 # loud on malformed H
     t == 0 && return x                                  # exact no-op (rule 7)
     ctx = _here(x)
-    plan = plan_evolution(alg, hs, Float64(t); ε = ε)   # phase-2 algs fail loud here
+    plan = plan_evolution(alg, hs, Float64(t); ε = ε)   # pure; fills every free resource
     _execute_plan!(ctx, x, plan)
     return x
 end

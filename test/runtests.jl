@@ -395,4 +395,8 @@ end
     @testset "M12 — hamsim phase 1: Pauli algebra, Suzuki, exact α_comm, plans, ctrl-evolve!" begin
         include("test_m12_hamsim.jl")   # synthesis S1–S14 (S3/S9 as ruled): T1–T4, T9, T10, T12
     end
+
+    @testset "M12 — hamsim phases 2+3: QDrift/Composite/Auto + channel harness" begin
+        include("test_m12_random.jl")   # S4/S7/S8/S10 as ruled: T5–T8, T11, guard additions, H1 (HEAVY)
+    end
 end
