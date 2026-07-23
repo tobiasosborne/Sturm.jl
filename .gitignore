@@ -15,3 +15,5 @@ docs/literature/quantum_simulation/.browser-profile/
 
 # Claude Code local state
 .claude/scheduled_tasks.lock
+docs/literature/*_src/
+docs/literature/*.pdf

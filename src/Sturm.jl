@@ -185,13 +185,28 @@ include("library/shor.jl")
 # `library/grover.jl` (`amplify`/`find`/`interfere!` — nested-`when` + `not!(dual)`
 # multi-ctrl Z, `superpose!`/`interfere!` H^⊗n materialization, Bennett-bridge
 # marker); `library/qpe.jl` (`phase_estimate` — the §7.7 phase-sample structure with
-# a caller unitary, `Int(dual(k))` readout); `library/evolve.jl` (`evolve!` — first/
-# second-order Trotter of e^{−iHt} over weighted Pauli words). All reuse shipped
-# surface/kernel verbs (`when`, `dual`, `not!`, `superpose!`, `oracle`, `region`,
-# `_act!`, kernel U2 values) — no new surface construct, no duplicated primitive.
+# a caller unitary, `Int(dual(k))` readout). All reuse shipped surface/kernel verbs
+# (`when`, `dual`, `not!`, `superpose!`, `oracle`, `region`, `_act!`, kernel U2
+# values) — no new surface construct, no duplicated primitive.
 include("library/grover.jl")
 include("library/qpe.jl")
-include("library/evolve.jl")
+
+# --- M12 phase 1: Hamiltonian-simulation strategy layer (bead Sturm.jl-elsf) --
+# `library/evolve/` supersedes the M10 single-file `evolve.jl` (design:
+# docs/design/m12-synthesis.md, S14 layout). Dependency order: symplectic Pauli
+# algebra → PauliTerm + canonical PauliSum{W} (+ model families) → Suzuki stage
+# scales + sweep builder → bounds (exact α_comm DP, trotter_steps/error_bound,
+# BoundReport, THE diamond↔spectral ×2 pin) → strategy descriptors → plans
+# (plan_evolution / trajectory / exp_count; phase-2 stubs fail loud) → executor
+# + `evolve!` entry (S3/S9 as ruled). Randomized strategies (QDrift/Composite
+# planning, Auto dispatch, bench/) are M12 phase 2 (bead Sturm.jl-8yzf).
+include("library/evolve/pauli.jl")
+include("library/evolve/hamiltonian.jl")
+include("library/evolve/suzuki.jl")
+include("library/evolve/bounds.jl")
+include("library/evolve/strategies.jl")
+include("library/evolve/plans.jl")
+include("library/evolve/evolve.jl")
 
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
@@ -249,6 +264,12 @@ export QMod, mulmod!, shor_order
 # `PauliTerm`) are kernel/library `public` — reachable as `Sturm.…`, not dumped.
 export amplify, find, phase_estimate, evolve!, interfere!
 
+# --- Surface M12 strategy vocabulary (exported; PRD-v2 §5, M12 phase 1) -------
+# The `evolve!` strategy descriptors (synthesis S2: strategies carry resources;
+# ε is an `evolve!` kwarg). Exported like `amplify`: they ARE the user-facing
+# vocabulary of the HOF signature. The plans/bounds machinery stays `public`.
+export Trotter, QDrift, Composite, Auto
+
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
     X, Y, Z, H, S, T, Ry, Rz, Rx, I2, NEG_I, gphase,
@@ -278,7 +299,18 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     _cf_denominator, _minimize_order, _shor_phase_sample, _ideal_mulmod_perm,
     # M10 library HOF internals (kernel/library `public`, reachable as `Sturm.…`)
     grover_iterations, _mcz_all_ones!, _grover_diffuse!, _phase_mark_oracle!,
-    PauliTerm, _pauli_exp!
+    PauliTerm, _pauli_exp!,
+    # M12 hamsim machinery (library `public`, reachable as `Sturm.…`, not
+    # dumped; bead Sturm.jl-elsf): symplectic Pauli algebra, canonical
+    # Hamiltonian value, Suzuki scales, exact α_comm + step/error bounds
+    # (BoundReport), plans, and the model families.
+    PauliWord, PauliSum, letter_at, commutes, mulword, mulword_word,
+    is_identity, nterms, iscommuting,
+    suzuki_stage_scales, suzuki_sweep_count, SUZUKI_MAX_P,
+    alpha_comm, alpha_comm_pairs, alpha_comm_cross, AlphaCommBlowup,
+    ALPHA_MAXWORDS_DEFAULT, trotter_steps, trotter_error_bound, BoundReport,
+    EvolveAlg, EvolvePlan, TrotterPlan, plan_evolution, trajectory, exp_count,
+    ising_chain, heisenberg_chain, powerlaw_chain
 
 # --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
 # The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and

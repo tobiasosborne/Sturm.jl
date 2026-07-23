@@ -391,4 +391,8 @@ end
     @testset "M10 — library HOFs: Grover amplify/find, phase_estimate, Trotter evolve!" begin
         include("test_m10_library.jl")  # §5 HOFs: sin²((2k+1)θ), dyadic QPE, Trotter E1/E2
     end
+
+    @testset "M12 — hamsim phase 1: Pauli algebra, Suzuki, exact α_comm, plans, ctrl-evolve!" begin
+        include("test_m12_hamsim.jl")   # synthesis S1–S14 (S3/S9 as ruled): T1–T4, T9, T10, T12
+    end
 end

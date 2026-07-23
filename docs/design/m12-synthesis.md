@@ -73,9 +73,11 @@ names its source.
 - R6 (A): sweep test_prd_examples.jl and fixtures for bare `evolve!` calls
   before the S3 rule lands.
 
-## Open for Tobias (blocking implementation start)
+## Resolved by Tobias (2026-07-23, after review)
 
-- **S3**: bare `evolve!(x,H,t)` — error demanding ε (synthesis
-  recommendation) vs Auto at a documented default ε.
-- **S9**: confirm deterministic ctrl-`evolve!` in M12 scope (small
-  addition, guarded by R3).
+- **S3**: RULED — bare `evolve!(x,H,t)` throws `ArgumentError` demanding
+  `ε=` or explicit resources; `evolve!(x,H,t; ε=…)` runs Auto. No default
+  accuracy anywhere.
+- **S9**: RULED — deterministic ctrl-`evolve!` IS in M12 scope (`_act!`
+  switch + T9), guarded by research step R3; fall back to deferral if the
+  §3.9 audit fails.
