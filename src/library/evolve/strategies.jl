@@ -116,7 +116,9 @@ neither `ε=` nor explicit resources is a loud `ArgumentError`, S3 as ruled).
 Zero fields by design (S8/B §6): anything tunable belongs on the concrete
 strategies; kwargs can be added later without breaking `Auto()`. The dispatch
 rule is `evolve_plan` (auto.jl): exactness fast paths, then the proven-cost
-argmin over {QDrift, Trotter(2p), Composite(2p, K*)} on norm-bound surrogate
-costs, with the CHOSEN strategy planned at exact α (S8 merge).
+argmin over {QDrift, Trotter(2p), Composite(2p, K*)} priced from BUDGETED
+proven α bounds (`alpha_comm_layered` — exact wherever the DP fits the
+budget, a recorded partial-depth bound otherwise; bead Sturm.jl-jpky), with
+the CHOSEN strategy planned at exact α (S8 merge).
 """
 struct Auto <: EvolveAlg end

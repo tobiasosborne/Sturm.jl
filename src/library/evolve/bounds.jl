@@ -76,6 +76,69 @@ function Base.showerror(io::IO, e::AlphaCommBlowup)
         "bounds_on_alpha_and_p), pick a lower order, or give explicit steps.")
 end
 
+# ── THE SHARED MEASURE-PROPAGATION CORE (bead Sturm.jl-jpky) ────────────────
+# `alpha_comm` (the exact value; loud on overflow) and `alpha_comm_layered`
+# (the BUDGETED proven upper bound `Auto`'s dispatch ranks on) run the SAME
+# DP — only the EXIT POLICY differs. One implementation, deliberately: a
+# second copy of this loop is exactly the hiding place the v0.1 α_comm
+# silent-substitution bug lived in.
+
+"""
+    _AlphaDP
+
+Outcome of one measure-propagation run over product words. `mass` is
+`M_d = Σ_w μ_d(w)` for the DEEPEST COMPLETED layer `depth = d` (`d = 1` is
+the initial measure, `M_1 = λ`; `d = order+1` means the DP ran to completion,
+`exact = true`). `stop` says why it ended (`:complete`/`:maxwords`/`:work`),
+`support`/`layer` locate a premature stop, `work` counts the `(word, term)`
+propagation steps consumed.
+"""
+struct _AlphaDP
+    mass::Float64
+    depth::Int
+    exact::Bool
+    stop::Symbol
+    support::Int
+    layer::Int
+    work::Int
+end
+
+# The DP itself. `maxwords` caps MEMORY (word support), `workbudget` caps TIME
+# (propagation steps, checked between words — a layer in progress is never
+# reported as complete, so `mass`/`depth` always describe a FINISHED layer).
+function _alpha_propagate(hs::PauliSum{W}, order::Int, maxwords::Int,
+                          workbudget::Int) where {W}
+    L = nterms(hs)
+    μ = Dict{PauliWord{W},Float64}()
+    for j in 1:L                                    # depth-1 measure: μ₁(P_j) = |a_j|
+        μ[hs.words[j]] = abs(hs.coeffs[j])          # words are unique post-merge
+    end
+    mass = hs.λ                                     # M₁ = Σ_j |a_j| by definition
+    depth = 1
+    work = 0
+    for layer in 2:(order + 1)
+        ν = Dict{PauliWord{W},Float64}()
+        for (w, ω) in μ
+            work ≥ workbudget && return _AlphaDP(mass, depth, false, :work,
+                                                 length(ν), layer, work)
+            for j in 1:L
+                p = hs.words[j]
+                commutes(p, w) && continue          # [P_j, w] = 0
+                v = mulword_word(p, w)              # else [P_j, w] = 2·(phase)·(p⋆w)
+                ν[v] = get(ν, v, 0.0) + ω * abs(hs.coeffs[j])
+                length(ν) > maxwords && return _AlphaDP(mass, depth, false,
+                    :maxwords, length(ν), layer, work)
+            end
+            work += L
+        end
+        μ = ν
+        depth = layer
+        mass = sum(values(μ); init = 0.0)
+        isempty(μ) && return _AlphaDP(0.0, order + 1, true, :complete, 0, 0, work)
+    end
+    return _AlphaDP(mass, order + 1, true, :complete, 0, 0, work)
+end
+
 """
     alpha_comm(hs::PauliSum{W}, order; mode = :exact, maxwords = ALPHA_MAXWORDS_DEFAULT)
 
@@ -96,7 +159,10 @@ is guarded by `maxwords` — overflow throws `AlphaCommBlowup`, never degrades.
 `mode = :norm1` is the EXPLICIT-OPT-IN loose bound `2^{2k}·λ^{2k+1}`
 (hagan_wiebe Lemma bounds_on_alpha_and_p) — clearly a bound, not the value;
 no code path selects it for you. Signs are irrelevant (commutator norms are
-sign-insensitive; a named test pins this).
+sign-insensitive; a named test pins this). The third, INTERMEDIATE reading of
+the same DP — exact for `d` layers, 1-norm for the rest — is
+[`alpha_comm_layered`](@ref); it is likewise never selected for you (planning
+takes `mode` from the caller and nothing else).
 """
 function alpha_comm(hs::PauliSum{W}, order::Integer;
                     mode::Symbol = :exact,
@@ -111,23 +177,13 @@ function alpha_comm(hs::PauliSum{W}, order::Integer;
     L = nterms(hs)
     L == 0 && return 0.0
     mode === :norm1 && return 2.0^order * hs.λ^(order + 1)
-    μ = Dict{PauliWord{W},Float64}()
-    for j in 1:L                                    # depth-1 measure: μ₁(P_j) = |a_j|
-        μ[hs.words[j]] = abs(hs.coeffs[j])          # words are unique post-merge
-    end
-    for layer in 2:(order + 1)
-        ν = Dict{PauliWord{W},Float64}()
-        for (w, ω) in μ, j in 1:L
-            p = hs.words[j]
-            commutes(p, w) && continue              # [P_j, w] = 0
-            v = mulword_word(p, w)                  # else [P_j, w] = 2·(phase)·(p⋆w)
-            ν[v] = get(ν, v, 0.0) + ω * abs(hs.coeffs[j])
-            length(ν) > maxwords && throw(AlphaCommBlowup(length(ν), layer, Int(maxwords)))
-        end
-        μ = ν
-        isempty(μ) && return 0.0                    # everything commuted out
-    end
-    return 2.0^order * sum(values(μ))               # each layer contributed a factor 2
+    dp = _alpha_propagate(hs, Int(order), Int(maxwords), typemax(Int))
+    dp.stop === :maxwords &&
+        throw(AlphaCommBlowup(dp.support, dp.layer, Int(maxwords)))
+    dp.exact || error(
+        "alpha_comm: the unbudgeted DP stopped early (:$(dp.stop)) — an " *
+        "internal inconsistency; nothing was substituted.")
+    return 2.0^order * dp.mass                      # each layer contributed a factor 2
 end
 
 """
@@ -145,6 +201,129 @@ function alpha_comm_pairs(hs::PauliSum{W}) where {W}
         s += 2.0 * abs(hs.coeffs[i]) * abs(hs.coeffs[j])
     end
     return s
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  THE LAYERED α BOUND (bead Sturm.jl-jpky — Auto's ranking surrogate)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ── THE INEQUALITY (proof, three lines) ─────────────────────────────────────
+# Write the DP's layer masses M_d = Σ_w μ_d(w) (M_1 = λ), so that
+# α_comm(H, 2k) = 2^{2k}·M_{2k+1} EXACTLY (the measure-propagation identity
+# above). One propagation layer re-weights each word by the |a|-mass of the
+# terms that ANTIcommute with it, which is at most the whole 1-norm:
+#
+#     M_{d+1} = Σ_w μ_d(w)·( Σ_{j : [P_j, w] ≠ 0} |a_j| )  ≤  λ · M_d.   (†)
+#
+# Iterating (†) from any completed depth d closes the remaining 2k+1−d layers:
+#
+#     α_comm(H, 2k)  ≤  B_d := 2^{2k} · λ^{2k+1−d} · M_d.                (‡)
+#
+# (‡) is a genuine PROVEN upper bound for every d, with two familiar endpoints
+# and one monotonicity law that make it the right ranking device:
+#
+#   * d = 1        ⇒ B_1 = 2^{2k}λ^{2k+1} — EXACTLY the HW Lemma
+#                    bounds_on_alpha_and_p 1-norm bound (`mode = :norm1`);
+#   * d = 2        ⇒ B_2 = 2^{2k}λ^{2k−1}·α_pairs, the tight Childs-E1 pair sum
+#                    (`alpha_comm_pairs`) used as an anchor — M_2 IS that sum;
+#   * d = 2k+1     ⇒ B_{2k+1} = the exact α_comm;
+#   * B_{d+1} ≤ B_d by (†) — deeper is ALWAYS tighter, never worse.
+#
+# So the budget below trades WORK for TIGHTNESS along a proven chain. It is a
+# bound at every stopping point, so `Auto`'s ranking stays a ranking of proven
+# costs (the docstring in auto.jl says so), and the one-sided failure mode is
+# preserved: a deterministic row can only be OVER-priced, never under-priced.
+# Nothing here reaches a shipped bound — `plan_evolution` still re-derives its
+# resources from `alpha_comm(mode = caller's)` and nothing else.
+
+"""
+    ALPHA_WORK_DEFAULT
+
+Propagation-step budget of ONE [`alpha_comm_layered`](@ref) estimate — the
+knob `Auto`'s dispatch runs on (a LOUD, recorded degrade: the row reports the
+depth it reached and why it stopped; the value stays a proven bound). A
+"step" is one `(word, term)` pair, so a layer over support `S` costs `S·L`;
+the budget therefore caps dispatch at `O(L²)`-class work per candidate order,
+never the unbounded DP.
+
+`2^20` is the bench-calibrated value (bead Sturm.jl-jpky, R4 follow-on),
+measured on the gmx0 roster (34 families × orders 2/4/6). At this budget the
+DP runs to EXACT α for every ising chain through W = 64, every heisenberg
+chain through W = 64 at orders 2–4, every tail family through L = 64 at all
+orders, and order 2 at L = 256 — each in ≤ 25 ms. Where it stops short it
+still cuts the α over-estimate from the 1-norm bound's 10–4.5·10³× down to
+1.3–4·10²× (a deterministic row's cost over-pricing from 2.4–15× down to
+1.1–2.7×). Worst per-estimate wall time on the roster: ≈ 50 ms (L = 256,
+order 6). Raising it buys tightness on exactly the families it currently
+stops on and costs time on all of them (2^22 quadruples the worst case to
+≈ 0.2 s per estimate for a further ~1.3× tightening);
+`ALPHA_MAXWORDS_DEFAULT` (memory) is a separate cap and stays at 4·10⁶.
+"""
+const ALPHA_WORK_DEFAULT = 1_048_576
+
+"""
+    AlphaLayered
+
+A PROVEN upper bound on `α_comm(H, 2k)` plus the provenance that makes it
+auditable (S6 in spirit; bead Sturm.jl-jpky): `value` = `B_d` of (‡) above,
+`layers` = the exact DP depth `d` behind it (`1` = the pure HW 1-norm Lemma
+bound, `order+1` = the exact α), `exact` = whether `value` IS `α_comm`,
+`work` = propagation steps consumed, `reason` = "" when exact, else the loud
+explanation of the early stop, and `what` = which sum it describes
+(`:H` full, `:A` head, `:cross` the A↔B cross term). `Auto` puts these on
+every [`PlanRow`](@ref) — a ranking that degrades VISIBLY, never silently.
+"""
+struct AlphaLayered
+    value::Float64
+    order::Int
+    layers::Int
+    exact::Bool
+    work::Int
+    reason::String
+    what::Symbol
+end
+
+"The (‡) bound `2^{2k}·λ^{2k+1−d}·M_d` — the ONE place the closure is spelled."
+_alpha_layered_value(order::Int, λ::Float64, depth::Int, mass::Float64) =
+    2.0^order * λ^(order + 1 - depth) * mass
+
+"""
+    alpha_comm_layered(hs::PauliSum, order; maxwords = ALPHA_MAXWORDS_DEFAULT,
+                       work = ALPHA_WORK_DEFAULT, what = :H) -> AlphaLayered
+
+The BUDGETED reading of the exact α_comm DP: run the measure propagation
+until it completes, exhausts `work` propagation steps, or exceeds `maxwords`
+support — then close the remaining layers with the 1-norm step (†) and return
+the proven bound (‡) `2^{2k}·λ^{2k+1−d}·M_d` at the deepest COMPLETED depth
+`d`, together with the provenance that says so.
+
+This is a bound at every stopping point (`≥ alpha_comm(hs, order)` always,
+`==` when `exact`), non-increasing in `d`, and equal to the explicit-opt-in
+`mode = :norm1` bound when nothing could be afforded (`d = 1`). It exists for
+ONE caller — `evolve_plan`'s ranking (auto.jl) — and never reaches a shipped
+resource count; `plan_evolution` still derives its bound from `alpha_comm`
+under the caller's own `alpha_mode`.
+"""
+function alpha_comm_layered(hs::PauliSum{W}, order::Integer;
+                            maxwords::Integer = ALPHA_MAXWORDS_DEFAULT,
+                            work::Integer = ALPHA_WORK_DEFAULT,
+                            what::Symbol = :H) where {W}
+    (iseven(order) && 2 ≤ order ≤ 2 * SUZUKI_MAX_P) || throw(DomainError(order,
+        "alpha_comm_layered: order must be an even 2 ≤ 2k ≤ $(2 * SUZUKI_MAX_P)."))
+    ord = Int(order)
+    L = nterms(hs)
+    L == 0 && return AlphaLayered(0.0, ord, ord + 1, true, 0, "", what)
+    dp = _alpha_propagate(hs, ord, Int(maxwords), Int(work))
+    value = _alpha_layered_value(ord, hs.λ, dp.depth, dp.mass)
+    dp.exact && return AlphaLayered(value, ord, dp.depth, true, dp.work, "", what)
+    reason = dp.stop === :work ?
+        "α_comm DP stopped at layer $(dp.layer) after $(dp.work) propagation " *
+        "steps (work budget $(Int(work))); depth $(dp.depth) of $(ord + 1) is " *
+        "exact, the rest closed by the 1-norm step M_{d+1} ≤ λ·M_d" :
+        "α_comm DP support reached $(dp.support) words at layer $(dp.layer) " *
+        "(maxwords $(Int(maxwords))); depth $(dp.depth) of $(ord + 1) is " *
+        "exact, the rest closed by the 1-norm step M_{d+1} ≤ λ·M_d"
+    return AlphaLayered(value, ord, dp.depth, false, dp.work, reason, what)
 end
 
 """
@@ -182,6 +361,73 @@ function alpha_comm_cross(hs::PauliSum{W}, K::Integer, order::Integer;
         "an internal inconsistency (inclusion–exclusion is exact in ℝ; this " *
         "is a bug, not fp noise).")
     return (αA, max(αAB, 0.0))
+end
+
+"""
+    alpha_comm_cross_layered(hs, K, order; maxwords, work, αH = nothing)
+        -> (αA, αAB, provA, provAB, exact)
+
+The budgeted (bead Sturm.jl-jpky) counterpart of [`alpha_comm_cross`](@ref),
+for `Auto`'s ranking only. Three [`alpha_comm_layered`](@ref) runs (H, A, B)
+under one budget each, then:
+
+- **all three exact** ⇒ the ORDINARY inclusion–exclusion cross term
+  `αAB = α(H) − α(A) − α(B)` (exact, same identity and same negative guard as
+  `alpha_comm_cross`) — the ranking sees precisely what planning will;
+- **otherwise** ⇒ two PROVEN bounds and their `min`: `αA ≤ B_d(A)` (‡), and
+  `αAB ≤ min(B_d(H), 2^{2k}·Σ_{l=1}^{2k} λ_A^l λ_B^{2k+1−l})` — the first
+  because `αAB = α(H) − α(A) − α(B) ≤ α(H)` (all three summands are ≥ 0), the
+  second the HW Lemma cross bound. Inclusion–exclusion is NOT applied to
+  bounds: subtracting upper bounds is neither an upper nor a lower bound, and
+  that trap is precisely why this branch exists.
+
+`αH` optionally supplies an already-computed full-sum estimate at the SAME
+order (a pure caching hook — `evolve_plan` shares one H run between the
+Trotter and Composite rows).
+"""
+function alpha_comm_cross_layered(hs::PauliSum{W}, K::Integer, order::Integer;
+                                  maxwords::Integer = ALPHA_MAXWORDS_DEFAULT,
+                                  work::Integer = ALPHA_WORK_DEFAULT,
+                                  αH::Union{AlphaLayered,Nothing} = nothing) where {W}
+    L = nterms(hs)
+    0 < K < L || throw(DomainError(K,
+        "alpha_comm_cross_layered: interior split 0 < K < L = $L required."))
+    ord = Int(order)
+    αH === nothing || αH.order == ord || error(
+        "alpha_comm_cross_layered: the supplied αH is for order $(αH.order), " *
+        "not $ord — a caching bug, not a bound question.")
+    A = _subsum(hs, 1:Int(K))
+    B = _subsum(hs, (Int(K) + 1):L)
+    h = αH === nothing ? alpha_comm_layered(hs, ord; maxwords, work) : αH
+    a = alpha_comm_layered(A, ord; maxwords, work, what = :A)
+    b = alpha_comm_layered(B, ord; maxwords, work)
+    if h.exact && a.exact && b.exact
+        cross = h.value - a.value - b.value
+        cross ≥ -1e-9 * max(1.0, h.value) || error(
+            "alpha_comm_cross_layered: negative cross term $cross from an " *
+            "exact identity — an internal inconsistency (inclusion–exclusion " *
+            "is exact in ℝ; this is a bug, not fp noise).")
+        prov = AlphaLayered(max(cross, 0.0), ord, ord + 1, true,
+                            h.work + a.work + b.work, "", :cross)
+        return (αA = a.value, αAB = prov.value, provA = a, provAB = prov,
+                exact = true)
+    end
+    λA = A.λ
+    λB = hs.tail_λ[Int(K) + 1]
+    n1 = 2.0^ord * sum(λA^l * λB^(ord + 1 - l) for l in 1:ord; init = 0.0)
+    viaH = h.value ≤ n1
+    prov = AlphaLayered(min(h.value, n1), ord, viaH ? h.layers : 1, false,
+                        h.work + a.work + b.work,
+                        viaH ?
+                        "cross term bounded by the FULL-sum bound α_AB ≤ α_H " *
+                        "at depth $(h.layers) " *
+                        (isempty(h.reason) ? "(the full sum's own DP completed; " *
+                         "the head/tail split did not)" : "— " * h.reason) :
+                        "cross term bounded by the HW Lemma 1-norm cross sum " *
+                        "2^{2k}·Σ_l λ_A^l λ_B^{2k+1−l} (tighter here than the " *
+                        "depth-$(h.layers) full-sum bound)", :cross)
+    return (αA = a.value, αAB = prov.value, provA = a, provAB = prov,
+            exact = false)
 end
 
 """
@@ -248,6 +494,16 @@ function trotter_steps(hs::PauliSum{W}, t::Real, ε::Real;
         "trotter_steps: ε must be a finite positive full-diamond-norm target."))
     T = abs(Float64(t))
     α = _alpha_for(hs, ord, alpha_mode, maxwords)
+    return _trotter_steps_report(α, T, Float64(ε), ord, alpha_mode)
+end
+
+# The ARITHMETIC half of `trotter_steps`, split out so that `Auto`'s ranking
+# (auto.jl) can price a candidate from an already-derived α WITHOUT a second
+# copy of the step rule (bead Sturm.jl-jpky). `alpha_mode` is recorded
+# verbatim in the report — it is the row's α provenance, and the only way a
+# reader can tell an exact bound from a ranked one.
+function _trotter_steps_report(α::Float64, T::Float64, ε::Float64, ord::Int,
+                               alpha_mode::Symbol)
     if ord == 1
         rreal = _diamond_from_spectral(T^2 * α / 2) / ε
         r = _steps_ceil(rreal, "trotter_steps(order = 1)")
@@ -255,17 +511,17 @@ function trotter_steps(hs::PauliSum{W}, t::Real, ε::Real;
             "docs/physics/childs_2019_trotter_error.md — eq (E1); ×2 per " *
             "docs/physics/hagan_wiebe_2023_composite.md eqs " *
             "diamond_to_spectral_start–TS_intermediate_1",
-            (α₁ = α, t = T, ε = Float64(ε), order = 1, alpha_mode = alpha_mode))
+            (α₁ = α, t = T, ε = ε, order = 1, alpha_mode = alpha_mode))
     end
     k = ord ÷ 2
     Υ = suzuki_sweep_count(ord)
     c = _diamond_from_spectral(2.0 * α) / (2k + 1)         # = 4α/(2k+1), factored
-    rreal = (Υ * T)^(1 + 1 / (2k)) / Float64(ε)^(1 / (2k)) * c^(1 / (2k))
+    rreal = (Υ * T)^(1 + 1 / (2k)) / ε^(1 / (2k)) * c^(1 / (2k))
     r = _steps_ceil(rreal, "trotter_steps(order = $ord)")
     return BoundReport(Float64(r), :hw_trotter_2k,
         "docs/physics/hagan_wiebe_2023_composite.md — thm:trotter_cost, eq " *
         "TS_intermediate_3 (R1-verified against the tex)",
-        (α = α, t = T, ε = Float64(ε), order = ord, Υ = Υ, alpha_mode = alpha_mode))
+        (α = α, t = T, ε = ε, order = ord, Υ = Υ, alpha_mode = alpha_mode))
 end
 
 """
@@ -448,11 +704,18 @@ function _composite_RP_RQ(hs::PauliSum{W}, K::Integer, t::Real, ε::Real;
     0 < K < L || throw(DomainError(K,
         "_composite_RP_RQ: interior split 0 < K < L = $L required (K = 0/L " *
         "normalize to pure QDrift/Trotter plans BEFORE any composite arithmetic)."))
-    k = order ÷ 2
-    Υ = suzuki_sweep_count(order)
     T = abs(Float64(t))
     (αA, αAB) = alpha_comm_cross(hs, K, order; mode = alpha_mode, maxwords)
-    λB = hs.tail_λ[K + 1]
+    return _composite_RP_RQ_from(αA, αAB, hs.tail_λ[K + 1], T, Float64(ε), Int(order))
+end
+
+# The ARITHMETIC half of `_composite_RP_RQ` (bead Sturm.jl-jpky): the Fact-HW
+# weights from an ALREADY-DERIVED (αA, αAB) pair, so `Auto`'s ranking shares
+# this formula rather than reimplementing it.
+function _composite_RP_RQ_from(αA::Float64, αAB::Float64, λB::Float64,
+                               T::Float64, ε::Float64, order::Int)
+    k = order ÷ 2
+    Υ = suzuki_sweep_count(order)
     P = T^(2k + 1) * (4.0 * Float64(Υ)^(2k + 1) / (2k + 1)) * (Υ * αA + αAB)
     R_P = (P / ε)^(1 / (2k))
     R_Q = 4.0 * Υ * λB^2 * T^2 / ε
@@ -509,12 +772,20 @@ function composite_steps(hs::PauliSum{W}, K::Integer, t::Real, ε::Real;
                          maxwords::Integer = ALPHA_MAXWORDS_DEFAULT) where {W}
     N_B ≥ 1 || throw(DomainError(N_B, "composite_steps: need N_B ≥ 1 samples per B-slot."))
     pq = _composite_RP_RQ(hs, K, t, ε; order, alpha_mode, maxwords)
+    return _composite_steps_report(pq, Int(K), Int(N_B), Float64(ε), Int(order),
+                                   alpha_mode)
+end
+
+# The step-count + report half of `composite_steps`, shared with `Auto`'s
+# ranking (bead Sturm.jl-jpky). `alpha_mode` is the row's α provenance.
+function _composite_steps_report(pq, K::Int, N_B::Int, ε::Float64, order::Int,
+                                 alpha_mode::Symbol)
     r = _steps_ceil(pq.R_P + pq.R_Q / N_B, "composite_steps(order = $order)")
     return BoundReport(Float64(r), :hw_fact_thm21,
         "docs/physics/hagan_wiebe_2023_composite.md — thm:higher_order_cost_fixed " *
         "(Fact HW, docs/physics/zlokapa_2026_hamsim_lower_bounds.md eq:HW-cost)",
-        (K = Int(K), N_B = Int(N_B), order = Int(order), Υ = pq.Υ, t = pq.T,
-         ε = Float64(ε), αA = pq.αA, αAB = pq.αAB, λB = pq.λB,
+        (K = K, N_B = N_B, order = order, Υ = pq.Υ, t = pq.T,
+         ε = ε, αA = pq.αA, αAB = pq.αAB, λB = pq.λB,
          R_P = pq.R_P, R_Q = pq.R_Q, alpha_mode = alpha_mode))
 end
 

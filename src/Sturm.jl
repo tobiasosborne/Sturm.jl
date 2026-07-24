@@ -317,7 +317,12 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     QDriftPlan, CompositePlan, qdrift_samples, qdrift_error_bound,
     composite_steps, composite_error_bound, composite_nb, composite_k,
     composite_outer_slots, evolve_plan, EvolveChoice, PlanRow,
-    AUTO_COMMUTING_GATE
+    AUTO_COMMUTING_GATE,
+    # M12 phase 5 (bead Sturm.jl-jpky): the BUDGETED layered α bound that
+    # `Auto`'s ranking runs on — proven at every stopping depth, never a
+    # shipped bound (bounds.jl, ineq. (‡)).
+    alpha_comm_layered, alpha_comm_cross_layered, AlphaLayered,
+    ALPHA_WORK_DEFAULT
 
 # --- M8 channel IR (bead Sturm.jl-szx1; kernel `public`, not exported) -------
 # The effect-typed `ChannelDAG` (NOT a process value), its port vocabulary and

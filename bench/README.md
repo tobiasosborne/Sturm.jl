@@ -51,8 +51,11 @@ bench's explicit opt-in, recorded — never silent).
 
 `auto-*.csv`: per cell — Auto's choice, its certified cost, the best
 concrete strategy, `regret` = auto_cost/best_cost, measured-argmin agreement
-(executed tier), and the proxy-K (second-moment seed) vs exact
-`composite_k` disagreement flag.
+(executed tier), the proxy-K (second-moment seed) vs exact `composite_k`
+disagreement flag, and the α provenance of the CHOSEN dispatch row
+(`auto_alpha_layers` = the shallowest exact DP depth behind it,
+`auto_alpha_exact` = whether every α it consumed was the exact α_comm; empty
+for rows that consume no α — QDrift and the exactness fast paths).
 
 `alpha-*.csv`: the R4 probe table — per (family, order): exact α_comm value,
 the :norm1 bound, their ratio (the DP's tightness win), probe seconds, and
@@ -65,10 +68,14 @@ Read the frontier per (family, ε) along t: Trotter (high order) owns tight-ε
 tails, Composite owns the head-heavy interior (power-law/exp tails) — that
 crossover structure IS the ZAH theorem, and Auto's job is to sit on the
 lower envelope of the certified curves (regret ≈ 1). Regret > 1 marks cells
-where Auto's :norm1 surrogate ranked strategies differently than exact-α
-planning; disagreement with the *measured* argmin additionally folds in each
-bound's constant looseness (per-strategy `slack`), which the dispatch rule
-cannot see by design — proven costs only, never tuned constants.
+where Auto's BUDGETED α surrogate (`alpha_comm_layered`, bead
+`Sturm.jl-jpky`: exact wherever the DP fits `ALPHA_WORK_DEFAULT`, a proven
+partial-depth bound otherwise) ranked strategies differently than exact-α
+planning — read it together with `auto_alpha_layers`/`auto_alpha_exact`,
+which say whether the row was ranked at exact α at all. Disagreement with
+the *measured* argmin additionally folds in each bound's constant looseness
+(per-strategy `slack`), which the dispatch rule cannot see by design —
+proven costs only, never tuned constants.
 
 Self-check: every executed configuration re-asserts
 `exp_count(plan) == length(collect(trajectory(plan[, rng])))` — the one

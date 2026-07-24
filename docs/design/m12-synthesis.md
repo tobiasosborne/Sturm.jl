@@ -73,6 +73,21 @@ names its source.
 - R6 (A): sweep test_prd_examples.jl and fixtures for bare `evolve!` calls
   before the S3 rule lands.
 
+## Amendment (bead Sturm.jl-jpky, after the phase-4 bench)
+
+**S8's "O(L log L) surrogate-only dispatch" clause is superseded**; the rest
+of S8 (fast paths first, exact α for the chosen strategy's planning, table
+always visible, skipped-rows-with-reason) stands unchanged. Bench gmx0
+measured the norm-bound-only ranking over-picking QDrift by up to 43.5×
+(ising-W64, t = 16, ε = 1e-4) because the HW 1-norm Lemma inflates α by
+2·10³–3.4·10⁹× on structured Hamiltonians. `evolve_plan` now ranks on
+`alpha_comm_layered` — the same exact α_comm DP under a propagation-step
+budget (`ALPHA_WORK_DEFAULT = 2^20`), closed at the deepest completed layer
+by `M_{d+1} ≤ λ·M_d`. The ranking is still a ranking of PROVEN upper bounds
+(so the failure stays one-sided) and every row records the α depth it was
+priced at; the cost is O(L) + a capped O(L²)-class DP per candidate order
+instead of O(L log L). Nothing about the SHIPPED bound moved.
+
 ## Resolved by Tobias (2026-07-23, after review)
 
 - **S3**: RULED — bare `evolve!(x,H,t)` throws `ArgumentError` demanding

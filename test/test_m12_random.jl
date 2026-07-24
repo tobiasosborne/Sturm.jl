@@ -34,7 +34,10 @@ using Sturm: eager, density, statevector, _core, orkan_state_set!,
              composite_steps, composite_error_bound, composite_nb, composite_k,
              composite_outer_slots, suzuki_sweep_count,
              evolve_plan, EvolveChoice, PlanRow, BoundReport,
-             ising_chain, heisenberg_chain, powerlaw_chain, trace
+             ising_chain, heisenberg_chain, powerlaw_chain, trace,
+             alpha_comm, alpha_comm_pairs, alpha_comm_cross, trotter_steps,
+             alpha_comm_layered, alpha_comm_cross_layered, AlphaLayered,
+             ALPHA_WORK_DEFAULT
 
 # Tiny stats helpers (Statistics is not a test dep — Test-only extras policy).
 _mean(v) = sum(v) / length(v)
@@ -403,10 +406,12 @@ end
         ec1 = evolve_plan(hs1, 2.0, 1e-12)
         @test ec1.choice == Trotter(order = 1, steps = 1)
         @test length(ec1.table) == 1 && ec1.table[1].skipped === nothing
+        @test isempty(ec1.table[1].alpha)        # α ≡ 0 by physics: none evaluated
         hsc = PauliSum{2}([(1.0, "ZI"), (0.5, "IZ"), (0.25, "ZZ")])
         @test iscommuting(hsc)
         ecc = evolve_plan(hsc, 5.0, 1e-12)
         @test ecc.choice == Trotter(order = 1, steps = 1)
+        @test length(ecc.table) == 1 && isempty(ecc.table[1].alpha)
         # …and the fast-path plan EXECUTES exactly (even at absurd ε)
         Uc = op_matrix(2) do x
             evolve!(x, [(1.0, "ZI"), (0.5, "IZ"), (0.25, "ZZ")], 5.0; ε = 1e-12)
@@ -455,10 +460,11 @@ end
         @test K0 ≤ Kstar
 
         # tie-break chain: deterministic beats randomized at equal cost
-        rows = [Sturm.PlanRow(QDrift(), 100.0, nothing, nothing),
-                Sturm.PlanRow(Trotter(order = 2), 100.0, nothing, nothing),
-                Sturm.PlanRow(Composite(order = 2), 100.0, nothing, nothing),
-                Sturm.PlanRow(Trotter(order = 4), 100.0, nothing, nothing)]
+        nop = AlphaLayered[]
+        rows = [Sturm.PlanRow(QDrift(), 100.0, nothing, nothing, nop),
+                Sturm.PlanRow(Trotter(order = 2), 100.0, nothing, nothing, nop),
+                Sturm.PlanRow(Composite(order = 2), 100.0, nothing, nothing, nop),
+                Sturm.PlanRow(Trotter(order = 4), 100.0, nothing, nothing, nop)]
         best = rows[argmin([Sturm._dispatch_key(r) for r in rows])]
         @test best.alg == Trotter(order = 2)     # det > rand, lower order
 
@@ -473,6 +479,225 @@ end
         @test pauto.report.inputs.alpha_mode === :exact
         pdirect = plan_evolution(ecu.choice, hsu, 1.0; ε = 1e-4)
         @test pauto.steps == pdirect.steps
+    end
+
+    # =====================================================================
+    #  M12.AUTO.ALPHA — the BUDGETED layered α surrogate (bead Sturm.jl-jpky)
+    # =====================================================================
+    # Phase 4's bench (gmx0) found `Auto` over-picking QDrift on structured
+    # and head-heavy Hamiltonians because the ranking α came from the HW
+    # 1-norm Lemma alone (regret 43.5 at ising-W64, t = 16, ε = 1e-4). The
+    # fix keeps the ranking PROVEN and makes the proof deeper — bounds.jl's
+    # inequality (‡): α_comm(H, 2k) ≤ 2^{2k}·λ^{2k+1−d}·M_d at the deepest
+    # COMPLETED DP layer d. This testset pins the inequality's endpoints and
+    # monotonicity, the two bench regressions (each with its RED half — the
+    # old :norm1-only ranking, reconstructed, still choosing wrong), the row
+    # visibility, and the invariance of every SHIPPED bound.
+    @testset "M12.AUTO.ALPHA — layered α: (‡) endpoints, monotone, visible; regret" begin
+        # ---- (a) the (‡) chain: endpoints, monotonicity, upper-boundness ---
+        hs = PauliSum{4}(ising_chain(4))
+        L = nterms(hs); λ = hs.λ
+        for order in (2, 4, 6)
+            αex = alpha_comm(hs, order)
+            # d = 1 (zero budget) IS the explicit-opt-in HW 1-norm Lemma bound
+            a1 = alpha_comm_layered(hs, order; work = 0)
+            @test a1.layers == 1 && !a1.exact
+            @test a1.value ≈ alpha_comm(hs, order; mode = :norm1) rtol = 1e-14
+            @test a1.value ≈ 2.0^order * λ^(order + 1) rtol = 1e-14
+            @test occursin("1-norm step", a1.reason)   # loud, never silent
+            # d = 2 IS the tight Childs-E1 pair-sum anchor (M₂ = α_pairs
+            # exactly — the bead's proposal (a), recovered as one link of (‡))
+            a2 = alpha_comm_layered(hs, order; work = L * L)
+            @test a2.layers == 2 && !a2.exact
+            @test a2.value ≈ 2.0^order * λ^(order - 1) * alpha_comm_pairs(hs) rtol = 1e-12
+            # d = 2k+1 IS the exact α, and says so
+            af = alpha_comm_layered(hs, order)
+            @test af.exact && af.layers == order + 1 && isempty(af.reason)
+            @test af.value ≈ αex rtol = 1e-12
+            @test af.what === :H
+            # every stopping point is an UPPER bound, non-increasing in depth
+            vals = [alpha_comm_layered(hs, order; work = b).value
+                    for b in (0, L * L, 4 * L * L, 64 * L * L, typemax(Int))]
+            @test all(≥(αex * (1 - 1e-12)), vals)
+            @test all(i -> vals[i + 1] ≤ vals[i] * (1 + 1e-12),
+                      1:(length(vals) - 1))            # B_{d+1} ≤ B_d
+            @test vals[end] ≈ αex rtol = 1e-12
+        end
+        # a commuting sum has α ≡ 0 at EVERY budget (the DP empties out; the
+        # (‡) closure of an exhausted measure is 0, not a positive bound)
+        hscom = PauliSum{4}([(1.0, "ZIII"), (0.5, "IZII"), (0.25, "ZZII")])
+        @test alpha_comm_layered(hscom, 4; work = typemax(Int)).value == 0.0
+        @test alpha_comm_layered(hscom, 4; work = typemax(Int)).exact
+        # the layered CROSS device: exact ⇒ the same inclusion–exclusion pair
+        # as `alpha_comm_cross`; budgeted ⇒ proven bounds, never a subtraction
+        # of bounds (which is neither an upper nor a lower bound)
+        (αA, αAB) = alpha_comm_cross(hs, 3, 2)
+        cl = alpha_comm_cross_layered(hs, 3, 2)
+        @test cl.exact
+        @test cl.αA ≈ αA rtol = 1e-12
+        @test cl.αAB ≈ αAB rtol = 1e-12
+        cl0 = alpha_comm_cross_layered(hs, 3, 2; work = 0)
+        @test !cl0.exact && cl0.αA ≥ αA && cl0.αAB ≥ αAB
+        @test cl0.provA.what === :A && cl0.provAB.what === :cross
+        @test !isempty(cl0.provAB.reason)
+        # a supplied αH must match the order it is used at (a caching bug is
+        # a bug, not a bound question)
+        @test_throws ErrorException alpha_comm_cross_layered(
+            hs, 3, 2; αH = alpha_comm_layered(hs, 4))
+
+        # ---- (b) REGRESSION 1: the bench's worst analytic cell --------------
+        # ising-W64 normalized to λ = 1 (the gmx0 convention), t = 16, ε = 1e-4:
+        # bench regret 43.5 — Auto chose QDrift over Trotter order 2.
+        is64 = PauliSum{64}(ising_chain(64; J = 1 / 127, h = 1 / 127))
+        @test nterms(is64) == 127
+        @test is64.λ ≈ 1.0 rtol = 1e-12
+        t64, ε64 = 16.0, 1e-4
+        cert64 = Dict(lab => Float64(exp_count(plan_evolution(alg, is64, t64; ε = ε64)))
+                      for (lab, alg) in (("T2", Trotter(order = 2)),
+                                         ("T4", Trotter(order = 4)),
+                                         ("T6", Trotter(order = 6)),
+                                         ("QD", QDrift())))
+        best64 = minimum(values(cert64))
+        @test best64 == cert64["T2"]                   # the bench's certified argmin
+        # RED half: the OLD ranking (α from :norm1 only, everything else
+        # identical) still ranks QDrift first — the failure this bead fixes.
+        old64 = Dict("QD" => qdrift_samples(is64.λ, t64, ε64).value)
+        for o in (2, 4, 6)
+            old64["T$o"] = trotter_steps(is64, t64, ε64; order = o,
+                                         alpha_mode = :norm1).value *
+                           suzuki_sweep_count(o) * nterms(is64)
+        end
+        @test argmin(old64) == "QD"
+        @test cert64["QD"] / best64 > 40               # the 43.5 the bench measured
+        # GREEN half: the layered surrogate ranks the deterministic row first
+        ec64 = evolve_plan(is64, t64, ε64)
+        @test ec64.choice isa Trotter && ec64.choice.order == 2
+        auto64 = Float64(exp_count(plan_evolution(Auto(), is64, t64; ε = ε64)))
+        @test auto64 == best64                          # regret EXACTLY 1
+        @test auto64 == 235204                          # …and the pinned value
+        # every deterministic row was priced at EXACT α here (the DP fits the
+        # budget on a structured chain), and says so on the row
+        for r in ec64.table
+            r.alg isa Trotter || continue
+            @test length(r.alpha) == 1 && r.alpha[1].exact
+            @test r.report.inputs.alpha_mode === :exact
+        end
+        # the composite rows degenerate (K* = L) and carry the reason
+        @test all(r -> occursin("degenerates to pure Trotter", something(r.skipped, "")),
+                  [r for r in ec64.table if r.alg isa Composite])
+
+        # ---- (c) REGRESSION 2: the head-heavy exp-coefficient class ---------
+        # The bench's exp-L256 cells (regret up to 15: Auto missed Composite).
+        # CI-cheap analogue: exponential coefficients 2^{-j} on a 2-local
+        # chain, λ-normalized — the same head-heavy tail that makes the
+        # HW composite optimal.
+        function exp_chain(W::Int)
+            terms = Tuple{Float64,String}[]
+            n = 0
+            for j in 1:(W - 1)
+                n += 1
+                s = fill('I', W); s[j] = 'X'; s[j + 1] = 'X'
+                push!(terms, (2.0^(-n), String(s)))
+            end
+            for j in 1:W
+                n += 1
+                s = fill('I', W); s[j] = 'Z'
+                push!(terms, (2.0^(-n), String(s)))
+            end
+            λ = sum(abs(c) for (c, _) in terms)
+            return PauliSum{W}([(c / λ, w) for (c, w) in terms])
+        end
+        hx = exp_chain(12)
+        tx, εx = 4.0, 1e-3
+        certx = Dict(lab => Float64(exp_count(plan_evolution(alg, hx, tx; ε = εx)))
+                     for (lab, alg) in (("T2", Trotter(order = 2)),
+                                        ("T4", Trotter(order = 4)),
+                                        ("T6", Trotter(order = 6)),
+                                        ("QD", QDrift()),
+                                        ("C2", Composite(order = 2)),
+                                        ("C4", Composite(order = 4))))
+        @test argmin(certx) == "C2"                     # Composite IS best here
+        # RED half: the OLD :norm1 ranking put QDrift first ⇒ regret 62.5
+        oldx = Dict("QD" => qdrift_samples(hx.λ, tx, εx).value)
+        for o in (2, 4, 6)
+            oldx["T$o"] = trotter_steps(hx, tx, εx; order = o,
+                                        alpha_mode = :norm1).value *
+                          suzuki_sweep_count(o) * nterms(hx)
+        end
+        Kx = findfirst(K -> hx.tail_m2[K + 1] * tx^2 ≤ εx, 0:nterms(hx)) - 1
+        @test 0 < Kx < nterms(hx)
+        for o in (2, 4)
+            pq = Sturm._composite_RP_RQ(hx, Kx, tx, εx; order = o, alpha_mode = :norm1)
+            n = composite_nb(Kx, pq.Υ, pq.R_P, pq.R_Q)
+            rep = composite_steps(hx, Kx, tx, εx; order = o, N_B = n,
+                                  alpha_mode = :norm1)
+            oldx["C$o"] = pq.Υ * (pq.Υ * Kx + n) * rep.value
+        end
+        @test argmin(oldx) == "QD"
+        @test certx["QD"] / certx["C2"] > 60            # the regret it would pay
+        # GREEN half: the layered surrogate finds Composite, at regret 1
+        ecx = evolve_plan(hx, tx, εx)
+        @test ecx.choice isa Composite && ecx.choice.order == 2
+        autox = Float64(exp_count(plan_evolution(Auto(), hx, tx; ε = εx)))
+        @test autox == certx["C2"] == 1024
+
+        # ---- (d) row visibility, including a budget-exhausted row -----------
+        for r in ecx.table
+            if r.alg isa QDrift
+                @test isempty(r.alpha)                  # S4 is λ-only: no α exists
+            elseif r.skipped === nothing && r.alg isa Trotter
+                @test [a.what for a in r.alpha] == [:H]
+                @test r.alpha[1].order == r.alg.order
+            elseif r.skipped === nothing
+                @test [a.what for a in r.alpha] == [:A, :cross]
+            end
+        end
+        # a starved dispatch degrades VISIBLY: every α-consuming row reports
+        # the depth it reached and why it stopped — never an invisible downgrade
+        ec0 = evolve_plan(hx, tx, εx; alpha_work = 0)
+        αrows = [r for r in ec0.table if r.skipped === nothing && !isempty(r.alpha)]
+        @test !isempty(αrows)
+        for r in αrows
+            @test all(a -> !a.exact && a.layers == 1, r.alpha)
+            @test all(a -> occursin("work budget", a.reason) ||
+                           occursin("1-norm cross sum", a.reason), r.alpha)
+            @test r.report.inputs.alpha_mode === :layered
+        end
+        # …and the starved ranking is still a ranking of PROVEN bounds: each
+        # row's cost is ≥ the same row's cost at the full budget (one-sided)
+        full = Dict(string(r.alg) => r.cost for r in ecx.table)
+        for r in ec0.table
+            haskey(full, string(r.alg)) || continue
+            isfinite(r.cost) && isfinite(full[string(r.alg)]) || continue
+            @test r.cost ≥ full[string(r.alg)] * (1 - 1e-12)
+        end
+
+        # ---- (e) INVARIANCE: no shipped bound moved -------------------------
+        # Literal pins on the explicit-strategy plans (what a user is handed).
+        # These numbers are the phase-1/2 bounds and must NOT change because
+        # the RANKING got tighter.
+        px2 = plan_evolution(Trotter(order = 2), hx, tx; ε = εx)
+        @test (px2.steps, exp_count(px2)) == (28, 1288)
+        @test px2.report.inputs.alpha_mode === :exact
+        @test exp_count(plan_evolution(Trotter(order = 4), hx, tx; ε = εx)) == 25300
+        @test plan_evolution(QDrift(), hx, tx; ε = εx).N == 64003
+        pxc = plan_evolution(Composite(order = 2), hx, tx; ε = εx)
+        @test (pxc.K, pxc.N_B, pxc.steps, exp_count(pxc)) == (7, 2, 32, 1024)
+        @test [plan_evolution(Trotter(; order), is64, t64; ε = ε64).steps
+               for order in (2, 4, 6)] == [926, 264, 533]
+        @test plan_evolution(QDrift(), is64, t64; ε = ε64).N == 10240011
+        # the dispatch budget CANNOT reach a shipped bound: whatever shape a
+        # starved dispatch picks, the plan it returns is bit-for-bit the plan
+        # that shape gets on its own (exact α, phase-1 conventions)
+        for aw in (0, 4096, ALPHA_WORK_DEFAULT)
+            ch = evolve_plan(hx, tx, εx; alpha_work = aw).choice
+            pa = plan_evolution(Auto(), hx, tx; ε = εx, alpha_work = aw)
+            pd = plan_evolution(ch, hx, tx; ε = εx)
+            @test typeof(pa) === typeof(pd) && exp_count(pa) == exp_count(pd)
+            # …and the delivered bound is the EXACT-α one (QDrift's S4
+            # criterion has no α at all — it is exact by construction)
+            pa isa QDriftPlan || @test pa.report.inputs.alpha_mode === :exact
+        end
     end
 
     # =====================================================================

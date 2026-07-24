@@ -37,7 +37,7 @@ using Sturm
 using Sturm: PauliSum, nterms, iscommuting, plan_evolution, trajectory, exp_count,
              TrotterPlan, QDriftPlan, CompositePlan, evolve_plan,
              alpha_comm, AlphaCommBlowup, ALPHA_MAXWORDS_DEFAULT,
-             AUTO_COMMUTING_GATE, composite_k
+             AUTO_COMMUTING_GATE, composite_k, ALPHA_WORK_DEFAULT
 
 const T_GRID = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]     # log grid [0.5, 32]
 const EPS_GRID = [1e-2, 1e-3, 1e-4]
@@ -168,6 +168,12 @@ function certified_auto(hs::PauliSum, t::Float64, ε::Float64,
     label = ch isa QDrift ? "QD" :
             ch isa Trotter ? "T$(ch.order)" : "C$(ch.order)"
     nskip = count(r -> r.skipped !== nothing, ec.table)
+    # α provenance of the CHOSEN row (bead Sturm.jl-jpky): the shallowest
+    # exact DP depth behind the ranking, and whether every α it consumed was
+    # the exact α_comm. Empty for rows that consume no α (QDrift; fast paths).
+    chosen = ec.table[findfirst(r -> r.alg == ch, ec.table)]
+    alayers = isempty(chosen.alpha) ? "" : string(minimum(a.layers for a in chosen.alpha))
+    aexact = isempty(chosen.alpha) ? "" : string(all(a -> a.exact, chosen.alpha))
     try
         (mode, plan) = if ch isa Trotter && ch.steps !== nothing   # exactness fast path
             (:exact, plan_evolution(ch, hs, t))
@@ -181,13 +187,13 @@ function certified_auto(hs::PauliSum, t::Float64, ε::Float64,
             (m, plan_evolution(ch::Composite, hs, t; ε, alpha_mode = m))
         end
         (pk, K, NB, r) = _describe(plan)
-        return (label = label, nskip = nskip,
+        return (label = label, nskip = nskip, alayers = alayers, aexact = aexact,
                 cert = Cert(Float64(exp_count(plan)), plan, mode, pk, K, NB, r, ""))
     catch e
         e isa Union{AlphaCommBlowup,ErrorException} || rethrow()
         msg = e isa AlphaCommBlowup ?
               "alpha-blowup support=$(e.support) layer=$(e.layer)" : _sanitize(e.msg)
-        return (label = label, nskip = nskip,
+        return (label = label, nskip = nskip, alayers = alayers, aexact = aexact,
                 cert = Cert(Inf, nothing, :exact, "", -1, -1, -1, msg))
     end
 end
@@ -423,7 +429,8 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
                     isfinite(au.cert.cost) ? @sprintf("%.10g", au.cert.cost) : "",
                     best_label, @sprintf("%.10g", best_cost),
                     isfinite(regret) ? @sprintf("%.4g", regret) : "",
-                    margmin, agree, Ks, Ke, Ks != Ke && Ke ≥ 0, au.nskip], ","))
+                    margmin, agree, Ks, Ke, Ks != Ke && Ke ≥ 0, au.nskip,
+                    au.alayers, au.aexact], ","))
             end
         end
     end
@@ -438,7 +445,7 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
     open(joinpath(outdir, "auto-$tag.csv"), "w") do io
         println(io, "family,L,t,eps,auto_choice,auto_cost,best_strategy," *
                     "best_cost,regret,measured_argmin,agree,K_seed,K_exact2," *
-                    "K_disagree,auto_skipped_rows")
+                    "K_disagree,auto_skipped_rows,auto_alpha_layers,auto_alpha_exact")
         foreach(r -> println(io, r), auto_rows)
     end
     open(joinpath(outdir, "alpha-$tag.csv"), "w") do io
@@ -494,6 +501,12 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
     println("  AUTO_COMMUTING_GATE = $(AUTO_COMMUTING_GATE): max grid L = $max_L — " *
             (commuting_gate_hit ? "GATE HIT" : "never gates") *
             @sprintf(" (iscommuting at L=%d: %.3g s)", fams[end].L, tcomm))
+    nexact = count(r -> endswith(r, ",true"), auto_rows)
+    nprov = count(r -> !endswith(r, ","), auto_rows)
+    println("  ALPHA_WORK_DEFAULT = $(ALPHA_WORK_DEFAULT) (Auto's ranking budget): " *
+            "$nexact/$nprov α-consuming chosen rows ranked at EXACT α_comm " *
+            "(the rest carry a proven partial-depth bound; see " *
+            "auto_alpha_layers in auto-$tag.csv)")
     @printf("\n══ self-checks: %d passed, %d skipped (analytic, exp_count > %d) ══\n",
             selfchecks, selfcheck_skipped_big, ANALYTIC_SELFCHECK_CAP)
     if !isempty(violations)

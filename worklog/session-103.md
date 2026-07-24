@@ -106,4 +106,216 @@ The worklog shards cite SHAs heavily as institutional memory (`fec6a36` the
 reboot, `405a38f`, `77327ae`, …); those become historical-only references.
 Beads `f9ka` (closed, superseded) and `wuji` record the analysis.
 
-<!-- RESULTS APPENDED BELOW AS AGENTS LAND -->
+## jpky SHIPPED — Auto ranks on a budgeted-exact α, not a heuristic
+
+The bead offered two fixes (exact O(L²) pair-sum anchor; budgeted exact probe).
+The implementer found the construction that **is both**, and it is better than
+either: `alpha_comm_layered` runs the SAME exact α_comm DP under a propagation
+budget, stops at the deepest completed layer `d`, and closes the rest with the
+1-norm step, giving the proven bound
+
+> (‡) `α ≤ 2^{2k} · λ^{2k+1−d} · M_d`
+
+whose endpoints are exactly the bead's two options: **`d = 1` IS `:norm1`**,
+**`d = 2` IS the pair-sum anchor** (`M_2 == alpha_comm_pairs` identically —
+both are `Σ_{i≠j, anticommuting}|a_i||a_j|`, so the "new" anchor needed no new
+code), `d = 2k+1` is exact, and it is monotone in `d`. **So the ranking is
+still a ranking of PROVEN costs** — the docstring's central claim survives
+untouched, and no heuristic was introduced. Only the O(L log L) claim was
+retired (in auto.jl, strategies.jl, and an m12-synthesis amendment).
+
+*Orchestrator verification of (‡):* with `M_d` the coefficient mass at depth
+`d` (the per-layer factor 2 EXCLUDED), the true nested-commutator norm is
+`2^{d−1}M_d`; at `d = 2k+1` the bound is `2^{2k}M_{2k+1}` = exactly `α_comm`;
+at `d = 1`, `M_1 = λ` gives `2^{2k}λ^{2k+1}` = exactly the standard 1-norm
+bound; monotonicity is `M_{d+1} ≤ λM_d`. Endpoints and interpolation check out.
+
+**Regret (both tiers re-run; BEFORE re-derived from the preserved gmx0 CSVs
+with the same statistic, not quoted from session 102):**
+
+| | BEFORE | AFTER |
+|---|---|---|
+| analytic (588 cells) regret == 1 | 63.3 % | **91.8 %** |
+| p90 / p99 / max | 4.39 / 19.9 / **43.5** | 1 / 2.12 / **3.27** |
+| cells > 2× / > 10× | 121 / 22 | **9 / 0** |
+| exec (126 cells) regret == 1 | 85.7 % | **96.0 %** (max 1.82 → **1.08**) |
+
+Headline cell `ising-W64, t=16, ε=1e-4`: **43.5 → 1.0**. Zero bound violations.
+
+### The seductive wrong answer — DO NOT RESURRECT
+
+The orchestrator's brief offered, as fix option (a), a geometric commutativity
+discount (`α ≈ norm1 · s₁^{2k}`, `s₁ = α_pairs/λ²`). The implementer checked it
+against the gmx0 α table **before writing code**: it fits the structured chains
+to three digits and is wrong by **2.6 × 10³×** on exp-L256 at order 6, in the
+**under**-estimating direction — i.e. it would have converted Auto's one-sided
+failure mode (over-picks QDrift, never violates ε) into a two-sided one. (‡)
+costs the same and is a theorem. *Lesson: a discount that fits the cases you
+looked at is not a bound.*
+
+### Other gotchas worth carrying
+
+- **Inclusion–exclusion does not survive bounding.** `αAB = α(H) − α(A) − α(B)`
+  is exact, but subtracting *upper* bounds yields neither an upper nor a lower
+  bound — hence `alpha_comm_cross_layered`'s two branches (all-exact ⇒ the
+  identity; else `min` of two separately-proven bounds). Subtlest thing in the
+  change.
+- **Budget check goes at the TOP of the per-word loop**, not the bottom, or a
+  layer finishing exactly at budget is misreported as an incomplete stop.
+- **Depth-1 mass must be `hs.λ` verbatim**, not a re-sum of dict values, or the
+  `d=1 ≡ :norm1` identity picks up dict-iteration-order rounding (and the test
+  still needs `≈`, rtol 1e-14).
+- **Don't size a Julia suite `timeout` from the last run's wall time.** The
+  implementer's `timeout 1800` (baseline 11m12s) killed a COMPLETE post-change
+  run at 30 min because other agents had the box at load 20. Check `uptime`
+  first. Cost a full run.
+- **`@test a && b rtol = 1e-12` is an invalid test macro call** — `rtol`
+  attaches to a single comparison only.
+
+### Reporting honesty (worth imitating)
+
+The box was at load ≈ 20 from concurrent agents, so the bench's wall-clock α
+probes downgraded five L=256 families' PLANNING to `:norm1` where gmx0 used
+`:exact`. Rather than quietly shipping the mixed comparison, the implementer
+reported the 483-cell identical-probe-mode subset (63.1 % → 95.0 %, p90 4.79 →
+1, max 43.5 → 2.31) AND re-measured the five residuals at the library default,
+where all five have regret 1. **The headline AFTER numbers are therefore
+pessimistic, not flattering.** Filed as bead `c8rx`: wall-clock probe
+thresholds must become explicit run configuration, since they make frontier
+CSVs non-reproducible across machines — session 102 predicted this as gotcha
+(d); this session it bit.
+
+### Accepted latency change (orchestrator ruling)
+
+Auto now sometimes picks Composite where it picked QDrift, and the chosen
+shape's exact-α planning takes **5–12 s** on L=1024 dense families (was
+instant) for a ~2.5× cheaper circuit (2584 vs 6403 exponentials). This is NOT a
+change to the shipped-bound path — `plan_evolution` still derives its number
+from `alpha_comm` under the caller's own `alpha_mode`, and the new `alpha_work`
+kwarg budgets DISPATCH only. Verdict: acceptable, a good trade for a compiler.
+Measured safety: all 10 families with L ≥ 256 × {t=0.5,4,32} × {ε=1e-2,1e-4} =
+60 cells probed at default `:exact` planning, **0 `AlphaCommBlowup`** — the cap
+only bites at order ≥ 4 on dense L=1024, and Auto only picks order-2 there.
+
+## M11 design round (82su) — COMPLETE, awaiting 6 rulings
+
+2 blind Opus proposers (A 1470 lines, B 1274) + Opus synthesiser →
+`docs/design/m11-82su-synthesis.md`, 31 rulings S1–S31. Verdict: **synthesis,
+not a pick** — A owns the channel-value algebra and numerics (it read Orkan's
+headers and let them shape the design), B owns the typed superchannel surface,
+the code representation and the anti-tests.
+
+**Convergences** (independent, therefore load-bearing): the dilation lives
+OUTSIDE the process-value tree — both rejected "a `ProcessValue` that `ctrl`
+refuses" for the same reason, that `Tensor`/`UnitaryBlock`/`certify` are other
+doors, so refusal must be replicated at many sites instead of zero;
+`effective_logical_noise` is a **compiler transformation on `ChannelDAG`**, not
+a runtime value, and explicitly NOT a `ChannelPass` (that law is
+Choi-PRESERVING; a superchannel changes the denotation by design);
+physical/logical labels ride the register type, never the `Port`;
+`fault_tolerant_lift` = interface + loud refusal, grounded by B on
+**Eastin–Knill** — non-canonical BY THEOREM, not by gap.
+
+**Adjudications worth remembering:** completion algorithm landed where neither
+proposal was — run Householder, then overwrite `U[:,1:d] := Ṽ`, making the
+contract assertion EXACT and deleting A's `diag(R̃)` phase fix (B's
+`GS_PIVOT_TOL=1e-8` was exactly the in-algorithm rank tolerance A warned
+against: it can fail loud on VALID input, data-dependently). Env wires LEAD/MSB
+because that matches `Ctrl`'s control-leading convention, so the dense artifact
+and the structured emission agree with no permutation — which is what lets the
+three-way test detect an ordering bug instead of being fooled by two
+compensating ones.
+
+**The round found four real shipped defects** — see `udtl` below, plus:
+`_replay_dm!` errors on `NoiseN`; `ChannelDAG` has no channel-level `∘`/`⊗`
+though PRD §4.4 promises them; `select` has no host-scalar methods, so a
+syndrome program is not portable to Eager.
+
+**Corrections the synthesiser made to its own inputs** (law 9 working): A was
+wrong that amplitude damping is unexecutable (B's `ctrl(Ry(2θ))`+`ctrl(X)`
+circuit yields the textbook family with shipped machinery only — and damping is
+A's own env-ordering sentinel); A wrongly rejected B's `certify(trace(...))`
+encoder (the isometry factors as alloc∘unitary and the unitary part certifies);
+B's claimed `_replay_branch_controlled!` gap is already closed
+(`tracing.jl:530` fails closed — test only). **And the ORIGINAL PROPOSER PROMPT
+was wrong**: it asserted "the plan names `classicalise`" — it appears nowhere
+in the v2 plan or PRD-v2; it is an unlogged v0.1 carried contract whose spec
+text (`Sturm-PRD.md:457`) carries a silent single-qubit defect. A inherited the
+brief's error; B caught it. *Lesson: a design brief is not evidence.*
+
+## P1 defect found by the round: noise under `when` is SILENT (bead `udtl`)
+
+Both blind proposers found it independently; orchestrator reproduced by
+inspection. `apply_channel!` (`density.jl:86`) never calls
+`_assert_no_control`, while every other guardrail-1 site does (casts, `ptrace!`,
+`cases`). `when.jl:69` row 9 documents the ban in a comment table — *"BANNED —
+forward hook (M8/M11)"* — **and it was never wired**. `apply_channel!` is
+`public`, so it is reachable as `Sturm.apply_channel!`; called inside a `when`
+body on DM it applies the channel UNCONDITIONALLY. Silent wrong physics = the
+wm28 class. P1 not P0 only because M11 has not shipped, so nothing exercises it
+under control yet. Guard belongs at `apply_channel!`, **not** at
+`_apply_channel_1q!` — `when.jl` row 8 makes region-exit traces under control
+legitimate and they share that lowering.
+
+## Also filed
+
+- `83a8` — M12's `_assert_randomized_legal` tells users the DM lowering "is
+  M11's mixture value… until it lands". **M11 does not close it**:
+  `MixedUnitary{W,R}` targets enumerated `R ≤ 16`, qDrift needs `R ~ 10⁴`. The
+  S10 guard itself is sound and stays; only the forward promise is wrong. Note
+  a possible collapse: ONE qDrift step is a mixed-unitary channel with only `L`
+  terms, so an N-step ensemble may be an N-fold composition of a cheap channel
+  rather than a 10⁴-term object — check that first.
+- `jiae` — rewritten after the Childs extraction (see below).
+- `c8rx` — bench probe reproducibility (above).
+
+## jiae: the bead's premise was partly wrong (research, verified)
+
+Sonnet extracted Childs Prop. 16 / Eq. (152) p.39; **orchestrator verified
+against the PDF directly**. Index ranges — the thing the bead was blocked on —
+are NOT a `γ₃>γ₂>γ₁` chain: ONE outer sum over pivot `γ₁`, with `γ₂` and `γ₃`
+ranging INDEPENDENTLY over `(γ₁,Γ]`, and the partial sums INSIDE the norm
+(triangle inequality applied only across `γ₁`). Norm is spectral; no diamond
+norm appears in the paper, so `_diamond_from_spectral`'s ×2 still applies on
+top. Local PDF is **arXiv:1912.08854v3**, self-described as a "slightly
+enhanced version" of the PRX article — Prop/Eq numbers are version-specific and
+citations must pin the version. Do NOT conflate with Thm 11 / Cor 12
+(pp.21–22), a different, looser, unrestricted-index asymptotic bound — which is
+what Sturm uses today.
+
+**Why the premise is partly wrong:** `alpha_comm_pairs` is cheap because nested
+commutator norms of SINGLE Pauli words are exactly 0 or 2^{2p}. Eq. (152)
+instead needs the spectral norm of a **sum** of Pauli words — exponentially
+hard in general — and bounding it by the coefficient 1-norm IS the extra
+triangle-inequality step, which collapses (152) straight back to the loose form
+already shipped. **A naive implementation buys nothing.** The escape hatch, now
+the bead's actual design question: for local/structured H most terms commute
+with `H_{γ₁}`, so the inner commutator collapses to a few words on bounded
+support where the exact spectral norm IS computable by direct diagonalisation
+behind a loud support-size gate. Decide: exact-on-bounded-support with visible
+fallback, or close as "no tightening available at acceptable cost". Both
+respectable; a silent 1-norm relaxation dressed as "the tight bound" is the
+v0.1 `alpha_comm` bug class.
+
+The extractor correctly flagged that Prop. 15/16 contain **no `r`** at all;
+orchestrator supplied the missing telescoping proof for the distillation:
+`U^r − V^r = Σ_{k=0}^{r−1} U^k(U−V)V^{r−1−k}` ⇒ `‖U^r−V^r‖ ≤ r‖U−V‖` by
+unitary invariance, valid since `S₂(t/r)` and `e^{−i(t/r)H}` are both unitary.
+Hence E2 r-step = `(t³/r²)[C₁₂/12 + C₂₄/24]`.
+
+Sturm's CURRENT E1 (`Σ_{i<j}‖[H_i,H_j]‖`) is likewise a looser COROLLARY of
+Prop. 15, not Prop. 15 itself — same computability caveat, same decision.
+
+## M11 physics sources acquired (gitignored, per the new rule 4)
+
+- **Watrous, *Theory of Quantum Information* §2.2.2** — the recommended
+  Stinespring/Kraus citation: free, author-hosted, finite-dimensional (unlike
+  Stinespring 1955's C\*-algebra setting, which is also paywalled). Verified
+  locators: **Thm 2.22** Kraus↔Stinespring↔Choi; **Cor. 2.21/2.27** minimal
+  Kraus rank = Choi rank; **Cor. 2.27(5)** the isometry form = exactly F33's
+  `V|ψ⟩ = ΣᵢKᵢ|ψ⟩|i⟩`; **Cor. 2.23/2.24** non-uniqueness of the completion.
+  Orchestrator spot-checked the title page and grepped the numbering.
+- **Gottesman thesis (arXiv:quant-ph/9705052)** — stabilizer codes §3.2; its
+  own §6.2–6.3 derives the threshold theorem, so no separate threshold source
+  is needed. PDF + LaTeX source.
+- Distillation lists reconciled 8 + 6 → **6**, two now sourced.
