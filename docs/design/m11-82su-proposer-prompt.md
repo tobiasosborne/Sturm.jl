@@ -8,10 +8,13 @@ sandbox).
 
 ## Context
 
-M0–M10 are shipped (suite 26136 green): kernel process values (`U2`, `Perm`,
+M0–M12 are shipped (suite 27328 green): kernel process values (`U2`, `Perm`,
 `UnitaryBlock{N}` + certificates), contexts (Eager / exact DM / Tracing with
 `ChannelDAG`), the seven-construct surface, Bennett bridge, `QMod`/`mulmod!`/
-`shor_order`, and the M10 library HOFs. M11 is the noise + QECC milestone.
+`shor_order`, the M10 library HOFs, and the M12 Hamiltonian-simulation module
+(`src/library/evolve/`: Trotter/QDrift/Composite/Auto strategy objects, exact
+α_comm, `BoundReport`s, channel-level verification, `bench/hamsim/` frontier).
+M11 is the noise + QECC milestone.
 Two review findings gate its design:
 
 - **F8:** v0.1's single `encode(ch, code) :: Channel → Channel` HOF conflates
@@ -105,8 +108,8 @@ Two review findings gate its design:
   + `cases.jl` (the record machinery), `src/context/` (DM internals,
   `_apply_channel_1q!`), `src/orkan/` (what channel support the FFI has —
   read the actual ccall surface).
-- `worklog/session-99.md`, `session-100-m9.md`, `session-101-m10.md` for
-  current state.
+- `worklog/session-99.md`, `session-100-m9.md`, `session-101-m10.md`,
+  `session-102-m12.md` for current state.
 
 ## Ground rules
 

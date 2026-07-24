@@ -18,3 +18,13 @@ docs/literature/quantum_simulation/.browser-profile/
 docs/literature/*_src/
 docs/literature/*.pdf
 bench/out/
+
+# Physics sources are LOCAL ONLY — never committed (CLAUDE.md rule 4).
+# docs/physics/ commits the Markdown DISTILLATIONS; the PDFs they distil are
+# third-party copyrighted works (journal papers, book drafts) and this repo is
+# public, so committing them would be redistribution. Keep the PDF locally so
+# every citation stays re-checkable; commit only the .md that pins the
+# equation/page. The runtests citation lint checks `docs/physics/*.md` paths
+# only, so it is unaffected.
+docs/physics/*.pdf
+docs/physics/**/*.pdf

@@ -72,12 +72,26 @@ These are NON-NEGOTIABLE. Every agent, every session, every commit.
 
 4. **PHYSICS = LOCAL PDF + EQUATION (two-tier policy).** Every cited paper
    needs a local source plus an explicit equation reference:
-   - `docs/physics/` — canonical, committed: original PDFs AND short
-     Markdown distillations (`docs/physics/<author>_<topic>.md`) with
-     theorems/equations/page numbers. Docstrings cite the `.md`.
+   - `docs/physics/` — canonical. The short Markdown distillations
+     (`docs/physics/<author>_<topic>.md`) with theorems/equations/page
+     numbers are **committed**; the PDFs they distil are **local only and
+     gitignored**. Docstrings cite the `.md`.
    - `docs/literature/` — gitignored scratch space.
+   **PDFs ARE NEVER COMMITTED.** They are third-party copyrighted works
+   (journal papers, book drafts) and this repo is public, so committing
+   them is redistribution — for several already-committed ones
+   (Barenco/PRA, Suzuki/JMP, Stuelpnagel/SIAM Review, Bennett/IBM JRD,
+   Grover/STOC) it was plainly infringing, and Watrous's ToQI draft
+   carries an express "must not be redistributed" notice. 27 PDFs were
+   untracked in session 103; they remain on disk, so every citation stays
+   re-checkable locally. **Keep the PDF, commit the `.md`.** If a
+   distillation's PDF is missing from a fresh clone that is EXPECTED —
+   re-download it; do not "fix" it by committing the file. The rule's
+   intent is a named source plus an exact pin, so any claim can be
+   re-checked — not a binary blob in git.
    Lint: a runtests boot pass greps `src/` for `docs/physics/...\.md`
-   references and asserts each path resolves. PRD-v2 §9 "Citations TODO"
+   references and asserts each path resolves (`.md` paths ONLY — it is
+   deliberately blind to PDFs). PRD-v2 §9 "Citations TODO"
    lists the ~16 distillations the v2 build needs — write each before the
    code that cites it.
 
