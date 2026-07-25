@@ -29,8 +29,9 @@ spec. Carry-over from v0.1 is **not** blanket. Each carried contract —
 contexts, Orkan FFI, the Bennett bridge, QECC-as-HOF, promotion, the
 channel-IR passes discipline — has an explicit verdict (re-derived,
 carried-verbatim-and-re-verified, or gated on a later milestone), tabled in
-§10 and in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7. **Nothing is silently
-imported;** in particular v0.1's Choi-only pass-correctness criterion (F3:
+§10 and in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7; as of 2026-07-25 none
+remain gated — the last one, QECC-as-HOF, is re-derived in §5. **Nothing
+is silently imported;** in particular v0.1's Choi-only pass-correctness criterion (F3:
 Choi is phase-blind) and its scalar DM measurement are explicitly overturned
 here.
 
@@ -815,6 +816,14 @@ context-faithful return):
 | whitelisted finite classical SSA (T2/T3, §3.6) | ordinary Julia | ✓ | ✓ | capability-checked |
 | `cases` / `@cases` | selected arm | all correlated arms (exact) | `CasesNode` | device conditional |
 | token-bounded loop / arbitrary token index | n/a after scalar | ✗ | ✗ | ✗ |
+| noise channel application (§4.3 — *not* a surface construct) | ✗ loud, or opt-in dilation = one trajectory (`shots` for the channel) | ✓ exact (Kraus→superop) | `NoiseN` — the channel, never a dilation | ✗ — the device is the noise source |
+
+The last row is deliberately not one of the seven: applying a noise channel
+is something an experimenter does *to* a program, not something a program
+does to itself, and it is tabled here because it is the sharpest
+context-sensitivity in the language — one channel value is exact on DM,
+recorded verbatim on Tracing, and on a pure context is either refused or
+unravelled into trajectories (§4.3).
 
 `cases` is the **one fully portable** branch construct (in Eager it runs
 the taken arm). `if`/`&&` is the Eager-only ergonomic shortcut, valid
@@ -1111,8 +1120,9 @@ element — data, not denotation. One abstract type, trait-stratified:
   the proof.
 - `ChannelDAG` — the effect-typed channel IR (typed quantum in/out ports
   that need not match, plus classical token ports); nodes carry process
-  values, never gate names. It is **not** a process value: it sits on the
-  channel level of §4.4 and `ctrl(::ChannelDAG)` is unrepresentable (P4).
+  values, never gate names. It is **not** a process value: it sits on
+  stratum 2 of §4.4 (channel representations) and `ctrl(::ChannelDAG)` is
+  unrepresentable (P4).
 - `UnitaryBlock{N} <: ProcessValue` — a `ChannelDAG` **certified**
   (`certify`) to denote a fixed-port unitary on its `N` surviving wires:
   `N` in-ports `== N` out-ports **with identical resource lineage** (a
@@ -1311,34 +1321,109 @@ kernel — never by a convention in library code.** Algebra on values
 preserves phase (`ctrl` can still act); application forgets it (Nature
 does). Dispatch is (value kind × context kind):
 
-| Process value | Pure context | Density context |
+| Value (§4.4 stratum) | Pure context | Density context |
 |---|---|---|
-| `U2` | Euler ZYZ → existing Orkan `rz/ry/rz` (phase droppable *here only*) | same, as conjugation |
-| `ctrl(·)`, multi-register | controlled decomposition → `orkan_cx` etc. | same |
-| `Perm` | replay stored reversible circuit (Bennett artifact) | same |
-| `UnitaryBlock` | certified scratch alloc; replay phase-fixed instructions; certified zero-release (`Ad` may quotient phase only at leaf application) | same |
-| `ChannelDAG` | channel executor; **never** `ctrl` | channel executor |
+| `U2` (1) | Euler ZYZ → existing Orkan `rz/ry/rz` (phase droppable *here only*) | same, as conjugation |
+| `ctrl(·)`, multi-register (1) | controlled decomposition → `orkan_cx` etc. | same |
+| `Perm` (1) | replay stored reversible circuit (Bennett artifact) | same |
+| `UnitaryBlock` (1) | certified scratch alloc; replay phase-fixed instructions; certified zero-release (`Ad` may quotient phase only at leaf application) | same |
+| `KrausFamily` and the channel values built on it (2) | loud error (default) or opt-in Stinespring fallback; **never** `ctrl` | Kraus→superop; a tensor of local factors lowers factor-by-factor |
+| `ChannelDAG` (2) | channel executor; **never** `ctrl` | channel executor |
 
-**Channel-level values** (Kraus families — noise) apply through the same
-surface. On a density context: Kraus→superop (existing path). On a pure
-context, two sanctioned options replacing v0.1's hard error: (a) error
-loudly (default), (b) **Stinespring fallback** — allocate environment,
-apply dilated process value, `ptrace!` — making pure-vs-mixed a context
-performance choice, never a semantic one.
+**Channel-level values** (§4.4 stratum 2 — Kraus families and the mixture,
+tensor and sequence values built from them) apply through the same surface
+as process values: one application entry point at the wire layer, one
+`apply_noise!` at the handle layer. On a density context the native path is
+Kraus→superop, and a tensor of local factors lowers one factor at a time
+rather than as a single wide superoperator. On a pure context there are
+exactly two sanctioned behaviours, replacing v0.1's hard error: (a) **error
+loudly** — the default, naming the density context, `shots`, and the
+fallback; (b) the **Stinespring fallback** — allocate an environment inside
+a region, apply the dilated process value, and let region exit trace it
+(§3.9, which is the same mechanism, not a second one).
+
+Three constraints on (b) are normative, because it is the one place where a
+choice of *representative* becomes executable (§4.4):
+
+- **Opt-in at the call site** (an explicit `stinespring=true` argument),
+  never a context-level policy and never implicit. A context policy would
+  make an ordinary channel application fail at a distance as an
+  environment-capacity error, and would hide which representative ran.
+- **Never in the IR.** Under Tracing, requesting the fallback is a loud
+  error: the IR records the channel, never a dilation of it. The parallel
+  is the ZYZ chart (§4.1) — a chart is chosen at the Orkan boundary and
+  nowhere else.
+- **One run is one trajectory.** On a pure context, dilation followed by the
+  region-exit trace *is* a quantum-jump unravelling; the channel is
+  recovered by `shots` (or exactly, in one run, by the density context).
+  Pure-vs-mixed therefore remains a choice of representation and cost, never
+  of expressible semantics — but "one run is the channel", which the density
+  context licenses (§3.8), does not survive the crossing.
 
 ### 4.4 The stratification (what `ctrl` can never touch)
 
-| Level | Objects | Operations | `ctrl`? |
-|---|---|---|---|
-| Process values | `U2`, `Perm`, `UnitaryBlock` | `∘`, `⊗`, `adjoint`, `ctrl` | ✔ closed |
-| Channels | denotations; casts, noise, `ptrace!`, `cases`, `ChannelDAG` | composition, tensor | ✘ impossible, by theorem |
+Three strata, not two. Every value in the language sits on exactly one of
+them, and `ctrl` is defined on exactly one:
 
-Denotation (value → channel) is a quotient, always available, never
-invertible. Measurement was never a process value; therefore
-measurement-under-`ctrl` is not an error case — it is *unrepresentable*. A
-certificate (§4.1a) promotes one particular frozen, fixed-port unitary
-trace to a process value; it does **not** invert `Ad`, control a channel,
-or infer a phase representative from a Choi matrix.
+| # | Stratum | Objects | Operations | `ctrl`? |
+|---|---|---|---|---|
+| 1 | **Process values** | `U2`, `Perm`, `UnitaryBlock` | `∘`, `⊗`, `adjoint`, `ctrl` | ✔ closed |
+| 2 | **Channel representations** | `KrausFamily` and the mixture/tensor/sequence values on it; `ChannelDAG` (casts, noise, `ptrace!`, `cases` are its nodes) | `∘`, `⊗`, application, `channel(::ProcessValue)`; superchannels map stratum 2 → stratum 2 | ✘ refused, by theorem |
+| 3 | **Denotations** | the CPTP maps themselves — what a stratum-2 object *means*; a Choi matrix is a presentation of one, used for equality | `≈` (Choi / diamond), composition of maps | ✘ not objects at all |
+
+Stratum 1 → 2 is `channel(v)`: total, always available, and **never
+invertible** — nothing takes a channel representation to *a* process value
+denoting it, and `∘`/`⊗` never mix strata, so the quotient is visible in the
+source at every site where it is crossed. Stratum 2 → 3 is denotation: many
+representations, one map, and that arrow is one-way too. Certification
+(§4.1a) is not a counterexample: it promotes a `ChannelDAG` whose nodes
+*already carry* process values, re-assembling them under a structural proof;
+it recovers nothing from a Kraus family, a Choi matrix, or an executed
+state.
+
+**Why stratum 2 carries an explicit theorem (normative).** While the
+language held no channel-level *object*, "`ctrl` cannot touch a channel"
+was true partly for want of anything to hand it — the refusal was in part an
+accident of the value inventory. `KrausFamily` ends that accident: noise
+becomes a first-class value that composes, tensors, and applies through the
+same surface as everything else (§4.3). The refusal must therefore be
+stated, and it is a theorem, not a policy:
+
+> **A channel's representation is non-unique exactly in the ways `ctrl` can
+> see.** A Kraus family is determined only up to zero-padding to a common
+> rank and a unitary mixing of its operators; a Stinespring dilation is
+> determined only up to a partial isometry on the environment
+> (`docs/physics/watrous_2018_channel_representations.md`, §2.2.2 —
+> forthcoming, §9). All such representatives have the same denotation:
+> `Ad` and the Choi matrix forget the difference. `ctrl` does not — control
+> is precisely the operation that makes representation-level freedom
+> physical (`docs/physics/tang_wright_2025_controlled_unitaries.md`,
+> arXiv:2508.00055 Thm 1.1, is the unitary instance: the global phase that
+> `Ad` quotients away is observable under control). Controlling a stratum-2
+> object would therefore make a measurable outcome depend on an arbitrary
+> choice of representative — it would not be a function of the channel it
+> claims to control, and no convention can make it one.
+
+The consequences are mechanical rather than documentary. There is no `ctrl`
+method on any stratum-2 type, so `ctrl(𝓝)` is an absent method — a
+`MethodError`, not a runtime check on a method that exists — and the `ctrl`
+choke point (§4.2) gains no lines to enforce it. A Stinespring dilation is
+an **execution artifact** — it subtypes neither value stratum (neither a
+process value nor a channel representation) and is reachable only from the
+single emitter that builds it (§4.3), precisely so that it cannot reach
+`ctrl` by composing with a process value and certifying the result. And
+noise applied while a control stack is live is a loud guardrail-1 error
+(§3.5), never a silently controlled channel.
+
+Measurement was never a process value; therefore measurement-under-`ctrl` is
+not an error case — it is *unrepresentable*. A certificate (§4.1a) promotes
+one particular frozen, fixed-port unitary trace from stratum 2 to stratum 1;
+it does **not** invert `Ad`, control a channel, or infer a phase
+representative from a Choi matrix. A superchannel (§5's
+`effective_logical_noise`) transforms stratum-2 objects into stratum-2
+objects and is not a channel, so it is not controllable either — and for the
+same reason it is not a pass (§4.2): a pass preserves the denotation and the
+boundary, a superchannel changes both by design.
 
 ### 4.5 Linearity: surface B, single mechanism
 
@@ -1412,7 +1497,56 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   data-dependent process-value constructions with no surface spelling —
   by design, not by omission. The D5 acceptance bar is that none of it
   leaks past the HOF signature.
-- QECC (P6): unchanged — `encode(ch, code)` is `Channel → Channel`.
+- QECC (P6): v0.1's single HOF `encode(ch, code) :: Channel → Channel` is
+  **retired** (F8 — one signature for three different operations, with three
+  different port types) and re-typed into three, each carrying its own
+  obligation. This is the closure of the last carried-contract verdict (c)
+  in §10.
+  - **`encode_state(enc, qs…)`** and **`decode_state`** — the state-level
+    channels `L → P` and `P → L`. Encoding is an **ownership transfer**,
+    not a third consumption site: the logical handles are re-homed into an
+    encoded block, information does not leave the program, and §4.5's
+    "exactly two places" count stands. `Choi(decode_state ∘ encode_state) ≈ Choi(id_L)`
+    is a required test, probed coherently (§3.8's wm28 rule).
+  - **`effective_logical_noise(𝓝, θ)`** — the **superchannel**
+    `Θ(𝓝) = D ∘ R ∘ 𝓝 ∘ E`, typed `Chan(P,P) → Chan(L,L)`. Physical and
+    logical are distinguished in the *type* (a physical channel validated
+    against a code, and a protection policy carrying an encoding and a
+    recovery), so a code mismatch is a method error rather than a runtime
+    arity check, and a bare Kraus family cannot be auto-lifted — a family
+    says *what* the noise is, not *where* it acts. It is a stratum-2 →
+    stratum-2 map, hence neither a channel nor a pass (§4.4). Its modelling
+    assumption is normative and must be stated wherever it is used: the
+    **code-capacity model** — noiseless encoder, recovery and decoder,
+    perfect syndrome extraction. **No fault-tolerance and no threshold claim
+    follows from it**, and a logical error rate computed under it is a
+    statement about the code, not about a machine.
+  - **`fault_tolerant_lift(Φ, impl)`** — lifting a logical algorithm to a
+    fault-tolerant implementation. This ships as **interface plus a loud
+    refusal**, because it is non-canonical *by theorem*: no code admits a
+    universal transversal gate set (Eastin–Knill,
+    `docs/physics/eastin_knill_2009_no_universal_transversal.md` —
+    forthcoming, §9). The refusal names the five ingredients a caller must
+    supply — fault model; gadget set with a per-code transversality
+    declaration; magic-state or gate-teleportation protocol for the
+    non-transversal remainder; extraction schedule under a *noisy*-syndrome
+    model; threshold accounting. Under-promising here is a physics
+    statement, not a gap.
+
+  Two structural rules ride with them. A **code** (its stabilizers, logical
+  operators and declared distance, GF(2)-validated at construction) is a
+  distinct value from an **encoding**, which is a *gauge choice* of encoder
+  circuit plus its syndrome table: two codes with identical stabilizers and
+  different encoders are the same code and different encodings. The decoder
+  is `adjoint` of the encoder — exact by construction, never a second
+  independently written circuit whose agreement only a test checks. And an
+  encoded block carries **no logical surface operations** in the first cut:
+  `not!`, `Bool`, `⊻=`, `dual`, `when`, `oracle` on an encoded block all
+  refuse loudly, each naming what it would need, because on a noisy block
+  "measure transversally and take the majority" and "decode, then measure"
+  are *different channels* — offering either one under the `Bool` cast
+  spelling would silently pick a fault-tolerance protocol, which is F8
+  reappearing at the cast level.
 
 ---
 
@@ -1442,7 +1576,18 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   the surface's quantum vocabulary is casts, xor, `dual`, `when`, and
   nothing else. The kernel may hold definite unitaries because an IR is
   not a user language. Complementarity, not coordinates.
-- **P6 — QECC is a higher-order function.** Unchanged.
+- **P6 — QECC is a higher-order function.** *Restated (§5):* the axiom —
+  error correction is a **transformation of programs**, not a library of
+  encoded gates — stands and is sharpened; what does not survive is the
+  claim that *one* higher-order function expresses it. `encode(ch, code)`
+  splits into `encode_state`/`decode_state` (a state-level channel `L → P`),
+  `effective_logical_noise` (the superchannel `Θ(𝓝) = D∘R∘𝓝∘E`, typed
+  `Chan(P,P) → Chan(L,L)`, under the stated code-capacity model), and
+  `fault_tolerant_lift` (interface plus a loud refusal, grounded on
+  Eastin–Knill). The higher-order content lives in the middle operation,
+  where §4.4 places it precisely: a superchannel maps stratum-2 objects to
+  stratum-2 objects, so it is not a channel, not a pass, and — like
+  everything else on that stratum — not controllable.
 - **P7 — Dimension-agnostic.** *Restated as parametricity:* a register type
   carries (Hilbert space, symmetry structure, conjugate structure); the
   channel algebra, casts, `dual`, `when`/`ctrl`, and promotion never
@@ -2124,6 +2269,40 @@ as found on v0.1:
   claim is "novel as an IR choice", not "novel representation"); cf.
   Stuelpnagel 1964 (SO(3); the SU(2) extension is standard). Q#'s
   `within…apply` is the named precedent for §4.2's `within`.
+- **Citations TODO — noise, dilation, and QECC (§4.3, §4.4, §5).** Six
+  further distillations are prerequisites for the channel-value stratum and
+  the three QECC operations, each owed **before** the code that cites it.
+  Note the rule-4 change (2026-07-25): commit the `.md` distillation, keep
+  the PDF local and gitignored — no work item here asks for a PDF to be
+  committed.
+  `watrous_2018_channel_representations.md` (*Theory of Quantum
+  Information* §2.2.2 — Thm 2.22, the Kraus ↔ Stinespring ↔ Choi
+  equivalence; Cor. 2.21/2.27, minimal Kraus rank = Choi rank and the
+  isometry form `V|ψ⟩ = Σᵢ Kᵢ|ψ⟩|i⟩_E`; Cor. 2.23/2.24, the unitary and
+  partial-isometry freedom — this is the source for §4.4's stratum-2
+  theorem and for §4.3's dilation contract; **source already on disk**,
+  distillation owed);
+  `gottesman_1997_stabilizer_codes.md` (quant-ph/9705052 §3.2 stabilizer
+  formalism, syndrome measurement, logical operators; §5 transversality;
+  §6.2–6.3 the threshold theorem — the reason `fault_tolerant_lift` can
+  name what it is missing; **source already on disk**, distillation owed);
+  `knill_laflamme_1997_qec_conditions.md` (quant-ph/9604034 — the QEC
+  conditions `P Kᵢ†Kⱼ P = α_{ij} P`: why a table decoder is *exact* on the
+  declared correctable set, and why `Θ(𝓝) = id_L` is the correctability
+  statement rather than a precondition);
+  `chiribella_2009_quantum_combs.md` (arXiv:0712.1325 and arXiv:0904.4483 —
+  superchannel = circuit with a hole, and the factorisation
+  `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`; the memoryless case is what licenses
+  §5's `effective_logical_noise` as a transformation of channels);
+  `eastin_knill_2009_no_universal_transversal.md` (arXiv:0811.4262 — the
+  no-go that makes the `fault_tolerant_lift` refusal a theorem);
+  `repetition_code_effective_noise.md` (an **in-repo derivation note**, not
+  a paper distillation, and labelled as such: `p_L = 3p² − 2p³`, so
+  `p_L − p = −p(1−p)(1−2p)` and break-even is exactly `p = ½`; and the
+  phase-noise amplification `(1 − (1−2p)³)/2 ≈ 3p` — every single-wire `Z`
+  is a logical `Z̄` with trivial syndrome, so no correction ever fires and
+  the bit-flip code makes phase noise *worse*, which is the anti-test the
+  QECC suite is built around).
 
 ---
 
@@ -2143,17 +2322,21 @@ provenance in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7; the summary:
 | 3 | Bennett bridge (oracle artifact, D9 accumulate, strategy selection) | **(a) re-derived** | M7; D9 + D14 (circuit-only) ruled; MBU-under-`ctrl` exclusion + MSB/LSB choke point are v2-native. |
 | 4 | Promotion (P8 overloads, two-world registry, P9) | **(a) re-derived** | §3.4/D12; shipped at M6. F15 sharpens "numeric types" → **number-like handles** with a published trait interface (§3.4/§6). |
 | 5 | Channel-IR passes discipline (partition at measurement barriers) | **(a) re-derived — load-bearing half by `5hr7`** | The barrier-partition idea is a **type invariant** in v2 (a barrier-containing `ChannelDAG` never promotes to `UnitaryBlock`, §4.1a). v0.1's **Choi-only pass-correctness criterion is unsafe (F3) and barred** — replaced by phase-inclusive `≈` + `ctrl`-wrapped tests + `PASS_REGISTRY` lint (§4.2). |
-| 6 | QECC-as-HOF (`encode(ch, code) :: Channel → Channel`) | **(c) NEEDS re-derivation — gates M11** | F8: the single signature conflates protecting noise, encoding a state, and fault-tolerant lifting. Re-typed into `encode_state` / `effective_logical_noise` / `fault_tolerant_lift` — an explicit gate on M11. Not consumed until M11, so no shipped code depends on it. |
+| 6 | QECC-as-HOF (`encode(ch, code) :: Channel → Channel`) | **(a) re-derived — 2026-07-25** | F8: the single signature conflated protecting noise, encoding a state, and fault-tolerant lifting. Re-typed in §5 and §6/P6 into `encode_state` / `effective_logical_noise` / `fault_tolerant_lift`, with §4.4 placing a superchannel on the channel-representation stratum (never a channel, never a pass, never controllable). M11 implements the re-derived contract; nothing depended on the v0.1 one. |
 
-Verdict counts: **(a) re-derived = 4 · (b) verbatim = 1 · (c) gated on M11
-= 1.**
+Verdict counts: **(a) re-derived = 5 · (b) verbatim = 1 · (c) needs
+re-derivation = 0.** With the QECC re-typing above, the audit of the six
+contracts F31 enumerated is complete: every one is either re-derived here or
+carried verbatim and re-verified against live source.
 
 **Survives (per the table above):** contexts + Orkan FFI; the channel IR +
 passes + measurement-barrier discipline (v0.1's single witnessed DAG splits
 into `ChannelDAG` + certified `UnitaryBlock`, §4.1 — the Choi-only pass
 criterion is *not* carried); Bennett bridge; casts (minus the non-consuming
 debate — v2 confirms consuming); `cases`; promotion; `ptrace!`; the entire
-test-discipline and physics-citation regime. QECC re-typed at M11.
+test-discipline and physics-citation regime. QECC survives as the *axiom*
+(P6) with its signature re-typed in §5 — three typed operations, not one
+HOF — and is implemented at M11.
 
 **Rewritten:** `qbool.jl` surface (BlochProxy deleted); `gates.jl`
 (constants move to kernel); `patterns.jl` / `arithmetic.jl` (shrink onto

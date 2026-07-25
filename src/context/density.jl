@@ -82,8 +82,37 @@ end
 
 Apply a 1-local Kraus channel (2×2 operators) to wire `w`. Flushes `w` first
 (fusion commutes only with disjoint ops). M2 scaffold for M3/M11 noise & Choi.
+
+GUARDRAIL 1 (§3.5, row 9 of the `src/surface/when.jl` dispatch table; bead
+Sturm.jl-udtl): noise inside a `when` body is a LOUD error. A Kraus channel is
+not a process value, and control on a non-unitary effect is unrepresentable by
+axiom P4 — applying it unconditionally under a live control frame is silently
+wrong physics (the wm28 class). This entry point is `public`, hence reachable as
+`Sturm.apply_channel!`, so the ban must be enforced here and not merely lint-ed.
+
+PLACEMENT — the guard belongs at THIS public noise entry point, NOT at the shared
+`_apply_channel_1q!` lowering. That lowering serves three callers, and each one's
+legitimacy under control is decided by the CALLER, never by the lowering:
+
+- this one (row 9) — BANNED under control, by the assert below;
+- `trace_wire!`/`_RESET_KRAUS` — the explicit `ptrace!` carries its OWN
+  `_assert_no_control` (regions.jl), while the IMPLICIT region-exit release of
+  body-owned scratch is the SANCTIONED §3.9 path under control (row 8);
+- `_instrument!`/`_PINCH_KRAUS` — the qc cast's channel denotation, whose ban
+  lives at the cast (casts.jl).
+
+Guarding the shared lowering would therefore encode a caller's policy in a
+primitive. It is also not currently redundant-but-harmless in the way it looks:
+today the row-8 release under control takes `_trace_and_free!`'s no-measurement
+branch (abstract.jl) and never reaches this lowering — but tracing a
+certified-clean ancilla under control IS legal physics, so a DM lowering that did
+run the reset channel there must not be pre-banned by a primitive. Both halves are
+pinned in `test/test_m5_when.jl`: the row-9 ban, and the no-over-fire battery
+(reset, pinch, uncontrolled noise, row-8 region exit) with a white-box pin that
+`_apply_channel_1q!` itself stays unguarded.
 """
 function apply_channel!(ctx::DensityMatrixContext, kmats::Vector{Matrix{ComplexF64}}, w::WireID)
+    _assert_no_control(ctx, "noise channel apply_channel!")
     _flush_wire!(ctx, w)
     _apply_channel_1q!(ctx, kmats, q(ctx, w))
     return ctx

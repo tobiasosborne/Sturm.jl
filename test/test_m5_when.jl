@@ -15,7 +15,7 @@ using Test
 using LinearAlgebra
 using Sturm
 using Sturm: eager, density, dual, when, not!, ctrl, X, H, apply!, statevector,
-    density_matrix, current_context, _core, _under_control
+    density_matrix, current_context, _core, _under_control, apply_channel!
 
 # Dense reference matrices (harness basis: |o₁o₂⟩, o₁ = MSB = first-returned).
 const _id2 = ComplexF64[1 0; 0 1]
@@ -57,8 +57,164 @@ end
         @test statevector(ctx) == sv                     # no backaction from any of them
         @test isempty(_core(ctx).control_stack)
     end
-    # DM noise under control: forward-hooked at M8/M11 (row 9). Documented, not
-    # yet a live guardrail on apply_channel! — flagged in when.jl. No test here.
+    # DM noise under control (row 9) is WIRED — see the three testsets below.
+end
+
+# A user-supplied noise family for the row-9 tests: complete dephasing
+# {|0⟩⟨0|, |1⟩⟨1|}. Deliberately spelled out here rather than reusing
+# `Sturm._PINCH_KRAUS` — this is what a CALLER of the `public` `apply_channel!`
+# passes in, and the internal constant is what rows 7/8 use. Dephasing is the
+# smallest noise whose backaction is VISIBLE at the state level (it kills the
+# coherences and leaves the diagonal), so "the guard fired BEFORE any backaction"
+# is a real assertion, not a vacuous one on an identity channel.
+const _DEPHASE_KRAUS = Matrix{ComplexF64}[
+    ComplexF64[1 0; 0 0],   # |0⟩⟨0|
+    ComplexF64[0 0; 0 1],   # |1⟩⟨1|
+]
+
+@testset "M5 — guardrail 1 row 9: DM noise `apply_channel!` under control is a loud error (bead udtl)" begin
+    # THE udtl defect: row 9 of the when.jl dispatch table was DOCUMENTED as banned
+    # and never WIRED, so `Sturm.apply_channel!` (a `public`, hence reachable, entry
+    # point) called inside a `when` body applied the channel UNCONDITIONALLY — no
+    # error, no warning, the control stack simply not consulted. Silent wrong physics:
+    # the wm28 class. Under a |+⟩ control the correct denotation is unrepresentable
+    # (P4: control acts on PROCESS VALUES, never on channels), so the only sound
+    # answer is a loud refusal.
+    density(2) do ctx
+        q = QBool(0.5)                            # |+⟩ control — the branch is live
+        r = QBool(0.5)                            # |+⟩ target — coherences to destroy
+        ρ = copy(density_matrix(ctx))
+        err = try
+            when(q) do; apply_channel!(ctx, _DEPHASE_KRAUS, r.wire) end
+            nothing
+        catch e; e end
+        @test err isa ErrorException
+        msg = sprint(showerror, err)
+        @test occursin("apply_channel!", msg)      # the message NAMES the operation
+        @test occursin("guardrail 1", msg)
+        @test density_matrix(ctx) ≈ ρ              # thrown BEFORE any backaction
+        @test isempty(_core(ctx).control_stack)    # ...and the stack unwound
+        nothing
+    end
+    # Depth-2 stack and a conjugate-basis control are the same ban (the guard reads
+    # the stack, not the spelling of the control).
+    @test_throws ErrorException density(3) do ctx
+        q = QBool(0.5); s = QBool(true); r = QBool(0.5)
+        when(q) do; when(s) do; apply_channel!(ctx, _DEPHASE_KRAUS, r.wire) end; end
+    end
+    @test_throws ErrorException density(2) do ctx
+        q = QBool(0.5); r = QBool(0.5)
+        when(dual(q)) do; apply_channel!(ctx, _DEPHASE_KRAUS, r.wire) end
+    end
+end
+
+@testset "M5 — guardrail 1 row 9: the noise ban does NOT over-fire (rows 7/8: reset, pinch, region-exit)" begin
+    # PLACEMENT (bead udtl, decided and documented in density.jl): the guard sits at
+    # the PUBLIC entry point `apply_channel!`, NEVER at `_apply_channel_1q!` — the
+    # SHARED lowering of three callers: user noise (row 9, banned), `_RESET_KRAUS`
+    # (`trace_wire!`, rows 7/8) and `_PINCH_KRAUS` (`_instrument!`, the DM qc cast).
+    # Each caller's legitimacy under control is the CALLER's to decide (rows 7/8
+    # sanction the internal reset), so the lowering must stay policy-free. Both
+    # halves are pinned here: the legal paths still run, and the lowering is
+    # verified unguarded.
+
+    # (a) `_RESET_KRAUS` — the exact-ptrace channel {|0⟩⟨0|, |0⟩⟨1|}: |1⟩⟨1| ↦ |0⟩⟨0|
+    #     (the survivors' reduced state is the partial trace; the slot recycles clean).
+    density(1) do ctx
+        x = QBool(true)
+        ptrace!(x.wire)
+        @test density_matrix(ctx) ≈ ComplexF64[1 0; 0 0]
+        nothing
+    end
+    # (b) `_PINCH_KRAUS` — complete dephasing (the qc cast's channel denotation):
+    #     |+⟩⟨+| ↦ I/2. Diagonal preserved, coherences killed.
+    density(1) do ctx
+        x = QBool(0.5)
+        @test density_matrix(ctx) ≈ ComplexF64[0.5 0.5; 0.5 0.5]
+        Sturm._instrument!(ctx, x.wire)
+        @test density_matrix(ctx) ≈ ComplexF64[0.5 0; 0 0.5]
+        ptrace!(x.wire); nothing
+    end
+    # (c) UNCONTROLLED user noise is untouched — the entry point is banned only under
+    #     a live control frame (the M3 Choi harness and M11 both depend on this).
+    density(1) do ctx
+        x = QBool(0.5)
+        @test apply_channel!(ctx, _DEPHASE_KRAUS, x.wire) === ctx
+        @test density_matrix(ctx) ≈ ComplexF64[0.5 0; 0 0.5]
+        ptrace!(x.wire); nothing
+    end
+    # (d) Row 8 — region-exit trace of body-owned scratch UNDER control still runs
+    #     (matched compute/uncompute, DM branch). The §3.9 witness itself is tested
+    #     above; this pins that the row-9 guard did not swallow the row-8 path.
+    @test (density(3) do _
+        q = QBool(0.5)
+        when(q) do; a = QBool(false); not!(a); not!(a) end
+        nothing
+    end) === nothing
+    # (e) WHITE-BOX placement pin: the shared lowering is NOT guarded — reset and
+    #     pinch still reach Orkan with a live control frame on the stack. This pins
+    #     the PLACEMENT DECISION; it does not bless calling the lowering under
+    #     control (that is kernel-internal, and its legitimacy is the CALLER's, per
+    #     rows 7/8). If a future agent "tightens" the guard onto `_apply_channel_1q!`,
+    #     this is the test that fires.
+    density(2) do ctx
+        q = QBool(0.5); r = QBool(false)
+        Sturm._push_control!(ctx, q.wire)
+        try
+            @test Sturm._apply_channel_1q!(ctx, Sturm._PINCH_KRAUS, Sturm.q(ctx, r.wire)) === nothing
+            @test Sturm._apply_channel_1q!(ctx, Sturm._RESET_KRAUS, Sturm.q(ctx, r.wire)) === nothing
+        finally
+            Sturm._pop_control!(ctx, q.wire)
+        end
+        nothing
+    end
+end
+
+@testset "M5 — guardrail 1 row 9: the Tracing→DM replay noise paths FAIL CLOSED (bead udtl)" begin
+    # The compiled sibling of row 9. `TracingContext` has NO `apply_channel!` method
+    # at all (the noise SURFACE is M11), so nothing can record a live `NoiseN`; the
+    # only way a `NoiseN` reaches execution is a hand-built `ChannelDAG` replayed on
+    # DM. Both replay paths already refuse it — VERIFIED, not added (a prior review
+    # claimed `_replay_branch_controlled!` needed a refusal; it does not). Pinned so
+    # the `else`-branch refusals cannot be widened by accident.
+    _noisy_arm(p) = Sturm.ChannelDAG((Sturm.NoiseN(Sturm.KrausFamily(1), (p,)),), (), ())
+
+    # (1) A `cases` ARM under control (the DM replay's own control stack): the arm
+    #     admits ONLY `ApplyN` (unitary corrections) and a nested `CasesN`.
+    b = Sturm.DAGBuilder()
+    p1 = Sturm.input!(b); p2 = Sturm.input!(b)
+    rec = Sturm.measure!(b, p1)                              # MeasureN → classical record
+    push!(b.nodes, Sturm.CasesN(rec, (_noisy_arm(p2), Sturm.ChannelDAG((), (), ()))))
+    dag_arm = Sturm.freeze(b)
+    density(3) do ctx
+        u = QBool(0.5); v = QBool(0.5)
+        err = try
+            Sturm._replay_dm!(ctx, dag_arm, [u.wire, v.wire]); nothing
+        catch e; e end
+        @test err isa ErrorException
+        msg = sprint(showerror, err)
+        @test occursin("NoiseN", msg)              # names the offending node
+        @test occursin("guardrail 1", msg)
+        @test isempty(_core(ctx).control_stack)    # the arm's control frame unwound
+        nothing
+    end
+
+    # (2) A TOP-LEVEL `NoiseN` (no control frame) is refused too — `_replay_dm!` has
+    #     no NoiseN executor yet (the M11 gap recorded on 82su). LOUD, never silent:
+    #     that is the whole point of the udtl bug class.
+    b2 = Sturm.DAGBuilder()
+    p3 = Sturm.input!(b2)
+    push!(b2.nodes, Sturm.NoiseN(Sturm.KrausFamily(1), (p3,)))
+    dag_top = Sturm.freeze(b2)
+    density(2) do ctx
+        u = QBool(0.5)
+        err = try
+            Sturm._replay_dm!(ctx, dag_top, [u.wire]); nothing
+        catch e; e end
+        @test err isa ErrorException
+        @test occursin("NoiseN", sprint(showerror, err))
+        nothing
+    end
 end
 
 @testset "M5 — guardrail 2: the body may not access its control (external + through views)" begin

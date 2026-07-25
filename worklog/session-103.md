@@ -253,9 +253,45 @@ forward hook (M8/M11)"* — **and it was never wired**. `apply_channel!` is
 `public`, so it is reachable as `Sturm.apply_channel!`; called inside a `when`
 body on DM it applies the channel UNCONDITIONALLY. Silent wrong physics = the
 wm28 class. P1 not P0 only because M11 has not shipped, so nothing exercises it
-under control yet. Guard belongs at `apply_channel!`, **not** at
-`_apply_channel_1q!` — `when.jl` row 8 makes region-exit traces under control
-legitimate and they share that lowering.
+under control yet.
+
+**FIXED this session** — `_assert_no_control(ctx, "noise channel apply_channel!")`
+now opens `apply_channel!`, BEFORE `_flush_wire!`, so the throw precedes any
+backaction. RED test proved real backaction first (1 passed / 6 failed, ρ
+demonstrably changed); GREEN 7/7 + 8/8 + 6/6 across 3 testsets in
+`test_m5_when.jl`. Suite 27439 → **27460**.
+
+⚠ **The orchestrator's stated placement rationale was WRONG, and the fixing
+agent said so** (verified independently before accepting): the brief and the
+first draft of this worklog claimed the guard must sit at `apply_channel!`
+rather than `_apply_channel_1q!` because *"row 8 makes region-exit traces under
+control legitimate and they share that lowering"*. At code level that is false.
+`_trace_and_free!` (`abstract.jl:347`) branches on
+`isempty(core.control_stack)`; under control it takes the clean-ancilla ASSERT
+branch and never reaches the Kraus lowering. So **no current path reaches
+`_apply_channel_1q!` under a live control stack**, and a guard there would have
+been REDUNDANT, not breaking. The placement is still right, for the honest
+reason: the caller owns the policy, and a future DM row-8 lowering that ran the
+reset channel under control would be legal. The agent wrote the caveat into the
+code comments rather than repeat a justification a reader would discover is
+false — the correct call. *Lesson: a plausible mechanism is not a verified one;
+the orchestrator asserted this twice before anyone checked the branch.*
+
+Two further findings from the same fix: **row 10 (`cases`) was ALSO still
+labelled a forward hook** though M8 wired it — same stale-comment class, also
+fixed; and `TracingContext` has **no** `apply_channel!` method at all while
+`NoiseN` is only constructible through the `DAGBuilder` seam, so there is no
+second silent hole today — but M11's noise surface must wire the guard when it
+lands. The prior review's claim that `_replay_branch_controlled!` needs a
+refusal is **wrong**: `tracing.jl:530` already fails closed (now pinned by
+test, no code added).
+
+New `when.jl` note ends with the rule this whole bug argues for: *"when a row
+says BANNED, grep for its `_assert_no_control` before believing it."*
+
+**Boot-lint gotcha worth knowing:** the lints grep `src/` as TEXT — the bare
+word "controlled" in a comment outside `src/kernel/` + `src/orkan/` fails the
+suite. (`uncontrolled` is safe.)
 
 ## Also filed
 

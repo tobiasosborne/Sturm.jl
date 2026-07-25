@@ -105,7 +105,7 @@ M0 scaffold ✓ ─→ M1 kernel ✓ ─→ M2 FFI+contexts ✓ ─→ M3 casts+
                                                             │
                                               M10 library HOFs ─→ Grover ✓
                                                             │
-                                              M11 noise/Stinespring/QECC scaffold (⚠ F8 typing)
+                                              M11 noise/Stinespring/QECC scaffold (F8 typing closed)
                                                             │
                                               M12+ horizon (hardware, QMod/D6, CV,
                                                     QSVT, Sextant viz)
@@ -326,7 +326,7 @@ a hard dependency of the `i4ri` `measure` return-type story (i4ri R2).
 | F1/F2/F3 (witness, port typing, phase-blind passes) before the M8 IR | implicit in M8 | `5hr7` (resolved design; code gated on `z1sa`). |
 | F4/F5/F6/F13/F30 (classical-control semantics) before `cases`/tokens | implicit in M8 | `i4ri` (resolved design; surface spelling gated on `vqas`). |
 | F7 (modular multiplication not a permutation) before Shor | M9 as written | `addq` (P1, filed; M9 text rebaselined below — the fix is *not* designed here). |
-| F8 (QECC superchannel typing) before `encode` | M11 as written | Filed for M11 (F8 typing bead); M11 text rebaselined below. |
+| F8 (QECC superchannel typing) before `encode` | M11 as written | **CLOSED 2026-07-25** — the typing is now normative in PRD-v2 §5, §6/P6 and §4.4 (ruling T1, `82su` round); M11 implements it rather than deriving it. |
 | F9 (U(d) not SU(d)) before any qudit value | D6/M12 | `rlhj` (shipped: QMod values carry the U(1) phase, center quotient stated). |
 
 ### M8 — TracingContext, typed channel IR, classical control, phase-faithful passes — GATED (bead `szx1`)
@@ -504,24 +504,30 @@ in the design doc):
   per-function shrinkage — use them as the spec; the v0.1 function
   bodies only as line-count exhibits.
 
-### M11 — Noise, Stinespring fallback, QECC scaffold — (bead new; ⚠ F8/F33 typing)
+### M11 — Noise, Stinespring fallback, QECC scaffold — (bead new; F8 typing CLOSED 2026-07-25; ⚠ F33 dilation contract)
 
 - Kraus channel values applied through the same surface; pure-context
-  policy: loud error (default) or **Stinespring dilation fallback** — but
-  the dilation contract must be specified (F33): Kraus-rank padding,
-  isometry synthesis `V|ψ⟩ = Σ K_i|ψ⟩|i⟩`, unitary completion tolerances,
-  environment ownership, and the rule that the dilation is an **execution
-  artifact, never a controllable representative** of the channel.
-- **`encode(ch, code)` needs re-typing before it is implemented (F8).**
-  The single `Channel → Channel` HOF conflates three distinct operations:
-  protecting physical noise `Θ(𝓝) = D∘R∘𝓝∘E : Chan(P,P) → Chan(L,L)`;
-  encoding a state; and fault-tolerantly lifting a logical algorithm
-  (not canonical — needs transversal gadgets/magic-state protocols/fault
-  model). Replace with typed operations (`encode_state`,
-  `effective_logical_noise(::Channel{P,P}, code)`, `fault_tolerant_lift`)
-  modelled as superchannels/combs with explicit port types. **This is a
-  carried-contract re-derivation gate** (§7, verdict c). Steane
-  re-derivation is its own later epic (reimport gates, Choi-level
+  behaviour: loud error (default) or **Stinespring dilation fallback**,
+  opt-in **per call site**, never a context-level policy and never in the
+  IR (PRD-v2 §4.3) — and the dilation contract is specified (F33):
+  Kraus-rank padding, isometry synthesis `V|ψ⟩ = Σ K_i|ψ⟩|i⟩`, unitary
+  completion tolerances, environment ownership, and the rule that the
+  dilation is an **execution artifact, never a controllable representative**
+  of the channel (PRD-v2 §4.4, stratum 2).
+- **`encode(ch, code)` is re-typed — the gate is CLOSED; M11 implements it
+  (F8).** The single `Channel → Channel` HOF conflated three distinct
+  operations: protecting physical noise
+  `Θ(𝓝) = D∘R∘𝓝∘E : Chan(P,P) → Chan(L,L)`; encoding a state; and
+  fault-tolerantly lifting a logical algorithm (not canonical — needs
+  transversal gadgets/magic-state protocols/fault model). PRD-v2 §5 and
+  §6/P6 now specify the typed replacements — `encode_state`/`decode_state`,
+  `effective_logical_noise` (superchannel with explicit port types, under
+  the **code-capacity** model: noiseless encoder/recovery/decoder, perfect
+  syndrome extraction), and `fault_tolerant_lift` (interface + loud refusal
+  grounded on Eastin–Knill) — so §7's verdict for carried contract 6 is now
+  **(a) re-derived**, not a gate (ruling T1, session 103). M11 ships against
+  that contract and makes **no fault-tolerance and no threshold claim**.
+  Steane re-derivation is its own later epic (reimport gates, Choi-level
   encode∘decode tests).
 - The `i4ri` classical-control IR is the substrate for the syndrome path
   (one syndrome token drives several corrections via `select`/`ClassicalTable`
@@ -601,7 +607,7 @@ QSVT/block-encoding reimport, OpenQASM export, Sextant visualization hooks.
 | M9 | `8oo9` (capstones) | open; **⚠ `addq` P1** (full-space perm + in-place-Perm contract) blocks the QMod arm |
 | M9 bug | `addq` | open (P1, F7) |
 | M10 | library HOFs | open |
-| M11 | noise + QECC scaffold | open; **⚠ F8** QECC superchannel re-typing gate |
+| M11 | noise + QECC scaffold | open; **F8 typing gate CLOSED** (PRD-v2 §5/§6/§4.4, 2026-07-25) |
 | PRD accuracy patch | `rlhj` | **APPLIED** (commit `93f36fd`, 9 findings) |
 | this rebaseline | `rzkx` | in progress |
 
@@ -696,14 +702,17 @@ re-derivation (listed as a gate on the milestone that consumes it).
 | 3 | **Bennett bridge** (oracle artifact shape, D9 accumulate, strategy selection) | **(a) re-derived** | v2 M7 (`src/bennett/bridge.jl`), D9 + D14 (circuit-only) ruled; the MBU-under-`ctrl` exclusion and the MSB/LSB remap choke point are v2-native. The v0.1 *interface shape* was reused; the *semantics* re-derived (session 96). |
 | 4 | **Promotion** (P8 overloads, two-world arithmetic registry, P9) | **(a) re-derived** | v2 §3.4/D12 two-world registry; shipped at M6 (value-world fresh-output + P8 promotion tested). Carried debt, **not blocking**: F15 sharpens "registers are numeric types" → "number-like handles" with a published trait interface (a ruling refining wording, since M6 shipped). |
 | 5 | **Channel-IR passes discipline** ("partition at measurement barriers; unitary methods only on unitary blocks") | **(a) re-derived — the load-bearing half by `5hr7`** | The *barrier-partition idea* carries over v2-safe (it is a type invariant in v2: a barrier-containing DAG never promotes to `UnitaryBlock`, §3.M8). But v0.1's *correctness criterion* — Choi equivalence certifies a pass — is **unsafe** (F3: Choi is phase-blind) and is **re-derived** by `5hr7` §3: phase-inclusive `≈` for unitary-block passes + `ctrl`-wrapped tests + `PASS_REGISTRY` lint. Do not carry the Choi-only criterion. |
-| 6 | **QECC-as-HOF** (`encode(ch, code) :: Channel → Channel`) | **(c) NEEDS re-derivation — gates M11** | F8: the single `Channel → Channel` signature conflates protecting noise `Θ(𝓝)=D∘R∘𝓝∘E`, encoding a state, and fault-tolerantly lifting a logical algorithm (non-canonical). **Not v2-safe as carried.** Re-typed into `encode_state` / `effective_logical_noise(::Channel{P,P}, code)` / `fault_tolerant_lift` as superchannels/combs with explicit port types — an explicit gate on M11 (§3.M11, filed as the F8 typing bead). |
+| 6 | **QECC-as-HOF** (`encode(ch, code) :: Channel → Channel`) | **(a) re-derived — 2026-07-25 (was (c), gated on M11)** | F8: the single `Channel → Channel` signature conflated protecting noise `Θ(𝓝)=D∘R∘𝓝∘E`, encoding a state, and fault-tolerantly lifting a logical algorithm (non-canonical). **Not v2-safe as carried.** Re-derived in the dedicated PRD normative pass of session 103 (ruling T1, `docs/design/m11-82su-synthesis.md` §10): PRD-v2 §5 and §6/P6 now carry `encode_state`/`decode_state`, `effective_logical_noise` (superchannel, code-capacity model, explicit port types) and `fault_tolerant_lift` (interface + Eastin–Knill refusal), and §4.4's three-stratum table places a superchannel on the channel-representation stratum — never a channel, never a pass, never controllable. M11 implements this contract; it no longer gates it. |
 
-**Verdict counts: (a) re-derived = 4 · (b) verbatim = 1 · (c) needs
-re-derivation = 1.** The single (c) — QECC-as-HOF — is not consumed until
-M11, so no shipped code depends on it; it is gated there. The single (b) —
-Orkan FFI — is safe only because it was re-verified against the live headers,
-not trusted. Contract 5 is (a) with a sharp caveat: carry the barrier idea,
-**never** the Choi-only pass-correctness criterion.
+**Verdict counts: (a) re-derived = 5 · (b) verbatim = 1 · (c) needs
+re-derivation = 0.** *(Historical: until 2026-07-25 the counts read 4/1/1,
+the single (c) being QECC-as-HOF, gated on M11 and consumed by nothing
+shipped. Ruling T1 closed it in the PRD, so M11 now implements a re-derived
+contract instead of deriving one.)* The audit of the six contracts F31
+enumerated is therefore complete. The single (b) — Orkan FFI — is safe only
+because it was re-verified against the live headers, not trusted. Contract 5
+is (a) with a sharp caveat: carry the barrier idea, **never** the Choi-only
+pass-correctness criterion.
 
 > **Recommendation to fold into the PRD (F31 fix sketch).** Replace the
 > intro's blanket "everything carries over" sentence with the table above,

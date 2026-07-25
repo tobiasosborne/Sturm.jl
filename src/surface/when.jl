@@ -66,17 +66,31 @@
 #   6 | convert(Bool,q)          | implicit meas| _measure_wire!      | BANNED — funnels through #4
 #   7 | ptrace!(w)               | explicit trace| _trace_and_free!   | BANNED — guardrail 1 (top of ptrace!)
 #   8 | region-exit trace of an owned ancilla | dealloc | _trace_and_free! | CLEAN-ANCILLA ASSERT (§3.9), not banned
-#   9 | apply_channel! (DM noise)| Kraus       | _apply_channel_1q!  | BANNED — forward hook (M8/M11)
-#  10 | cases / @cases           | class. branch| (M8)               | BANNED — forward hook (guardrail 1)
+#   9 | apply_channel! (DM noise)| Kraus       | _apply_channel_1q!  | BANNED — WIRED at apply_channel! (udtl)
+#  10 | cases / @cases           | class. branch| surface/cases.jl   | BANNED — WIRED (cases.jl:193/235)
 #  11 | oracle(f,x) + MBU        | Bennett     | (M7)                | MBU EXCLUDED — reads control_stack (§3.4)
+#
+# ROW 9 — WHERE THE GUARD SITS (bead Sturm.jl-udtl; the row shipped as a comment
+# with no code for three milestones, which is exactly how it stayed live). The
+# `_assert_no_control` call is at the PUBLIC `apply_channel!` entry point
+# (`src/context/density.jl`), NOT at the shared `_apply_channel_1q!` lowering:
+# that lowering also serves `_RESET_KRAUS` (rows 7/8 — the implicit region-exit
+# release of body-owned scratch is LEGITIMATE under control) and `_PINCH_KRAUS`
+# (the qc cast, banned at the cast). Legitimacy is a property of the CALLER, so a
+# guard on the lowering would encode one caller's policy in a shared primitive.
+# (Today the row-8 release under control takes `_trace_and_free!`'s no-measurement
+# branch and never reaches the lowering — so the placement is future-proofing, not
+# a live over-fire; see the density.jl docstring.) When a row of this table says
+# BANNED, grep for its `_assert_no_control` before believing it.
 #
 # ── FORWARD FLAGS (later milestones must NOT assume M5 proved these) ─────
 #   • M7: `when`-control of `oracle`/`Perm` and the measurement-based-uncompute
 #     EXCLUSION under a nonzero control stack (§3.4) are NOT proven by M5. M5
 #     provides the `control_stack` an MBU strategy selector reads; the named test
 #     and the `ctrl(::Perm)` wire-shift alignment land WITH M7.
-#   • M8: `cases`/`@cases` and the Bool→token path must call `_assert_no_control`
-#     (guardrail 1, row 10); DM `apply_channel!` gets the same under noise (row 9).
+#   • M8 (LANDED): `cases`/`@cases` and the Bool→token path call
+#     `_assert_no_control` (guardrail 1, row 10 — cases.jl); DM `apply_channel!`
+#     got the same for noise (row 9 — density.jl, bead udtl).
 #     The §3.5 REQUIRED law test — streaming ≡ materialized, Choi-compared — needs
 #     `UnitaryDAG`/Tracing (M8); M5 discharges only the STREAMING half.
 #
