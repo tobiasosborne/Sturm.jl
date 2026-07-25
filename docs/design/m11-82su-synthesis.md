@@ -496,6 +496,62 @@ A named 6 distillations, B named 8. Deduplicated and re-sourced: **6**, of which
 
 ## §10 — Open questions needing a Tobias ruling
 
+> ## ✅ ALL SIX RULED — Tobias, 2026-07-25 (session 103): *"approve it all"*
+>
+> Every recommendation in the table below is **APPROVED AS RECOMMENDED**. M11
+> implementation is unblocked. Specifically:
+>
+> - **T1 APPROVED.** Replace the PRD §5 QECC text (`Sturm-PRD-v2.md:1415`,
+>   *"QECC (P6): unchanged — `encode(ch, code)` is `Channel → Channel`"*) and
+>   the §1445 P6 restatement with the three typed operations. **This closes
+>   carried-contract verdict (c)** — the last one in plan §7 — so after this
+>   pass every carried v0.1 contract is either re-derived or re-verified, and
+>   the reboot's contract audit is COMPLETE. Do it as its own reviewed pass,
+>   NOT folded into M11 implementation commits (round 6's lesson: normative
+>   content buried in prose escapes review). Carries §4.3, §3.8, §9 edits.
+>   The **§4.4 two-strata → three-strata** table is the high-value edit:
+>   process values / channel **representations** / denotations. Rationale to
+>   preserve in the PRD text — today "`ctrl` cannot touch a channel" is true
+>   partly *for lack of any object to try it on*; `KrausFamily` destroys that
+>   accident, so the middle stratum must carry the explicit theorem that a
+>   channel's representation is non-unique exactly in the ways `ctrl` can see
+>   (Kraus freedom; Stinespring uniqueness only up to partial isometry;
+>   Tang–Wright), hence controlling one would make the observable result
+>   depend on an arbitrary representative.
+> - **T2 APPROVED**, both parts: `classicalise` gets an explicit §7
+>   carried-contract verdict **(c) re-derived** per S31, AND the name split
+>   `classicalise` (v0.1 meaning: channel → column-stochastic matrix, arity
+>   from ports) vs `record_distribution` (token introspection) stands. No
+>   `-ize` alias.
+> - **T3 APPROVED as recommended: ship NO logical operations on a
+>   `CodeBlock`.** `not!`, `Bool`, `⊻=`, `dual`, `when`, `oracle` all refuse
+>   loudly. This overrides proposer B's recommendation to ship `not!`/`Bool`.
+>   Reason of record: on a noisy block "transversal measure + majority" and
+>   "decode then measure" are DIFFERENT CHANNELS, so offering either under the
+>   `Bool` cast spelling silently picks a protocol — F8 reappearing at the
+>   cast level, inside the milestone whose job is to close F8.
+> - **T4 APPROVED:** `encode_state` is an **ownership transfer**, not a third
+>   consumption site. Implement on the shipped consumed set so misuse is loud
+>   today; §4.5's "exactly two places" count stands unchanged.
+> - **T5 APPROVED:** the line is *"export what a program does to itself; keep
+>   `public` what the experimenter does to a program."* ⇒ `export
+>   encode_state, decode_state`; everything else `public` (`apply_noise!`, the
+>   named families, `StabilizerCode`, `CodeEncoding`, `Protect`,
+>   `effective_logical_noise`, `classicalise`, `record_distribution`,
+>   `StinespringDilation`, `fault_tolerant_lift`).
+> - **T6 APPROVED in principle, scheduled AFTER M11.** Orkan `unitary_kq` is
+>   cross-repo work with its own ABI re-verification discipline (plan §7
+>   verdict (b): re-verified against live headers, never trusted from a
+>   branch). The KAK/QSD alternative needs its own 3+1 round, because it would
+>   be a new constructor of controlled lowerings and must go through the
+>   `ctrl` choke point.
+>
+> Not a ruling, recorded for awareness: M12's `_assert_randomized_legal`
+> over-promises that M11 closes DM-randomized `evolve!`. It does not
+> (`MixedUnitary{W,R}` targets enumerated `R ≤ 16`; qDrift needs `R ~ 10⁴`).
+> The S10 guard is sound and stays; only the forward promise needs softening.
+> Bead `Sturm.jl-83a8`.
+
 A raised 7, B raised 9. Nine of those I decided (S3, S6, S9, S13, S14, S25 with
 escalation, S28, S31, plus the `LinearAlgebra` question — the ruling *keeps*
 CLAUDE.md conv 4 unchanged, so there is nothing to rule on). Six remain that

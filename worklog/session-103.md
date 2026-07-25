@@ -306,6 +306,41 @@ Hence E2 r-step = `(t³/r²)[C₁₂/12 + C₂₄/24]`.
 Sturm's CURRENT E1 (`Σ_{i<j}‖[H_i,H_j]‖`) is likewise a looser COROLLARY of
 Prop. 15, not Prop. 15 itself — same computability caveat, same decision.
 
+## ✅ TOBIAS RULED T1–T6 — *"approve it all"* — M11 IMPLEMENTATION UNBLOCKED
+
+All six as recommended (full text in `m11-82su-synthesis.md` §10 banner):
+
+- **T1** — replace PRD §5's `encode(ch, code) :: Channel → Channel` (and the
+  §1445 P6 restatement) with the three typed operations. **This closes
+  carried-contract verdict (c)** — the LAST one in plan §7 — so the reboot's
+  contract audit completes: every carried v0.1 contract is now either
+  re-derived (4), re-verified verbatim (1: Orkan FFI), or re-derived-at-M11
+  (this one). Own reviewed pass, NOT inside M11 commits. **§4.4 goes two
+  strata → three** (process values / channel **representations** /
+  denotations) — the high-value edit, because today "`ctrl` cannot touch a
+  channel" holds partly *for lack of any object to try it on*, and
+  `KrausFamily` destroys that accident. The middle stratum must therefore
+  carry the theorem explicitly: a channel's representation is non-unique
+  exactly in the ways `ctrl` can see (Kraus freedom; Stinespring uniqueness
+  only up to partial isometry; Tang–Wright), so controlling one would make the
+  observable answer depend on an arbitrary representative.
+- **T2** — `classicalise` gets its own §7 verdict **(c) re-derived**; name
+  split `classicalise` / `record_distribution` stands.
+- **T3** — **ship NO logical ops on a `CodeBlock`** (overrides proposer B).
+  `not!`/`Bool`/`⊻=`/`dual`/`when`/`oracle` all refuse loudly. On a noisy
+  block "transversal measure + majority" ≠ "decode then measure" — two
+  different channels; offering either under the `Bool` cast spelling silently
+  picks a protocol, i.e. F8 reappearing at the cast level inside the milestone
+  meant to close F8.
+- **T4** — `encode_state` is an **ownership transfer**, not a third
+  consumption site; §4.5's "exactly two places" stands.
+- **T5** — *"export what a program does to itself; `public` what the
+  experimenter does to a program"* ⇒ export only `encode_state`,
+  `decode_state`.
+- **T6** — Orkan `unitary_kq` approved in principle, **after** M11; the
+  KAK/QSD alternative needs its own 3+1 round (new constructor of controlled
+  lowerings ⇒ must go through the `ctrl` choke point).
+
 ## M11 physics sources acquired (gitignored, per the new rule 4)
 
 - **Watrous, *Theory of Quantum Information* §2.2.2** — the recommended
