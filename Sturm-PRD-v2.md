@@ -1359,6 +1359,29 @@ choice of *representative* becomes executable (§4.4):
   Pure-vs-mixed therefore remains a choice of representation and cost, never
   of expressible semantics — but "one run is the channel", which the density
   context licenses (§3.8), does not survive the crossing.
+- **The environment wires LEAD.** Sturm's dilation is
+  `Ṽ[i·d + s + 1, t + 1] = Kᵢ[s+1, t+1]` — environment index outermost
+  (MSB), system innermost — which **transposes the tensor-factor ordering
+  of the cited source**. Watrous writes the isometry system-first,
+  `A = Σ_a A_a ⊗ e_a` (Prop. 2.20 eq. (2.77), read through Cor. 2.27(5)),
+  i.e. `V|ψ⟩ = Σᵢ Kᵢ|ψ⟩|i⟩_E`; §9's citation quotes the book in the book's
+  order. The two differ by the swap `Y ⊗ Z → Z ⊗ Y`, which `Tr_E` cannot
+  see — same channel, **different matrix** — so the transposition is a
+  representation choice, not a physics disagreement, and it is fixed here
+  once so that no site may re-choose it. Three reasons, the third decisive:
+  the `env = |0…0⟩` input columns are then contiguously `1:d`, so Kraus
+  recovery is the block read `Kᵢ = Ṽ[i·d+1 : i·d+d, 1:d]` rather than a
+  strided extraction carrying index arithmetic that can be silently wrong;
+  it matches `apply!`'s "position 1 = MSB wire"; and it matches `Ctrl`'s
+  "leading wires are controls", which in the executable tier is the *same*
+  wire — a dilation of a mixed-unitary channel is the multiplexed control
+  `Σᵢ |i⟩⟨i|_E ⊗ Uᵢ`. Dense artifact and structured emission therefore agree
+  with **no** permutation between them, which is what lets a three-way
+  agreement test detect an ordering bug instead of being fooled by two
+  compensating ones. Correspondingly, Cor. 2.24's unitary freedom acts in
+  Sturm's layout as `Ṽ′ = (U ⊗ 1_sys)Ṽ`, not the book's `(1_Y ⊗ U)A`. The
+  pin is testable only on a **non-unital, asymmetric** channel — amplitude
+  damping is the sentinel; a Pauli channel is blind to the swap.
 
 ### 4.4 The stratification (what `ctrl` can never touch)
 
@@ -1393,8 +1416,17 @@ stated, and it is a theorem, not a policy:
 > see.** A Kraus family is determined only up to zero-padding to a common
 > rank and a unitary mixing of its operators; a Stinespring dilation is
 > determined only up to a partial isometry on the environment
-> (`docs/physics/watrous_2018_channel_representations.md`, §2.2.2 —
-> forthcoming, §9). All such representatives have the same denotation:
+> (`docs/physics/watrous_2018_channel_representations.md`, §2.2.2). Both
+> statements are **derived** from that source rather than quoted from it,
+> and the distillation says so: Cor. 2.23/2.24 give a **unitary** on a
+> *shared* index alphabet, so zero-padding is the trivial reduction to that
+> hypothesis (which Watrous does not take), and the partial-isometry form is
+> Cor. 2.24 composed with an embedding of both dilations into a common
+> environment (licensed by Cor. 2.27(5) with the p. 191 "iff `dim Z ≥` Choi
+> rank"). Likewise "minimal Kraus rank = Choi rank" is a two-part citation:
+> existence from Cor. 2.21 / Thm 2.22(5),(7) / Cor. 2.27(4),(6), the
+> converse only from §3.3.4 p. 191. All such representatives have the same
+> denotation:
 > `Ad` and the Choi matrix forget the difference. `ctrl` does not — control
 > is precisely the operation that makes representation-level freedom
 > physical (`docs/physics/tang_wright_2025_controlled_unitaries.md`,
@@ -2272,37 +2304,66 @@ as found on v0.1:
 - **Citations TODO — noise, dilation, and QECC (§4.3, §4.4, §5).** Six
   further distillations are prerequisites for the channel-value stratum and
   the three QECC operations, each owed **before** the code that cites it.
+  **Three landed 2026-07-27; three remain owed** — and the boot lint means
+  no `src/` file may cite the three missing filenames until they exist, so
+  they gate the QECC slices that would.
   Note the rule-4 change (2026-07-25): commit the `.md` distillation, keep
   the PDF local and gitignored — no work item here asks for a PDF to be
   committed.
-  `watrous_2018_channel_representations.md` (*Theory of Quantum
+  ✅ `watrous_2018_channel_representations.md` (*Theory of Quantum
   Information* §2.2.2 — Thm 2.22, the Kraus ↔ Stinespring ↔ Choi
   equivalence; Cor. 2.21/2.27, minimal Kraus rank = Choi rank and the
   isometry form `V|ψ⟩ = Σᵢ Kᵢ|ψ⟩|i⟩_E`; Cor. 2.23/2.24, the unitary and
   partial-isometry freedom — this is the source for §4.4's stratum-2
-  theorem and for §4.3's dilation contract; **source already on disk**,
-  distillation owed);
-  `gottesman_1997_stabilizer_codes.md` (quant-ph/9705052 §3.2 stabilizer
+  theorem and for §4.3's dilation contract. **Ordering warning:** the
+  isometry is quoted above in the *book's* order (system leading);
+  **Sturm's dilation transposes it — environment wires LEAD**, normatively
+  pinned in §4.3. Same channel, different matrix; do not "correct" the code
+  back to the book. **Version trap:** the local source is the 2018 CUP
+  *pre-publication draft*, where **PDF page = book page + 8**, and the
+  printed hardback is a different typesetting — cite by numbered result,
+  not by PDF page. Distillation landed);
+  ✅ `gottesman_1997_stabilizer_codes.md` (quant-ph/9705052 §3.2 stabilizer
   formalism, syndrome measurement, logical operators; §5 transversality;
   §6.2–6.3 the threshold theorem — the reason `fault_tolerant_lift` can
-  name what it is missing; **source already on disk**, distillation owed);
-  `knill_laflamme_1997_qec_conditions.md` (quant-ph/9604034 — the QEC
+  name what it is missing. **Version trap:** `Thesis.sty` typesets
+  `\the\year`, so arXiv regenerates the title page on every build and page
+  numbers are build-dependent — **cite sections and equations, never
+  pages**. Distillation landed);
+  ⬜ `knill_laflamme_1997_qec_conditions.md` (quant-ph/9604034 — the QEC
   conditions `P Kᵢ†Kⱼ P = α_{ij} P`: why a table decoder is *exact* on the
   declared correctable set, and why `Θ(𝓝) = id_L` is the correctability
-  statement rather than a precondition);
-  `chiribella_2009_quantum_combs.md` (arXiv:0712.1325 and arXiv:0904.4483 —
-  superchannel = circuit with a hole, and the factorisation
+  statement rather than a precondition). **Owed — but the physics is
+  already local**: Gottesman §2.3 **eq. (2.10)** states the conditions in
+  the form `⟨ψ_i|E_a†E_b|ψ_j⟩ = C_ab δ_ij`, proves them necessary *and*
+  sufficient, and attributes them. Only the projector form quoted above
+  belongs to the KL paper itself, so retargeting this citation to Gottesman
+  is a live option — and a normative edit, not a distillation decision;
+  ⬜ `chiribella_2009_quantum_combs.md` (arXiv:0712.1325 and arXiv:0904.4483
+  — superchannel = circuit with a hole, and the factorisation
   `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`; the memoryless case is what licenses
-  §5's `effective_logical_noise` as a transformation of channels);
-  `eastin_knill_2009_no_universal_transversal.md` (arXiv:0811.4262 — the
-  no-go that makes the `fault_tolerant_lift` refusal a theorem);
-  `repetition_code_effective_noise.md` (an **in-repo derivation note**, not
+  §5's `effective_logical_noise` as a transformation of channels).
+  **Owed.** Watrous **Exercise 2.6(b)(c)** (pp. 121–122) gives exactly the
+  `Ψ = Ξ₁(Φ ⊗ 1)Ξ₀` factorisation and credits CDP (2008) at p. 123, and
+  Sturm's `Θ = D∘R∘𝓝∘E` is its no-memory (`V = ℂ`) case — but it is
+  **exercise strength, unproved**, so it cannot stand in for this
+  distillation without mis-attributing it;
+  ⬜ `eastin_knill_2009_no_universal_transversal.md` (arXiv:0811.4262 — the
+  no-go that makes the `fault_tolerant_lift` refusal a theorem). **Owed.**
+  Gottesman §5.2 p. 38 independently calls the bit-flip code's own recovery
+  circuit non-transversal, which grounds the *refusal's* premise but not the
+  universal no-go;
+  ✅ `repetition_code_effective_noise.md` (an **in-repo derivation note**, not
   a paper distillation, and labelled as such: `p_L = 3p² − 2p³`, so
   `p_L − p = −p(1−p)(1−2p)` and break-even is exactly `p = ½`; and the
   phase-noise amplification `(1 − (1−2p)³)/2 ≈ 3p` — every single-wire `Z`
   is a logical `Z̄` with trivial syndrome, so no correction ever fires and
   the bit-flip code makes phase noise *worse*, which is the anti-test the
-  QECC suite is built around).
+  QECC suite is built around. Landed, and every closed form in it —
+  including the depolarizing enumeration, whose logical weights are
+  **convention-dependent** on `depolarizing(p) : ρ ↦ (1−p)ρ + p·1/2` — is
+  verified by exact rational enumeration over the full error group, with
+  `depolarizing(1) ↦ (¼,¼,¼,¼)` as the sharp endpoint check).
 
 ---
 

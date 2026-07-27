@@ -390,3 +390,88 @@ All six as recommended (full text in `m11-82su-synthesis.md` §10 banner):
   own §6.2–6.3 derives the threshold theorem, so no separate threshold source
   is needed. PDF + LaTeX source.
 - Distillation lists reconciled 8 + 6 → **6**, two now sourced.
+
+## M11 distillations — 3 of 6 written; and a P1 conflict found
+
+`docs/physics/`: **`watrous_2018_channel_representations.md`** (461 lines — the
+path PRD §4.4 already cites normatively), **`gottesman_1997_stabilizer_codes.md`**
+(471 lines, quoted from `Thesis.tex`), **`repetition_code_effective_noise.md`**
+(282 lines, an in-repo derivation note; every formula verified by exact rational
+enumeration over all 2³/2³/4³ patterns — `depolarizing(1)` → logical
+(¼,¼,¼,¼) is the sharp endpoint check).
+
+**Version traps recorded** (both would have produced uncheckable citations):
+Watrous is the 2018 CUP *pre-publication draft*, **PDF page = book page + 8**,
+and the printed hardback is a different typesetting. Gottesman's local PDF
+**title page says "2024"** — arXiv regenerates from TeX and `Thesis.sty`
+typesets `\the\year` — so for that source **page numbers are build-dependent
+while section/equation numbers are stable**; cite equations.
+
+### ⚠ F3 — environment-ordering conflict (P1, filed)
+
+**PRD-v2 line 2281 (§9) writes `V|ψ⟩ = Σᵢ Kᵢ|ψ⟩|i⟩_E` — environment
+TRAILING**, following Watrous exactly (eq 2.77 / Cor 2.27(5): `A = Σ_a A_a ⊗
+e_a`, output leading). **Synthesis S10 pins the OPPOSITE** — "environment wires
+LEAD (MSB)", `Ṽ[i·d + s + 1, t + 1] = Kᵢ[s+1, t+1]`. Same channel (they differ
+by the swap `Y⊗Z → Z⊗Y`, invisible to `Tr_Z`), **different matrices**. The
+synthesis's own contract test `M11.DILATE.KRAUS-RECONSTRUCT` is true only in
+S10's layout — in Watrous's the Kraus blocks are a **strided** extraction, not
+contiguous rows — and Cor 2.24's freedom reads `B = (U ⊗ 1_Y)A` in Sturm's
+layout, not the book's `(1_Y ⊗ U)A`.
+
+**Keep S10, fix the documents.** Env-leading matches `Ctrl`'s control-leading
+convention, so in the executable tier — where the environment IS the control —
+the dense artifact and the structured emission agree with no permutation, which
+is what lets the three-way test catch an ordering bug rather than be fooled by
+two compensating ones. The next PRD pass must either restate §9 in Sturm's
+order or add one explicit clause saying Sturm transposes the book's convention.
+Without it a future agent WILL "fix" the code back to the book and break the
+contract silently.
+
+### Citation-precision items in the §4.4 block the T1 pass just landed
+
+All three claims are TRUE and derivable from Watrous, but the citations do more
+work than the source supports verbatim — worth correcting because this project
+cites to be re-checkable:
+
+- *"determined only up to a **partial isometry** on the environment"* —
+  Watrous's strongest statement is **Cor 2.24, a UNITARY `U ∈ U(Z)` on a
+  SHARED environment**. The partial-isometry form is Cor 2.24 **plus** an
+  embedding step (pad both dilations into a common `Z`, licensed by Cor
+  2.27(5) + the p.191 "iff `dim Z ≥` Choi rank"). Derived, not quoted.
+- *"zero-padding to a common rank"* — Cor 2.23 already **assumes** a shared
+  index alphabet; padding is the trivial reduction TO that hypothesis, which
+  Watrous does not take.
+- *"minimal Kraus rank = Choi rank"* needs a **two-part** citation: existence
+  from Cor 2.21 / Thm 2.22(5),(7) / Cor 2.27(4),(6); the **converse** only
+  from §3.3.4 p.191. Synthesis §7 and PRD §9 both write "Cor. 2.21 / 2.27" as
+  if one locator sufficed.
+
+### Three prerequisites remain unsourced — and this is a LIVE GATE
+
+`knill_laflamme_1997_qec_conditions.md`, `chiribella_2009_quantum_combs.md`,
+`eastin_knill_2009_no_universal_transversal.md`. The rule-4 boot lint greps
+`src/` and asserts each cited `docs/physics/*.md` resolves, so **no `src/` file
+may cite those three filenames until they exist** — M11 slices 5–6
+(`qecc/codes.jl`, `qecc/superchannel.jl`, `qecc/ft.jl`) are exactly the ones
+that would. All three are free arXiv (quant-ph/9604034; 0712.1325 / 0904.4483;
+0811.4262) — the agent was write-restricted to `docs/physics/*.md` so it
+downloaded nothing.
+
+Two mitigations found on disk, both worth knowing:
+- **Knill–Laflamme's physics is already local**: Gottesman §2.3 **eq (2.10)**
+  states `⟨ψ_i|E_a†E_b|ψ_j⟩ = C_ab δ_ij`, proves it necessary AND sufficient,
+  and attributes it. Only the projector form `P K_i† K_j P = α_ij P` that PRD
+  §9 quotes belongs to the KL paper itself. Retargeting §9 to Gottesman is a
+  normative PRD edit, not a distillation decision.
+- **Combs (P4) has a real on-disk locator**: Watrous **Exercise 2.6(b)(c)**
+  (pp. 121–122) gives exactly the `Ψ = Ξ₁(Φ ⊗ 1)Ξ₀` factorisation, credited to
+  Chiribella–D'Ariano–Perinotti (2008) at p.123 — but it is **exercise**
+  strength, unproved, and Sturm's `Θ = D∘R∘𝓝∘E` is its no-memory (`V = ℂ`)
+  case. The agent correctly declined to create a `chiribella_*.md` on that
+  basis, since it would mis-attribute a distillation.
+- **Bonus, stronger than the synthesis claimed**: Gottesman §5.2 p.38
+  explicitly calls M11's own recovery circuit **non-transversal**, which
+  grounds S27 better than the synthesis's own argument. And `signs` on
+  `StabilizerCode` is *grounded*, not merely prudent — §3.4 p.23, "Overall
+  phase factors get dropped".
