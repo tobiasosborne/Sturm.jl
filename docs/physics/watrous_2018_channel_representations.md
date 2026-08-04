@@ -434,11 +434,13 @@ completely bounded trace norm, §3.3) is the right source if a diamond-norm test
 is ever wanted; it is deliberately **not** distilled here, because M11 does not
 use it. Do not cite this file for diamond-norm claims.
 
-**G7 — a partial, on-disk source for the deferred `chiribella_2009_quantum_combs.md`.**
-Synthesis §7 marks **P4** (superchannel = "circuit with a hole", and the
-factorisation `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`) as **unsourced**. It is
-partially available in *this* book, and the locator is worth recording even
-though this file is not the place to distil it:
+**G7 — a partial, on-disk source for `chiribella_2009_quantum_combs.md`
+(landed 2026-08-04; this locator is now the cross-check, not the source).**
+Synthesis §7's **P4** (superchannel = "circuit with a hole", and the
+factorisation `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`) is now sourced at theorem
+strength by the CDP supermaps paper (EPL 83, 30004 (2008), Thm 1 — see the
+combs distillation, incl. its G1 pin-discipline warning). The partial
+locator in *this* book remains worth recording:
 
 - **Exercise 2.6(b)(c)**, book pp. 121–122. Let `Ξ ∈ CP(Y⊗X, W⊗Z)` be such that
   for every channel `Φ ∈ C(X,Y)` there is a channel `Ψ ∈ C(Z,W)` with

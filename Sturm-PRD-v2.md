@@ -1555,10 +1555,17 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
     statement about the code, not about a machine.
   - **`fault_tolerant_lift(Φ, impl)`** — lifting a logical algorithm to a
     fault-tolerant implementation. This ships as **interface plus a loud
-    refusal**, because it is non-canonical *by theorem*: no code admits a
-    universal transversal gate set (Eastin–Knill,
-    `docs/physics/eastin_knill_2009_no_universal_transversal.md` —
-    forthcoming, §9). The refusal names the five ingredients a caller must
+    refusal**, because it is non-canonical *by theorem*: no nontrivial code
+    that detects an arbitrary error on any single subsystem (`d ≥ 2`)
+    admits a universal transversal encoded gate set (Eastin–Knill Cor. 1,
+    `docs/physics/eastin_knill_2009_no_universal_transversal.md`). The
+    hypothesis is load-bearing — the `[[3,1,1]]` bit-flip code has `d = 1`,
+    escapes the theorem, and indeed carries a continuous transversal
+    logical family (`e^{iθZ₁}` acts as `e^{iθZ̄}`); its transversal
+    non-universality is elementary instead (a product operator cannot map
+    `|000⟩` to an entangled codeword), so the refusal stands for every
+    code, but the *citation* differs by code (distillation G1/G2). The
+    refusal names the five ingredients a caller must
     supply — fault model; gadget set with a per-code transversality
     declaration; magic-state or gate-teleportation protocol for the
     non-transversal remainder; extraction schedule under a *noisy*-syndrome
@@ -2301,12 +2308,11 @@ as found on v0.1:
   claim is "novel as an IR choice", not "novel representation"); cf.
   Stuelpnagel 1964 (SO(3); the SU(2) extension is standard). Q#'s
   `within…apply` is the named precedent for §4.2's `within`.
-- **Citations TODO — noise, dilation, and QECC (§4.3, §4.4, §5).** Six
-  further distillations are prerequisites for the channel-value stratum and
+- **Citations — noise, dilation, and QECC (§4.3, §4.4, §5).** Six
+  distillations are prerequisites for the channel-value stratum and
   the three QECC operations, each owed **before** the code that cites it.
-  **Three landed 2026-07-27; three remain owed** — and the boot lint means
-  no `src/` file may cite the three missing filenames until they exist, so
-  they gate the QECC slices that would.
+  **All six landed** (three 2026-07-27, three 2026-08-04); the rule-4 boot
+  lint gate on the QECC slices is discharged.
   Note the rule-4 change (2026-07-25): commit the `.md` distillation, keep
   the PDF local and gitignored — no work item here asks for a PDF to be
   committed.
@@ -2330,29 +2336,55 @@ as found on v0.1:
   `\the\year`, so arXiv regenerates the title page on every build and page
   numbers are build-dependent — **cite sections and equations, never
   pages**. Distillation landed);
-  ⬜ `knill_laflamme_1997_qec_conditions.md` (quant-ph/9604034 — the QEC
-  conditions `P Kᵢ†Kⱼ P = α_{ij} P`: why a table decoder is *exact* on the
-  declared correctable set, and why `Θ(𝓝) = id_L` is the correctability
-  statement rather than a precondition). **Owed — but the physics is
-  already local**: Gottesman §2.3 **eq. (2.10)** states the conditions in
-  the form `⟨ψ_i|E_a†E_b|ψ_j⟩ = C_ab δ_ij`, proves them necessary *and*
-  sufficient, and attributes them. Only the projector form quoted above
-  belongs to the KL paper itself, so retargeting this citation to Gottesman
-  is a live option — and a normative edit, not a distillation decision;
-  ⬜ `chiribella_2009_quantum_combs.md` (arXiv:0712.1325 and arXiv:0904.4483
-  — superchannel = circuit with a hole, and the factorisation
-  `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`; the memoryless case is what licenses
-  §5's `effective_logical_noise` as a transformation of channels).
-  **Owed.** Watrous **Exercise 2.6(b)(c)** (pp. 121–122) gives exactly the
-  `Ψ = Ξ₁(Φ ⊗ 1)Ξ₀` factorisation and credits CDP (2008) at p. 123, and
-  Sturm's `Θ = D∘R∘𝓝∘E` is its no-memory (`V = ℂ`) case — but it is
-  **exercise strength, unproved**, so it cannot stand in for this
-  distillation without mis-attributing it;
-  ⬜ `eastin_knill_2009_no_universal_transversal.md` (arXiv:0811.4262 — the
-  no-go that makes the `fault_tolerant_lift` refusal a theorem). **Owed.**
-  Gottesman §5.2 p. 38 independently calls the bit-flip code's own recovery
-  circuit non-transversal, which grounds the *refusal's* premise but not the
-  universal no-go;
+  ✅ `knill_laflamme_1997_qec_conditions.md` (quant-ph/9604034v1, local —
+  published PRA 55, 900 (1997). The QEC conditions as **Thm 3.2, eqs
+  (19)–(20)** (basis form; the `α_{ab} δ_{ij}` matrix appears in the
+  proof), necessary *and* sufficient, with the sufficiency proof itself
+  the table decoder (eqs (21)–(25)) — why a table decoder is *exact* on
+  the declared correctable set; `Θ(𝓝) = id_L` as the correctability
+  **statement** is **Thm 3.3** (left superoperator inverse), and the
+  Choi-state test is **Thm 3.4** (error 0 iff the completely entangled
+  state is fixed). Bonus pins: Thm 5.3's sharp example (`F_p = 1/3` while
+  `F_e = 0` — the 1996 ancestor of the wm28 coherent-probe rule) and §6's
+  own code-capacity admission (grounds S27). **Provenance correction:**
+  the projector display `P Kᵢ†Kⱼ P = α_{ij} P` is *not* a KL equation —
+  KL display the basis form; the projector spelling is the textbooks'
+  (N&C Thm 10.1). Attribute the conditions to KL, pin Thm 3.2 (19)–(20),
+  do not invent a KL equation number for the projector form. Gottesman
+  §2.3 eq. (2.10) remains the cross-check (matrix-element form, attributed).
+  **Numbering trap:** pins are to the arXiv v1 build on disk; the PRA
+  print renumbers. Distillation landed 2026-08-04;
+  ✅ `chiribella_2009_quantum_combs.md` (three local PDFs: arXiv:0712.1325
+  = PRL 101, 060401 (2008); arXiv:0804.0180 = EPL 83, 30004 (2008);
+  arXiv:0904.4483 = PRA 80, 022339 (2009) — superchannel = circuit with a
+  hole, and the factorisation `Θ(𝓝) = Tr_M[D ∘ (𝓝 ⊗ id_M) ∘ E]`; the
+  memoryless case is what licenses §5's `effective_logical_noise` as a
+  transformation of channels). **Pin discipline (distillation G1):** the
+  PRL only *asserts* the realization converse (endnote [16], no proof) —
+  the single-slot factorisation is **EPL Theorem 1, eq. (23)** (proved),
+  the N-slot version is PRA Theorem 3; and **EPL Application 1 states the
+  memoryless (`dim B = 1`) case *is* error correction** in so many words,
+  so P4's license is a primary-source sentence, not an inference. Watrous
+  **Exercise 2.6(b)(c)** (pp. 121–122) stays as the on-disk cross-check —
+  exercise strength; its p. 123 "CDP (2008)" credit resolves to the EPL
+  supermaps paper. **Build-date trap:** the EPL/PRA local PDFs carry
+  regenerated `\today` headers (2018/2024) — trust the arXiv margin
+  stamps. Distillation landed 2026-08-04;
+  ✅ `eastin_knill_2009_no_universal_transversal.md` (arXiv:0811.4262v2,
+  local — published PRL 102, 110502 (2009); the no-go that makes the
+  `fault_tolerant_lift` refusal a theorem: **Theorem 1** (product logical
+  unitaries of any nontrivial local-error-detecting code induce only a
+  *finite* logical group) and **Corollary 1** (transversal version).
+  **The hypothesis is load-bearing** (distillation G1/G2): the theorem
+  needs "detects an arbitrary error on any single subsystem" (`d ≥ 2`);
+  the `[[3,1,1]]` bit-flip code has `d = 1`, escapes it, and carries the
+  continuous transversal family `e^{iθZ̄}` — §5's refusal text now carries
+  the qualifier, and for the bit-flip code the non-universality argument
+  is elementary (product maps cannot entangle `|000⟩`). The paper's
+  closing circumvention catalogue (pp. 3–4) is the source of the refusal's
+  five-ingredient list. Gottesman §5.2 p. 38 still grounds only the
+  *premise* (non-transversal extraction), not the no-go. Distillation
+  landed 2026-08-04;
   ✅ `repetition_code_effective_noise.md` (an **in-repo derivation note**, not
   a paper distillation, and labelled as such: `p_L = 3p² − 2p³`, so
   `p_L − p = −p(1−p)(1−2p)` and break-even is exactly `p = ½`; and the

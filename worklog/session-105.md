@@ -1,0 +1,89 @@
+# Session 105 — 2026-08-04 — nms1 closed: the last three §9 distillations (KL, combs, Eastin–Knill), all read from source by one agent
+
+Tobias: "continue work ... yourself serially ... hard challenging high
+cognition work ... notice anything odd ... no coding/review subagents."
+Chose `nms1` (the hard gate on `qmpo`/M11 slices 5–6). All five PDFs
+downloaded to `docs/physics/` (gitignored — `git check-ignore` verified on
+every one), all read in full on the main thread, three distillations
+written, PRD §9 flipped to six-of-six ✅, `nms1` closed.
+
+## Finding 1 — the Eastin–Knill slogan in PRD §5 overclaimed (fixed)
+
+"No code admits a universal transversal gate set" is **false without the
+hypothesis**: Theorem 1/Corollary 1 need the code to detect an arbitrary
+error on any single subsystem/part (`d ≥ 2` for distance-`d`), plus
+nontrivial encoding. Trivial escape: identity encoding, one block — every
+unitary is transversal. And the escape is not hypothetical for us: **M11's
+own `[[3,1,1]]` bit-flip code has `d = 1`, fails the hypothesis, and
+carries a continuous transversal logical family** — `e^{iθZ₁}` acts on the
+code space as `e^{iθZ̄}`, walking through exactly the proof step that
+local error detection is supposed to close (`PHⱼP ∝ P` fails for
+`Hⱼ = Zⱼ`). The bit-flip code's transversal non-universality is still
+true but for an elementary reason (a product operator maps `|000⟩` to a
+product state; `α|000⟩+β|111⟩` is entangled — so the transversal logical
+group is just `⟨e^{iθZ̄}, X̄⟩`). PRD §5 refusal text now carries the
+qualifier and the sentinel; the future `qecc/ft.jl` docstring must split
+the citation: E–K for `d ≥ 2` caller codes, the elementary argument for
+the acceptance example. Filed as distillation G1/G2, not a bead — it is
+done, not pending.
+
+## Finding 2 — the "projector form" `P Kᵢ†Kⱼ P = α_{ij} P` is not in the KL paper
+
+Everyone (including our own PRD §9 entry and the Gottesman distillation's
+G3) implied the projector *display* belongs to KL. It does not: arXiv
+quant-ph/9604034v1 displays the **basis form** (Thm 3.2, eqs (19)–(20))
+and derives `⟨i_L|A_a†A_b|j_L⟩ = α_{ab}δ_{ij}` inside the proof. The
+projector spelling is the textbooks' (N&C Thm 10.1). Right physics, right
+attribution of the *conditions* — but there is no KL equation number to
+pin for that display, and a future agent hunting for it would conclude
+the citation was fabricated. §9 entry and Gottesman G3 corrected.
+
+## Finding 3 — combs pin discipline: the PRL asserts, the EPL proves
+
+The PRL (0712.1325) states the realization converse only in **endnote
+[16]** ("can be proved within an axiomatic introduction...") — no proof.
+The single-slot factorisation `Θ(𝓝) = Tr_M[D∘(𝓝⊗id_M)∘E]` is **EPL
+0804.0180 Theorem 1, eq. (23)**, proved; N-slot is PRA 0904.4483 Theorem
+3. Watrous's p. 123 "CDP (2008)" credit resolves to the EPL paper, not
+the PRL. Downloaded 0804.0180 on a hunch before reading anything —
+confirmed. Best single sentence in the whole exercise: **EPL Application
+1 states that error correction IS the supermap `S̃(E) = DEC` "with the
+additional constraint that the ancilla B ... must be one-dimensional"**
+— P4's memoryless-case license is a verbatim primary-source sentence,
+not an inference chain.
+
+## Bonus pins that will matter later
+
+- **KL Thm 3.3** (left superoperator inverse) is *the* source for
+  "`Θ(𝓝) = id_L` is the correctability statement, not a precondition";
+  **KL Thm 3.4** (error 0 ⟺ completely entangled state fixed) is the
+  primary-source license for Choi-level QECC tests.
+- **KL Thm 5.3's sharp example**: `F_p = 1/3` while `F_e = 0` for
+  `{σₓ,σ_y,σ_z}/√3` — the 1996 ancestor of the wm28 marginals-are-blind
+  lesson, quotable in the M11 test-suite docstring.
+- **KL §6 admits the code-capacity model** in one sentence ("assumes that
+  no errors are produced during operations") — S27's honesty clause has a
+  primary source now.
+- **KL Thm 5.5's binomial bound requires `A₀ ∝ I`** — amplitude damping
+  fails the hypothesis; never quote the classical bound for it.
+- ⚠ KL "(n,k)-code" counts **dimensions**, not qubits ((2^r,2) = [[r,1]]).
+- ⚠ Version traps, again, everywhere: KL local PDF is arXiv **v1** with
+  its own numbering (PRA print renumbers); EPL/PRA local PDFs carry
+  regenerated `\today` headers ("2018"/"2024" on 2008/2009 papers) — the
+  Gottesman `\the\year` trap is a genus, not a species. Trust margin
+  stamps; pin theorems, not header dates or print pages.
+- Eastin–Knill is a NIST work, "not subject to US copyright" (p. 4) —
+  rule 4 unchanged (uniform policy), noted for the record.
+
+## Gate run
+
+No `src/` change. PRD julia-fence parse pass: **13 fences, 0 failures**
+(matches the session-99 pin). Rule-4 lint replicated by hand: all 25
+`docs/physics/*.md` paths cited from `src/` resolve. `git check-ignore`
+confirms all five new PDFs are ignored.
+
+## Tracker
+
+`nms1` closed (three distillations + §9 marks + lint green + no PDF
+committed = its acceptance criteria, verbatim). `qmpo` (M11 slices) loses
+its last distillation blocker.

@@ -407,8 +407,9 @@ predates it by twelve years. What it *does* supply is the surrounding structure:
 the definition of transversality (§5.1 p. 38), which operations *are* transversal
 for which codes (§5.3–§5.9), and the Toffoli gadget (§5.7) — i.e. the shape of
 the problem Eastin–Knill later closes. **The refusal message must not cite this
-file for the no-go.** `eastin_knill_2009_no_universal_transversal.md` remains
-owed.
+file for the no-go.** (`eastin_knill_2009_no_universal_transversal.md` landed
+2026-08-04 — and note its G1/G2: the no-go's hypothesis excludes the `d = 1`
+bit-flip code.)
 
 **G3 — Knill–Laflamme: the condition is here, the paper is not.**
 Synthesis §7 item **P3** wants `knill_laflamme_1997_qec_conditions.md`
@@ -419,13 +420,13 @@ covered by this file. What is **not** here: the Knill–Laflamme paper's own
 numbering, its `P K_i† K_j P = α_{ij} P` projector form (Gottesman writes the
 matrix-element form (2.10) instead — they are equivalent, `P = Σ_i |ψ_i⟩⟨ψ_i|`,
 but the *equation number* the PRD wants to pin belongs to the paper, not here),
-and any of its further results. Options for the orchestrator, in preference
-order: (a) fetch quant-ph/9604034 (free on arXiv) and write P3 properly;
-(b) retarget the PRD §9 / synthesis §7 entry to this file's §2.3 locator and
-drop the separate filename — but note this is a **normative PRD edit**, so it is
-a T1-class change, not a distillation decision. Until one of those happens, **no
-`src/` file may cite `docs/physics/knill_laflamme_1997_qec_conditions.md`**, or
-the rule-4 boot lint will fail.
+and any of its further results. **Discharged 2026-08-04 via option (a)**:
+quant-ph/9604034 fetched and `knill_laflamme_1997_qec_conditions.md` written.
+One correction that emerged (its G1): the projector display
+`P Kᵢ†Kⱼ P = α_{ij} P` is **not a KL equation** — KL display the basis form
+(Thm 3.2, eqs (19)–(20)); the projector spelling is the textbooks'. So there
+was never a KL equation number to pin for it, and this file's (2.10) remains
+the correct matrix-element cross-check.
 
 **G4 — no channel/Choi language at all.**
 Gottesman works with state vectors, error operators and the group `G`. He does
