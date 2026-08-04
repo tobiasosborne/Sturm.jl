@@ -1,4 +1,4 @@
-# Session 105 — 2026-08-04 — nms1 closed: the last three §9 distillations (KL, combs, Eastin–Knill), all read from source by one agent
+# Session 105 — 2026-08-04 — nms1 closed (last three §9 distillations) + 42cs closed (classicalise = carried-contract row 7)
 
 Tobias: "continue work ... yourself serially ... hard challenging high
 cognition work ... notice anything odd ... no coding/review subagents."
@@ -87,3 +87,40 @@ confirms all five new PDFs are ignored.
 `nms1` closed (three distillations + §9 marks + lint green + no PDF
 committed = its acceptance criteria, verbatim). `qmpo` (M11 slices) loses
 its last distillation blocker.
+
+---
+
+## Second bead, same session — 42cs: classicalise logged as carried-contract row 7
+
+Executed ruling T2 (2026-07-25, approved as recommended) per the bead's own
+analysis: **added as (c) now**, not deferred to already-discharged at M11 —
+the table's whole point is that a carried contract is visible *before* it
+is consumed (F8 was catchable for exactly that reason). "Audit complete"
+now explicitly means *every carried contract has an explicit verdict*, not
+*every verdict is (a)*.
+
+Edits, all four kept mutually consistent:
+
+1. **Plan §7**: row 7 (`classicalise`, verdict **(c) — spec ruled S31/T2,
+   gated on M11**) carrying the full S31 contract (arity from ports, exact
+   by replay, loud above `CLASSICALISE_MAXWIRES`, PHASE-BLIND docstring
+   flag + the deliberate `classicalise(id) == classicalise(Ad_Z)` test,
+   `record_distribution` as the separate token operation) and the V10
+   provenance: the defect is **in the v0.1 spec text itself**
+   (`Sturm-PRD.md:457` — "returns 2×2 column-stochastic matrix").
+2. **Plan §7 counts**: 5/1/0 → **5/1/1**, with the history chain
+   (4/1/1 → T1 → 5/1/0 → T2 → 5/1/1) and the F31-enumeration hedge kept
+   true: the *six F31 enumerated* remain fully audited; row 7 is the one
+   F31's list missed.
+3. **PRD §10**: matching summary row 7 + counts paragraph.
+4. **PRD §5 QECC bullet**: "closure of the **last** carried-contract
+   verdict (c)" was falsified by the new row — reworded to "closed the (c)
+   on contract 6 (the last of the six F31 enumerated)" with a pointer to
+   row 7. This was the only stale claim a repo-wide grep for
+   last-(c)/zero-(c) phrasing found.
+
+Follow-through made durable, not prose (session-104 lesson): `qmpo` now
+carries a note that its classicalise slice must flip BOTH row-7 verdicts to
+(a) and BOTH counts paragraphs to 6/1/0.
+
+Gate: 13 PRD fences, 0 parse failures (no fence added — table/prose only).
