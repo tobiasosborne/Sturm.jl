@@ -1,4 +1,4 @@
-# Session 105 — 2026-08-04 — nms1 closed (last three §9 distillations) + 42cs closed (classicalise = carried-contract row 7)
+# Session 105 — 2026-08-04 — nms1 + 42cs + c8rx closed (distillations; classicalise row 7; bench α-policy determinism)
 
 Tobias: "continue work ... yourself serially ... hard challenging high
 cognition work ... notice anything odd ... no coding/review subagents."
@@ -124,3 +124,60 @@ carries a note that its classicalise slice must flip BOTH row-7 verdicts to
 (a) and BOTH counts paragraphs to 6/1/0.
 
 Gate: 13 PRD fences, 0 parse failures (no fence added — table/prose only).
+
+---
+
+## Third bead, same session — c8rx: wall-clock can no longer pick what the bench computes
+
+The gmx0-era `probe_family` chose each (family, order)'s `alpha_mode` by
+timing the exact-α DP against `PROBE_TROTTER_S = 0.2` / `PROBE_COMPOSITE_S
+= 0.05` seconds — so mode selection was a function of machine load, and it
+bit in session 103 (load ~20 downgraded five L=256 families the baseline
+had planned exact). Fix, per the bead's ruled direction:
+
+- **`alpha_policy` is now an explicit run configuration** —
+  `run_frontier(; alpha_policy = :budgeted)` /
+  `run.jl --alpha=exact|budgeted|norm1`:
+  `:exact` (only the deterministic `AlphaCommBlowup` cap exit downgrades),
+  `:budgeted` (default — the probe runs the SAME DP work-capped via
+  `alpha_comm_layered`; `PROBE_WORK_TROTTER = 2^22`,
+  `PROBE_WORK_COMPOSITE = 2^20` **propagation steps**, machine-independent;
+  a budget stop records the proven partial bound `B_d` in the note),
+  `:norm1` (no DP). `force_exact` (executed families) overrides any policy,
+  as before. **Wall-clock survives only as a loud ABORT**
+  (`PROBE_TIMEBOX_S = 600`, `:exact` only, with rerun instructions) — it
+  never selects modes.
+- Non-default policies get their own CSV tag (`frontier-all-exact.csv`) so
+  runs under different policies can never shadow or be compared to each
+  other by accident; the alpha CSV gains a `policy` column; the R4 summary
+  prints the policy and the deterministic budget downgrades as their own
+  category (cap hits stay separate).
+- **The old determinism claim was false and nobody had noticed**: run.jl
+  and README said "identical commands emit identical CSVs" while modes
+  were load-dependent AND `probe_seconds` differs every run. Both now
+  state the true claim: identical CSVs across machines and loads given
+  the same policy, *except* the `probe_seconds` diagnostic column.
+- RELATED item decided with it: `evolve!` docstring now documents the
+  exact-α planning latency (5–12 s at L=1024 dense when Auto picks
+  Composite; ranking stays budgeted-fast; escape = `plan_evolution`'s
+  `alpha_mode = :norm1`). The planning-budget knob is NOT filed, per the
+  bead ("only if it actually bites").
+
+**Verification (all run, not asserted):** `--fast` twice under `:budgeted`
+→ frontier/auto CSVs **byte-identical**, alpha identical modulo
+`probe_seconds` (awk column-wise diff); `--fast` under all three policies
+green with correct tags; `:norm1` semantics checked in-CSV (48 executed
+rows exact via force_exact; 40 analytic rows norm1; the 8 analytic
+`:exact` rows are QDrift, which consumes no α); budgeted==exact on the
+fast subset (no downgrades there, so the CSVs must and do agree);
+`probe_family` twice on exp-L1024-W16 → identical downgrades with `B_2`
+recorded. Sturm loads and the new docstring renders.
+
+**Measurement that settled the calibration** (steps, not guesses):
+L=256 order 2 costs **2^19.3 steps** (inside both gates — this is the row
+class the wall threshold flipped under load; first-call *compile* alone
+pushed 0.06 s → 0.52 s across the old 0.2 s line, so the load lottery
+included compile noise); orders 4/6 cost **2^23.5 / 2^25.8** (≈2 s / 12 s
+wall) — out of reach under either regime, deterministically `:norm1` now.
+Same steps, different walls across boxes (jpky's box: 2^20 ≈ 25–50 ms;
+this one: 0.1–0.2 s) — which is exactly why steps are the unit.

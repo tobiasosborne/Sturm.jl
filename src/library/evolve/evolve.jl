@@ -231,6 +231,17 @@ mixture value) and under a live `when` frame (ctrl of a mixture ≠ mixture of
 ctrls). RNG: the strategy's `rng` if set, else the context core's rng (the
 `shots` stream), else Julia's global stream — precedence pinned by a test.
 
+Planning latency (bead Sturm.jl-c8rx, decided with the bench fix): deriving
+resources from `ε` prices the plan on the EXACT `α_comm` DP, and on large
+dense sums that is seconds per call (measured: 5–12 s at L = 1024 dense
+when `Auto` picks `Composite`) — the honest cost of planning a better
+strategy on proven-exact bounds, not a hang. `Auto`'s *ranking* stays fast
+(budgeted-exact surrogate, `ALPHA_WORK_DEFAULT`); the cost is in planning
+the chosen shape. The explicit escape is [`plan_evolution`](@ref) with its
+`alpha_mode = :norm1` opt-in (a looser proven bound ⇒ more steps, instant
+planning); there is deliberately no accuracy-affecting knob on `evolve!`
+itself.
+
 ```julia
 # evolve a 2-qubit register under H = Z⊗Z + ½ X⊗I for time t, second order
 x = QInt{2}(0)

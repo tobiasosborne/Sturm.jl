@@ -13,10 +13,28 @@ julia --project=bench bench/hamsim/run.jl --fast          # ~2 min smoke
 julia --project=bench bench/hamsim/run.jl --only=exec     # measured tier
 julia --project=bench bench/hamsim/run.jl --only=analytic # cost curves
 julia --project=bench bench/hamsim/run.jl                 # full grid
+julia --project=bench bench/hamsim/run.jl --alpha=exact   # exact-α policy
 ```
 
 Output: `bench/out/{frontier,auto,alpha}-<tag>.csv` (gitignored) plus a
-printed summary. Fully seeded — identical commands emit identical CSVs.
+printed summary.
+
+**α policy (c8rx).** Which grid rows plan at `:exact` vs `:norm1` α is an
+explicit run configuration — `--alpha=budgeted` (default; the probe
+work-caps the exact-α DP with machine-independent step budgets),
+`--alpha=exact` (exact everywhere; only the deterministic
+`AlphaCommBlowup` cap exit downgrades), or `--alpha=norm1`. It is NEVER
+decided by wall-clock — the gmx0-era timed probes made mode selection
+load-dependent, and it bit in session 103 (five L=256 families planned
+differently on a loaded box). Non-default policies get their own file tag
+(`frontier-all-exact.csv`), so runs under different policies never shadow
+each other and are never accidentally compared.
+
+**Determinism.** Given the same command (thus the same policy), two runs on
+any machine at any load emit identical CSVs — except the `probe_seconds`
+diagnostic column of `alpha-*.csv` (wall-clock, kept for calibration; it
+influences nothing). Wall-clock can only ABORT a run loudly
+(`PROBE_TIMEBOX_S`, `--alpha=exact` only), never change what is computed.
 
 ## What is measured
 
@@ -57,9 +75,13 @@ disagreement flag, and the α provenance of the CHOSEN dispatch row
 `auto_alpha_exact` = whether every α it consumed was the exact α_comm; empty
 for rows that consume no α — QDrift and the exactness fast paths).
 
-`alpha-*.csv`: the R4 probe table — per (family, order): exact α_comm value,
-the :norm1 bound, their ratio (the DP's tightness win), probe seconds, and
-whether ALPHA_MAXWORDS_DEFAULT was hit.
+`alpha-*.csv`: the R4 probe table — per (family, order): the modes the grid
+rows plan at, exact α_comm value (empty when the policy's probe did not
+prove it exact; a budget stop records the proven partial bound `B_d` in the
+note instead), the :norm1 bound, their ratio (the DP's tightness win),
+probe seconds (diagnostic only — the one nondeterministic column), the
+downgrade reason if any (cap hit / work budget / policy), and the run's
+α policy.
 
 ## Interpretation
 

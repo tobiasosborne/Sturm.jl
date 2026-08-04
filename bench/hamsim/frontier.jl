@@ -19,15 +19,25 @@
 #       QSP overlay L·(t + log(1/ε)/loglog(1/ε)) (their eq qsp — ANALYTIC
 #       ONLY, per the session-102 ruling: no implementation).
 #
-# ── α-MODE DISCIPLINE (R4; no silent substitution — Principle 1) ────────────
+# ── α-MODE DISCIPLINE (R4 + c8rx; no silent substitution — Principle 1) ─────
 # The exact α_comm DP is recomputed inside every plan_evolution call, so grid
-# wall time forces a per-(family, order) decision made ONCE by a timed probe
-# against the DEFAULT cap: blowup ⇒ the grid row uses the EXPLICIT
-# `alpha_mode = :norm1` opt-in (recorded in the CSV column and in the R4
-# table — the sanctioned caller exit named by AlphaCommBlowup itself);
-# success-but-slow ⇒ same explicit downgrade, tagged "time guard" (a bench
-# scheduling choice, NOT a cap hit — kept distinct in the R4 report).
+# wall time forces a per-(family, order) decision made ONCE. That decision is
+# `alpha_policy`, an EXPLICIT run configuration — never wall-clock, which made
+# the gmx0-era CSVs load-dependent (bead Sturm.jl-c8rx: at load ~20 the same
+# grid downgraded five L=256 families that a quiet box planned :exact, and
+# two runs of the same code were not comparable):
+#   :exact     every row plans at :exact; the only downgrade is the
+#              deterministic AlphaCommBlowup memory-cap exit (the sanctioned
+#              caller exit named by the exception itself). Wall-clock may
+#              only ABORT, loudly (PROBE_TIMEBOX_S) — never select modes.
+#   :budgeted  (default) the probe runs the SAME DP work-capped
+#              (`alpha_comm_layered`, machine-independent propagation-step
+#              budgets — the deterministic successor of the retired
+#              0.2 s / 0.05 s wall thresholds).
+#   :norm1     every grid row uses the explicit loose bound; no DP runs.
 # Executed families always run exact (their DP support caps at 4^3 = 64).
+# Modes stay recorded per row (frontier `alpha_mode` column + alpha CSV);
+# `probe_seconds` stays as a DIAGNOSTIC column and influences nothing.
 
 using Printf
 using Statistics
@@ -36,20 +46,34 @@ using LinearAlgebra
 using Sturm
 using Sturm: PauliSum, nterms, iscommuting, plan_evolution, trajectory, exp_count,
              TrotterPlan, QDriftPlan, CompositePlan, evolve_plan,
-             alpha_comm, AlphaCommBlowup, ALPHA_MAXWORDS_DEFAULT,
-             AUTO_COMMUTING_GATE, composite_k, ALPHA_WORK_DEFAULT
+             alpha_comm, alpha_comm_layered, AlphaCommBlowup,
+             ALPHA_MAXWORDS_DEFAULT, AUTO_COMMUTING_GATE, composite_k,
+             ALPHA_WORK_DEFAULT
 
 const T_GRID = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]     # log grid [0.5, 32]
 const EPS_GRID = [1e-2, 1e-3, 1e-4]
 const STRATS = [("T2", :trotter, 2), ("T4", :trotter, 4), ("T6", :trotter, 6),
                 ("QD", :qdrift, 0), ("C2", :composite, 2), ("C4", :composite, 4)]
 
-# Probe time thresholds (seconds). Composite planning multiplies DP calls
-# (composite_k evaluates ~3 candidates × 3 α_comm engine runs each), hence
-# the tighter gate.
-const PROBE_TROTTER_S = 0.2
-const PROBE_COMPOSITE_S = 0.05
-const PROBE_ABORT_S = 3.0
+# Deterministic probe budgets (α policy :budgeted), in DP PROPAGATION STEPS —
+# machine-independent replacements for the retired 0.2 s / 0.05 s wall-clock
+# thresholds (c8rx). Calibration anchors, measured 2026-08-04 (steps are the
+# unit precisely because wall varies by box: jpky's box did 2^20 steps in
+# 25–50 ms; this one in 0.1–0.2 s):
+#   L=256  order 2:  2^19.3 steps  → inside both gates (the row class the
+#          old wall threshold flipped under load — first-call COMPILE alone
+#          pushed 0.06 s → 0.52 s across the 0.2 s line);
+#   L=256  order 4:  2^23.5 (≈2 s), order 6: 2^25.8 (≈12 s) → out of reach
+#          under either regime; deterministically :norm1 now.
+# Composite planning multiplies DP calls (composite_k evaluates ~3 candidates
+# × 3 α_comm engine runs each), hence the tighter composite gate.
+const PROBE_WORK_TROTTER = 4_194_304     # 2^22
+const PROBE_WORK_COMPOSITE = 1_048_576   # 2^20 (ALPHA_WORK_DEFAULT's class)
+# Wall-clock may only ABORT a run, loudly — it never selects what is computed
+# (c8rx). Only reachable under alpha_policy = :exact, where one slow probe
+# implies every (t, ε) cell of the family re-runs the same DP in
+# plan_evolution and the grid would take days.
+const PROBE_TIMEBOX_S = 600.0
 const ANALYTIC_SELFCHECK_CAP = 100_000
 
 "The Zlokapa frontier envelope min_K(Kt + t²λ_K²/ε), read off tail_λ (λ = 1)."
@@ -72,46 +96,80 @@ struct AlphaProbe
 end
 
 """
-    probe_family(hs; force_exact = false) -> Dict{Int,AlphaProbe}
+    probe_family(hs; policy, force_exact = false) -> Dict{Int,AlphaProbe}
 
-One timed exact-α probe per order ∈ {2, 4, 6} against the DEFAULT maxwords
-cap. A blowup at order 2k implies blowups at every higher order (the DP
-propagates strictly more layers over a superset support), so higher probes
-are skipped as "cap hit by implication". `force_exact` (executed families):
-record times but never downgrade.
+One α probe per order ∈ {2, 4, 6}, deciding the grid's per-(family, order)
+`alpha_mode` DETERMINISTICALLY from `policy` (c8rx — two runs of the same
+command must plan the same cells at the same exactness, whatever the load):
+
+  * `:exact` — one unbudgeted exact-α probe per order against the DEFAULT
+    maxwords cap. A blowup at order 2k implies blowups at every higher order
+    (the DP propagates strictly more layers over a superset support), so
+    higher probes are skipped as "cap hit by implication". Wall-clock is a
+    LOUD ABORT only (`PROBE_TIMEBOX_S`), never a downgrade.
+  * `:budgeted` — the probe runs the SAME DP work-capped
+    (`alpha_comm_layered`; step budgets are machine-independent). Completion
+    within `PROBE_WORK_TROTTER` steps ⇒ Trotter rows plan `:exact`; within
+    `PROBE_WORK_COMPOSITE` too ⇒ Composite rows as well. A budget or cap
+    stop ⇒ `:norm1`, with the proven partial-depth bound `B_d` recorded in
+    the note (the value the DP *did* prove — never substituted for α).
+    Each probe costs ≤ the budget, so all three orders are always probed.
+  * `:norm1` — every grid row uses the explicit loose bound; no DP runs.
+
+`force_exact` (executed families) overrides any policy: modes stay `:exact`
+(their DP support caps at 4^3 = 64), times recorded, never downgraded.
 """
-function probe_family(hs::PauliSum; force_exact::Bool = false)
+function probe_family(hs::PauliSum; policy::Symbol, force_exact::Bool = false)
     probes = Dict{Int,AlphaProbe}()
     blown = false
-    slow = false
     for order in (2, 4, 6)
         norm1 = 2.0^order * hs.λ^(order + 1)
-        if blown
+        if !force_exact && policy === :norm1
+            probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, NaN,
+                "policy :norm1 (no DP run)")
+            continue
+        elseif blown
             probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, NaN,
                 "cap hit by implication (lower order blew up)")
             continue
-        elseif slow && !force_exact
-            probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, NaN,
-                "probe skipped (time guard tripped at lower order)")
-            continue
         end
         t0 = time()
-        try
-            α = alpha_comm(hs, order)
+        if force_exact || policy === :exact
+            try
+                α = alpha_comm(hs, order)
+                dt = time() - t0
+                if !force_exact && dt > PROBE_TIMEBOX_S
+                    error("probe_family: the exact-α probe (order $order) took " *
+                        @sprintf("%.1f", dt) * " s > PROBE_TIMEBOX_S = " *
+                        "$PROBE_TIMEBOX_S s. Under alpha_policy = :exact every " *
+                        "(t, ε) cell of this family re-runs the same DP inside " *
+                        "plan_evolution, so the grid would multiply this cost " *
+                        "~$(length(T_GRID) * length(EPS_GRID))×. ABORTING LOUDLY " *
+                        "— nothing was silently downgraded (c8rx). Rerun with " *
+                        "alpha_policy = :budgeted or :norm1.")
+                end
+                probes[order] = AlphaProbe(order, :exact, :exact, α, norm1, dt, "")
+            catch e
+                e isa AlphaCommBlowup || rethrow()
+                dt = time() - t0
+                blown = true
+                probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, dt,
+                    "ALPHA_MAXWORDS_DEFAULT HIT: support=$(e.support) layer=$(e.layer)")
+            end
+        else                                        # policy === :budgeted
+            la = alpha_comm_layered(hs, order; work = PROBE_WORK_TROTTER)
             dt = time() - t0
-            slow = slow || dt > PROBE_ABORT_S
-            mt = (force_exact || dt ≤ PROBE_TROTTER_S) ? :exact : :norm1
-            mc = (force_exact || dt ≤ PROBE_COMPOSITE_S) ? :exact : :norm1
-            note = (mt === :exact && mc === :exact) ? "" :
-                   "time guard: grid downgraded to :norm1 " *
-                   (mt === :exact ? "(composite only)" : "(trotter + composite)")
-            probes[order] = AlphaProbe(order, mt, mc, α, norm1, dt, note)
-        catch e
-            e isa AlphaCommBlowup || rethrow()
-            dt = time() - t0
-            blown = true
-            probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, dt,
-                "ALPHA_MAXWORDS_DEFAULT HIT: support=$(e.support) layer=$(e.layer)")
+            if la.exact
+                mc = la.work ≤ PROBE_WORK_COMPOSITE ? :exact : :norm1
+                note = mc === :exact ? "" :
+                    "work gate: composite rows at :norm1 (DP work $(la.work) > " *
+                    "PROBE_WORK_COMPOSITE = $PROBE_WORK_COMPOSITE)"
+                probes[order] = AlphaProbe(order, :exact, mc, la.value, norm1, dt, note)
+            else
+                probes[order] = AlphaProbe(order, :norm1, :norm1, NaN, norm1, dt,
+                    @sprintf("work budget: proven partial bound B_%d=%.6g; ",
+                             la.layers, la.value) * _sanitize(la.reason))
+            end
         end
     end
     return probes
@@ -263,7 +321,12 @@ function k_seed(hs::PauliSum, t::Float64, ε::Float64)
 end
 
 function run_frontier(; fast::Bool = false, only::Symbol = :all,
+                      alpha_policy::Symbol = :budgeted,
                       outdir::String = joinpath(@__DIR__, "..", "out"))
+    alpha_policy in (:exact, :budgeted, :norm1) || throw(ArgumentError(
+        "run_frontier: alpha_policy must be :exact, :budgeted or :norm1 " *
+        "(got :$alpha_policy). The α mode of a run is explicit configuration, " *
+        "never a wall-clock consequence (c8rx)."))
     t_start = time()
     mkpath(outdir)
     fams = bench_families(fast = fast)
@@ -271,6 +334,10 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
     tgrid = fast ? [1.0, 8.0] : T_GRID
     egrid = fast ? [1e-2, 1e-3] : EPS_GRID
     tag = fast ? "fast" : String(only)
+    # non-default policies get their own file tag so runs never shadow each
+    # other; a CSV is only comparable to another CSV with the same policy.
+    alpha_policy === :budgeted || (tag *= "-" * String(alpha_policy))
+    println("α policy: :$alpha_policy (deterministic mode selection — c8rx)")
 
     frontier_rows = String[]
     auto_rows = String[]
@@ -298,14 +365,15 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
         @printf("· %-22s L=%-4d W=%-2d %s\n", fam.name, fam.L, fam.W,
                 fam.executed ? "[executed]" : "[analytic]")
         flush(stdout)
-        probes = probe_family(hs; force_exact = fam.executed)
+        probes = probe_family(hs; policy = alpha_policy,
+                              force_exact = fam.executed)
         for o in (2, 4, 6)
             p = probes[o]
             push!(alpha_rows, join([fam.name, o, p.mode_trotter, p.mode_composite,
                 @sprintf("%.6g", p.alpha), @sprintf("%.6g", p.norm1),
                 isnan(p.alpha) ? "" : @sprintf("%.3g", p.norm1 / p.alpha),
                 isnan(p.seconds) ? "" : @sprintf("%.3f", p.seconds),
-                _sanitize(p.note)], ","))
+                _sanitize(p.note), alpha_policy], ","))
         end
         gt0 = nothing
         if fam.executed
@@ -450,7 +518,7 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
     end
     open(joinpath(outdir, "alpha-$tag.csv"), "w") do io
         println(io, "family,order,mode_trotter,mode_composite,alpha_exact," *
-                    "alpha_norm1,norm1_over_exact,probe_seconds,note")
+                    "alpha_norm1,norm1_over_exact,probe_seconds,note,policy")
         foreach(r -> println(io, r), alpha_rows)
     end
 
@@ -492,11 +560,21 @@ function run_frontier(; fast::Bool = false, only::Symbol = :all,
     @printf("\n══ K RULE: proxy (2nd-moment seed) vs exact composite_k(order 2): %d/%d cells disagree ══\n",
             kdis, kcells)
     println("\n══ R4 CALIBRATION ══")
+    println("  α policy: :$alpha_policy — mode selection is run configuration " *
+            "(c8rx); wall-clock never picks modes, probe_seconds is diagnostic only")
     caphits = [r for r in alpha_rows if occursin("HIT", r) || occursin("implication", r)]
     println("  ALPHA_MAXWORDS_DEFAULT = $(ALPHA_MAXWORDS_DEFAULT): " *
             (isempty(caphits) ? "never hit on this grid" :
              "$(length(caphits)) (family, order) probes hit the cap (see alpha-$tag.csv)"))
     foreach(r -> println("    ", r), caphits)
+    budgethits = [r for r in alpha_rows if occursin("work budget", r) ||
+                                           occursin("work gate", r)]
+    println("  PROBE_WORK_TROTTER/COMPOSITE = $PROBE_WORK_TROTTER/" *
+            "$PROBE_WORK_COMPOSITE steps: " *
+            (isempty(budgethits) ? "no deterministic budget downgrades" :
+             "$(length(budgethits)) (family, order) probes downgraded by the " *
+             "work budget (deterministic — see alpha-$tag.csv)"))
+    foreach(r -> println("    ", r), budgethits)
     tcomm = max_L > 0 ? (@elapsed iscommuting(fams[end].hs)) : NaN
     println("  AUTO_COMMUTING_GATE = $(AUTO_COMMUTING_GATE): max grid L = $max_L — " *
             (commuting_gate_hit ? "GATE HIT" : "never gates") *
