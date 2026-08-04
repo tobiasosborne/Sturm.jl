@@ -113,13 +113,20 @@ end
 
 The two now-reachable guards of S10 + B §1.4, fired BEFORE any emission:
 
-- **DM context** ⇒ `error()` naming M11: one sampled trajectory is one
-  UNRAVELLING of the qDrift/composite channel; executing it on a density
-  matrix would silently present a single branch as the CPTP average — the
-  exact bug class Principle 1 kills. The DM lowering of the ensemble is
-  M11's mixture value (KrausFamily/NoiseN, channel/dag.jl). The same
-  argument bans TRACING (a recorded trajectory would materialize the wrong
-  channel DAG) — guarded here too, same physics, distinct message.
+- **DM context** ⇒ `error()`: one sampled trajectory is one UNRAVELLING of
+  the qDrift/composite channel; executing it on a density matrix would
+  silently present a single branch as the CPTP average — the exact bug
+  class Principle 1 kills. The DM lowering is NOT a trajectory at all but
+  the ensemble as a channel VALUE — the step channel `Σⱼ pⱼ Uⱼ ρ Uⱼ†`
+  raised to the N-th power (`E_τ^N`, the qDrift channel's own definition:
+  docs/physics/campbell_2019_qdrift.md; i.i.d. steps ⇒ the average
+  factorizes, verified session 105) — an `EnsembleChannel` value, bead
+  Sturm.jl-pwsu, gated on M11's channel-value stratum. Note M11's
+  enumerated mixture value alone does NOT unblock this (its small-R
+  enumeration is the wrong shape; the step is symbolic with L terms —
+  bead Sturm.jl-83a8). The same argument bans TRACING (a recorded
+  trajectory would materialize the wrong channel DAG) — guarded here too,
+  same physics, distinct message.
 - **live `when` frame** ⇒ loud error (the `_assert_no_control` shape): the
   qDrift guarantee is a CHANNEL statement, and ctrl of a mixture ≠ the
   mixture of ctrls — conditioning turns each branch's harmless global phase
@@ -133,14 +140,17 @@ function _assert_randomized_legal(ctx::AbstractContext, what::AbstractString)
         "evolve!($what): a randomized strategy samples ONE trajectory — one " *
         "unravelling of the qDrift/composite CHANNEL — and running it on a " *
         "density-matrix context would silently misrepresent the CPTP average " *
-        "(S10). The DM lowering of the ensemble is M11's mixture value " *
-        "(KrausFamily/NoiseN); until it lands, run randomized strategies under " *
-        "`eager`/`shots`, or use a deterministic strategy (legal on DM).")
+        "(S10). Executing the ensemble here needs it as a channel value — an " *
+        "EnsembleChannel, the step-channel power E_τ^N (bead Sturm.jl-pwsu; " *
+        "not yet built, and not closed by M11's enumerated mixture value " *
+        "alone). Run randomized strategies under `eager`/`shots`, or use a " *
+        "deterministic strategy (legal on DM).")
     ctx isa TracingContext && error(
         "evolve!($what): a randomized strategy samples ONE trajectory; tracing " *
         "it would materialize a single unravelling as if it were the channel " *
-        "(the S10 bug class at the DAG level). The traced form of the ensemble " *
-        "is M11's mixture value; trace a deterministic strategy instead.")
+        "(the S10 bug class at the DAG level). Tracing the ensemble needs it " *
+        "as a channel value — an EnsembleChannel node (bead Sturm.jl-pwsu, " *
+        "not yet built); trace a deterministic strategy instead.")
     isempty(_core(ctx).control_stack) || error(
         "evolve!($what) is forbidden under a live `when` frame: the qDrift " *
         "guarantee is a CHANNEL statement (a mixture of unitaries), and ctrl " *
@@ -226,8 +236,10 @@ execute ONE sampled trajectory per call — the `shots` HOF owns the shot loop;
 the ε guarantee is a property of the shot-averaged CHANNEL, a single
 trajectory is only ~√ε-close (campbell_2019_qdrift.md "Diamond norm
 distance"; docs/physics/chen_2021_concentration_random_products.md). They are
-loud errors on a DM/Tracing context (S10 — the ensemble's lowering is M11's
-mixture value) and under a live `when` frame (ctrl of a mixture ≠ mixture of
+loud errors on a DM/Tracing context (S10 — the ensemble's lowering is a
+channel VALUE, the step-channel power `E_τ^N`: an `EnsembleChannel`, bead
+Sturm.jl-pwsu, not delivered by M11's enumerated mixture value alone) and
+under a live `when` frame (ctrl of a mixture ≠ mixture of
 ctrls). RNG: the strategy's `rng` if set, else the context core's rng (the
 `shots` stream), else Julia's global stream — precedence pinned by a test.
 

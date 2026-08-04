@@ -707,7 +707,10 @@ end
         H = [(1.0, "ZZ"), (0.5, "XI")]; W = 2
         hs = PauliSum{W}(H)
 
-        # DM + randomized ⇒ loud error naming M11 (S10); deterministic stays legal
+        # DM + randomized ⇒ loud error naming the ACTUAL requirement (S10 +
+        # bead 83a8: the old text promised "M11's mixture value" would close
+        # this — it will not; the real thing is the EnsembleChannel
+        # step-power value, bead pwsu); deterministic stays legal
         err = try
             density(W) do _
                 x = QInt{W}(0)
@@ -717,7 +720,7 @@ end
         catch e
             e
         end
-        @test err isa ErrorException && occursin("M11", err.msg)
+        @test err isa ErrorException && occursin("EnsembleChannel", err.msg)
         @test occursin("density", err.msg) || occursin("DM", err.msg)
         errc = try
             density(W) do _
@@ -728,7 +731,7 @@ end
         catch e
             e
         end
-        @test errc isa ErrorException && occursin("M11", errc.msg)
+        @test errc isa ErrorException && occursin("EnsembleChannel", errc.msg)
         # deterministic on DM: legal, unchanged (S10 bans only randomized)
         @test density(W) do _
             x = QInt{W}(0)
@@ -764,7 +767,7 @@ end
         catch e
             e
         end
-        @test errt isa ErrorException && occursin("M11", errt.msg)
+        @test errt isa ErrorException && occursin("EnsembleChannel", errt.msg)
 
         # trajectory without an rng THROWS for randomized plans
         pq = plan_evolution(QDrift(N = 4), hs, 0.5)

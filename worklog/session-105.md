@@ -1,4 +1,4 @@
-# Session 105 — 2026-08-04 — nms1 + 42cs + c8rx closed (distillations; classicalise row 7; bench α-policy determinism)
+# Session 105 — 2026-08-04 — nms1 + 42cs + c8rx + 83a8 closed (distillations; classicalise row 7; bench α-policy determinism; EnsembleChannel design)
 
 Tobias: "continue work ... yourself serially ... hard challenging high
 cognition work ... notice anything odd ... no coding/review subagents."
@@ -181,3 +181,41 @@ included compile noise); orders 4/6 cost **2^23.5 / 2^25.8** (≈2 s / 12 s
 wall) — out of reach under either regime, deterministically `:norm1` now.
 Same steps, different walls across boxes (jpky's box: 2^20 ≈ 25–50 ms;
 this one: 0.1–0.2 s) — which is exactly why steps are the unit.
+
+---
+
+## Fourth bead, same session — 83a8: the false "M11 will unblock it" promise removed; EnsembleChannel designed and filed
+
+**The design question collapsed exactly as the bead suspected.** Direction
+(b), checked FIRST as instructed: qDrift steps sample **i.i.d.**, so the
+protocol's CPTP average FACTORIZES — `E_total = (E_step)^N` with
+`E_step(ρ) = Σⱼ pⱼ Uⱼ ρ Uⱼ†` (`L = nterms` Kraus terms, Campbell's own
+channel definition). **R ~ 1e4 was the wrong count**: trajectory count ≠
+Kraus rank of the value. Verified independently (rule 9) to **1.5e-15**:
+the fully enumerated 81-trajectory ensemble (L=3, N=4, W=2, mixed signs)
+equals `step^4` — and the identity was already load-bearing in
+`bench/hamsim/groundtruth.jl` (`qdrift_step_super`^N, `composite_super`'s
+"the slot channel IS Φ^{N_B}" per hagan_wiebe Def 5.1/R2, validated
+against enumerated ensembles in session 102). Filed as **`pwsu`** (dep →
+`qmpo`): a symbolic step node carrying `(PauliSum, τ)` — never enumerated
+matrices, so MixedUnitary's small-R cap is not violated — raised to a
+power; DM lowering tier 1 = superoperator repeated squaring
+(`O(d⁴ log N)`, trivial at W ≤ 3, **not** gated on Orkan k-local); tier 2
+(large W, N sequential step applications) gated on T6 `unitary_kq` only.
+
+**The softening was done NOW, not "in the M11 commit"** as the bead's
+piece-1 wording suggested — deliberately: the false promise ("until
+[M11's mixture value] lands") stood in the tree *today*, and the new text
+references no not-yet-existing value as landed (it names the requirement
++ bead pwsu, and states M11's enumerated mixture value alone does NOT
+close it), so the no-self-contradiction intent is satisfied early rather
+than late. Changed: both `_assert_randomized_legal` messages (DM +
+Tracing), its docstring, and the `evolve!` docstring's S10 line. The
+guardrail tests pinned `occursin("M11", msg)` — flipped to pin
+`"EnsembleChannel"` (stable across rewording, names the design).
+
+**Verified**: targeted temp-env run (session-97 recipe;
+`test_m2_common.jl` must be included first for `approx_upto_phase` — the
+M10 file's header only names the m10 harness, add that to the recipe)
+— **337/337** across test_m10_library + test_m12_random; physics-cite
+lint re-checked (the new message cites campbell_2019_qdrift.md — resolves).
