@@ -1534,7 +1534,7 @@ today's check lives in the Orkan FFI shim and leaks raw physical indices
   different port types) and re-typed into three, each carrying its own
   obligation. This closed the (c) verdict on carried contract 6 in §10
   (the last of the six F31 enumerated; §10's later-discovered row 7,
-  `classicalise`, carries its own (c) until M11 lands it).
+  `classicalise`, closed with the M11 landing on 2026-08-06).
   - **`encode_state(enc, qs…)`** and **`decode_state`** — the state-level
     channels `L → P` and `P → L`. Encoding is an **ownership transfer**,
     not a third consumption site: the logical handles are re-homed into an
@@ -2417,15 +2417,16 @@ provenance in `Sturm-v2-IMPLEMENTATION-PLAN.md` §7; the summary:
 | 4 | Promotion (P8 overloads, two-world registry, P9) | **(a) re-derived** | §3.4/D12; shipped at M6. F15 sharpens "numeric types" → **number-like handles** with a published trait interface (§3.4/§6). |
 | 5 | Channel-IR passes discipline (partition at measurement barriers) | **(a) re-derived — load-bearing half by `5hr7`** | The barrier-partition idea is a **type invariant** in v2 (a barrier-containing `ChannelDAG` never promotes to `UnitaryBlock`, §4.1a). v0.1's **Choi-only pass-correctness criterion is unsafe (F3) and barred** — replaced by phase-inclusive `≈` + `ctrl`-wrapped tests + `PASS_REGISTRY` lint (§4.2). |
 | 6 | QECC-as-HOF (`encode(ch, code) :: Channel → Channel`) | **(a) re-derived — 2026-07-25** | F8: the single signature conflated protecting noise, encoding a state, and fault-tolerant lifting. Re-typed in §5 and §6/P6 into `encode_state` / `effective_logical_noise` / `fault_tolerant_lift`, with §4.4 placing a superchannel on the channel-representation stratum (never a channel, never a pass, never controllable). M11 implements the re-derived contract; nothing depended on the v0.1 one. |
-| 7 | `classicalise` (channel → column-stochastic matrix; v0.1 §7.1 "Noise") | **(c) needs re-derivation — spec ruled (S31/T2), gated on M11** | The seventh, **unlogged** carried contract, discovered by the M11 design round (V10): its only source is v0.1 `Sturm-PRD.md:457`, whose own contract text hard-codes the defect (*"returns **2×2** column-stochastic matrix"* — a silent single-qubit assumption in the spec, not just the code). Ruled re-derivation: same name, same v0.1 meaning, **arity taken from the ports** so the defect cannot recur; **phase-blind by construction and docstring-flagged as such — never a channel-equivalence test** (the F3-barred criterion); token-record introspection is a different operation with a different name, `record_distribution` (merging them is the §3.6 sample/record/assert conflation). Becomes (a) when M11 lands it normatively and in code. |
+| 7 | `classicalise` (channel → column-stochastic matrix; v0.1 §7.1 "Noise") | **(a) re-derived — 2026-08-06 (was (c), gated on M11)** | The seventh, **unlogged** carried contract, discovered by the M11 design round (V10): its only source is v0.1 `Sturm-PRD.md:457`, whose own contract text hard-codes the defect (*"returns **2×2** column-stochastic matrix"* — a silent single-qubit assumption in the spec, not just the code). Ruled re-derivation: same name, same v0.1 meaning, **arity taken from the ports** so the defect cannot recur; **phase-blind by construction and docstring-flagged as such — never a channel-equivalence test** (the F3-barred criterion); token-record introspection is a different operation with a different name, `record_distribution` (merging them is the §3.6 sample/record/assert conflation). Landed with M11 (`src/channel/analysis.jl`; tests `M11.CLASSICALISE.*` incl. the deliberate phase-blindness assertion, `M11.RECORD.*`). |
 
-Verdict counts: **(a) re-derived = 5 · (b) verbatim = 1 · (c) needs
-re-derivation = 1.** The audit of the six contracts F31 enumerated is
+Verdict counts: **(a) re-derived = 6 · (b) verbatim = 1 · (c) needs
+re-derivation = 0.** The audit of the six contracts F31 enumerated is
 complete — every one either re-derived here or carried verbatim and
-re-verified against live source. Row 7 is the contract F31's enumeration
-**missed** (V10); it is logged with its verdict *before* the milestone that
-consumes it, which is what the table is for — "audit complete" means every
-carried contract has an explicit verdict, not that every verdict is (a).
+re-verified against live source — and row 7, the contract F31's enumeration
+**missed** (V10), was logged with its (c) *before* the milestone that
+consumed it and closed by that milestone (M11, 2026-08-06) — which is what
+the table is for: "audit complete" means every carried contract has an
+explicit verdict, and as of M11 every verdict is closed.
 
 **Survives (per the table above):** contexts + Orkan FFI; the channel IR +
 passes + measurement-barrier discipline (v0.1's single witnessed DAG splits

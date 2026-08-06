@@ -248,6 +248,11 @@ include("qecc/blocks.jl")
 # grounded fault_tolerant_lift refusal.
 include("qecc/superchannel.jl")
 include("qecc/ft.jl")
+# `channel/analysis.jl` (S31/T2): classicalise (the re-derived v0.1 carried
+# contract, arity-from-ports, PHASE-BLIND by design) + record_distribution
+# (DM token introspection, no backaction, non-consuming). Included last: it
+# reads LogicalChannel, the tokens, and the DM replay.
+include("channel/analysis.jl")
 
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
@@ -401,7 +406,9 @@ public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
     PhysicalChannel, LogicalChannel, ChannelTransform, RecoveryPolicy,
     TableDecoder, NoRecovery, Protect, effective_logical_noise, physical_iid,
     TRANSFORM_REGISTRY, FaultModel, GadgetSet, FTImplementation,
-    fault_tolerant_lift, trace_record!
+    fault_tolerant_lift, trace_record!,
+    # M11 slice 7 (S31/T2, S30): the two-name analysis split + the cap.
+    classicalise, record_distribution, CLASSICALISE_MAXWIRES
 
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,

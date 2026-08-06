@@ -421,6 +421,49 @@ end
 
 _min_width(maxval::Integer) = max(1, (maxval <= 0 ? 1 : (8 * sizeof(Int) - leading_zeros(Int(maxval)))))
 
+# --- Host-scalar `select` (M11 ruling S30) -----------------------------------
+# Under Eager a measurement yields a host `Bool`/`Int`, so the §3.8 portability
+# contract ("one listing runs in all three contexts") needs `select` to accept
+# host scalars with the SAME totality checks and the SAME messages as the token
+# methods above — without these, the M11 syndrome program MethodErrors on Eager.
+
+"Host-scalar `select` (S30): the Eager twin of the token multiplexer."
+select(pred::Bool, a::Integer, b::Integer) = pred ? Int(a) : Int(b)
+select(pred::Bool, a::Bool, b::Bool) = pred ? a : b
+
+"""
+    zext(v::Integer, ::Val{W}) -> Int
+
+Host-scalar `zext` twin (S30): the Eager identity embedding with the SAME
+domain check as the token version — `v` must already fit in `W` bits.
+"""
+function zext(v::Integer, ::Val{W}) where {W}
+    0 <= v < (1 << W) || throw(ArgumentError(
+        "zext: value $v does not fit in $W bits (domain 0:$((1 << W) - 1))"))
+    return Int(v)
+end
+
+function select(v::Integer, table::AbstractVector{<:Integer})
+    0 <= v || throw(ArgumentError("select(value, table): negative discriminant $v"))
+    v < length(table) || throw(ArgumentError(
+        "select(value, table): a raw-vector table must be TOTAL over the word domain " *
+        "0:$(length(table) - 1) (got discriminant $v). Use a `ClassicalTable` with a " *
+        "`default` for a partial table (T3 totality, §3.6)."))
+    return Int(table[v + 1])
+end
+
+function select(v::Integer, tbl::ClassicalTable{<:Integer})
+    0 <= v || throw(ArgumentError("select(value, ClassicalTable): negative discriminant $v"))
+    if v < length(tbl.entries)
+        return Int(tbl.entries[v + 1])
+    end
+    tbl.default === nothing && throw(ArgumentError(
+        "select(value, ClassicalTable): lookup is not total (discriminant $v beyond " *
+        "the $(length(tbl.entries)) entries) and the table has no `default` — an " *
+        "incomplete lookup fails during tracing (T3, §3.6)."))
+    return Int(tbl.default)
+end
+
 # ---------------------------------------------------------------------------
 # The loud-rejection boundary (PRD-v2 §3.6, design §1.4 / law L12)
 # ---------------------------------------------------------------------------
