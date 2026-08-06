@@ -76,6 +76,10 @@ include("channel/replay.jl")
 include("channel/cert.jl")
 include("channel/block_algebra.jl")
 include("channel/channel_algebra.jl")
+# M11 slice 4 (S28): ∘/⊗ on ChannelDAG + channel_dag — the full-vocabulary
+# remapper (recursive into CasesN branches; the block-algebra remapper refuses
+# barriers by design, R2) and the lineage-identified seam.
+include("channel/dag_algebra.jl")
 include("channel/builder.jl")
 # --- M8 pass frameworks (parts 5–6; design m8-5hr7 §3): the ChannelPass /
 # UnitaryPass abstractions, `apply_pass`, the trusted phase-faithful `_commit`
@@ -363,7 +367,10 @@ public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
     # M11 Stinespring (S9-S16): the artifact tree + dilate. The emission choke
     # point `_emit_dilation!` stays private (boot-linted single consumer).
     ChannelArtifact, StinespringDilation, dilate,
-    STINESPRING_ATOL, DILATION_MAXWIRES
+    STINESPRING_ATOL, DILATION_MAXWIRES,
+    # M11 slice 4 (S28): the channel-DAG algebra entry point. The ∘/⊗ methods
+    # ride Base.∘ / the kernel ⊗ on ChannelDAG operands.
+    channel_dag
 
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,
