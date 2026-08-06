@@ -155,9 +155,11 @@ end
 "The identity channel: return the handle unchanged. Its Choi is |Ω⟩⟨Ω|."
 identity_channel(q) = q
 
-"""The pinching (complete-dephasing) channel — the CHANNEL denotation of qc on DM
-(§3.8), realized in one pass via `_instrument!`. Output wire == input wire."""
-function pinch_channel(q)
+"""The pinching (complete-dephasing) channel on a HANDLE — the CHANNEL denotation
+of qc on DM (§3.8), realized in one pass via `_instrument!`. Output wire ==
+input wire. Named `pinch_handle!` since M11: `Sturm.pinch_channel()` is the src
+channel-VALUE constructor (S8), and this harness helper must not shadow it."""
+function pinch_handle!(q)
     Sturm._instrument!(q.ctx, q.wire)
     return q
 end
@@ -182,7 +184,7 @@ prepare_false_channel(_q) = QBool(false)
     end
 
     @testset "cq∘qc = pinching, probed on the COHERENT Bell state (wm28 gate)" begin
-        Jp = choi(pinch_channel, 1)
+        Jp = choi(pinch_handle!, 1)
         @test Jp ≈ pinched
         @test Jp ≈ Diagonal(diag(Jp))           # DIAGONAL ⇔ complete dephasing
         @test tr(Jp) ≈ 1

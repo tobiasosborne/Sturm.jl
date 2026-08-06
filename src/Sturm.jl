@@ -172,6 +172,13 @@ include("surface/cases.jl")
 # cases seams that M3/M6/cases.jl forward-reference — all resolved at call time.
 include("context/tracing.jl")
 
+# --- M11: channel-value application (bead Sturm.jl-qmpo; design m11-82su
+# synthesis S3/S12/S13/S16/S29). Included after tracing.jl: it dispatches
+# `_apply_channel_value!` on ALL THREE contexts (DM native, Tracing records
+# `NoiseN`, Eager loud-or-dilate) and reads `_trec`/`_pid`. The slice-3
+# `_emit_dilation!` choke point is a forward reference resolved at call time.
+include("context/noise.jl")
+
 # --- M9: QMod, the in-place-Perm compiler, mulmod!, shor_order (bead 8oo9) ---
 # `types/qmod.jl` (the ℤ_N register handle, static modulus F24) needs the M2
 # context layer + kernel `X`. `bennett/inplace.jl` (the in-place-Perm compiler
@@ -342,7 +349,7 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
 # (Choi-level; `==` stays structural, no `Base.isapprox`), and the named
 # convention-pinned families.
 public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
-    krausrank, kraus_matrices, choi_matrix, channel, same_channel,
+    krausrank, kraus_matrices, choi_matrix, channel, same_channel, apply_noise!,
     bit_flip, phase_flip, pauli_channel, depolarizing, dephasing,
     phase_damping, amplitude_damping, reset_channel, pinch_channel,
     KRAUS_TP_ATOL, KRAUS_MAXDATA, CHOI_ATOL, CHANNEL_CHOI_MAXWIRES

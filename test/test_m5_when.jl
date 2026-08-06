@@ -199,20 +199,23 @@ end
         nothing
     end
 
-    # (2) A TOP-LEVEL `NoiseN` (no control frame) is refused too — `_replay_dm!` has
-    #     no NoiseN executor yet (the M11 gap recorded on 82su). LOUD, never silent:
-    #     that is the whole point of the udtl bug class.
+    # (2) A TOP-LEVEL `NoiseN` (no control frame) now EXECUTES natively — the
+    #     S29/M11 executor replaced the placeholder refusal this test used to pin
+    #     (the "M11 gap" recorded on 82su is closed). The replayed channel must be
+    #     the real family: bit_flip(p) on |+⟩⟨+| leaves it invariant (X-invariant
+    #     state — so also check a Z-sensitive probe: on |0⟩⟨0| it mixes the
+    #     populations to {1−p, p}).
     b2 = Sturm.DAGBuilder()
     p3 = Sturm.input!(b2)
     push!(b2.nodes, Sturm.NoiseN(Sturm.bit_flip(0.25), (p3,)))
     dag_top = Sturm.freeze(b2)
-    density(2) do ctx
-        u = QBool(0.5)
-        err = try
-            Sturm._replay_dm!(ctx, dag_top, [u.wire]); nothing
-        catch e; e end
-        @test err isa ErrorException
-        @test occursin("NoiseN", sprint(showerror, err))
+    density(1) do ctx
+        u = QBool(false)                            # |0⟩⟨0| — Z-sensitive probe
+        outs = Sturm._replay_dm!(ctx, dag_top, [u.wire])
+        @test length(outs) == 1
+        ρ = density_matrix(ctx)
+        @test real(ρ[1, 1]) ≈ 0.75 atol = 1e-12     # 1−p
+        @test real(ρ[2, 2]) ≈ 0.25 atol = 1e-12     # p
         nothing
     end
 end

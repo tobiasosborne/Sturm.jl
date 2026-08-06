@@ -209,3 +209,171 @@ end
     # asked for by name.
     @test_throws MethodError 𝓝 ≈ bit_flip(0.1)
 end
+
+# ─── Slice 2: application (S3/S12/S13/S16/S29) ─────────────────────────────────
+
+using Sturm: apply_noise!, density, eager, when, apply!, density_matrix, trace,
+    NoiseN, AllocN, ApplyN
+
+@testset "M11.NOISE.DM-EXACT" begin
+    # apply_noise! on a DM context is native and exact: bit_flip(p) on |0⟩⟨0|
+    # gives populations {1−p, p}; amplitude_damping(γ) on |1⟩⟨1| gives
+    # {γ, 1−γ} (the non-unital sentinel).
+    density(1) do _
+        u = QBool(false)
+        apply_noise!(u, bit_flip(0.25))
+        ρ = density_matrix(Sturm.contextof(u))
+        @test real(ρ[1, 1]) ≈ 0.75 atol = 1e-12
+        @test real(ρ[2, 2]) ≈ 0.25 atol = 1e-12
+        nothing
+    end
+    density(1) do _
+        u = QBool(true)
+        apply_noise!(u, amplitude_damping(0.3))
+        ρ = density_matrix(Sturm.contextof(u))
+        @test real(ρ[1, 1]) ≈ 0.3 atol = 1e-12    # decayed to |0⟩
+        @test real(ρ[2, 2]) ≈ 0.7 atol = 1e-12
+        nothing
+    end
+    # ChannelSeq executes b FIRST: reset ∘ bit_flip on |0⟩ is reset(bit_flip(ρ))
+    # = |0⟩⟨0| exactly; the other order would also end at |0⟩⟨0| — so pin the
+    # order with a NON-commuting pair: bit_flip(1) ∘ reset on |1⟩⟨1| is
+    # X(reset(ρ)) = |1⟩⟨1|, while reset ∘ bit_flip(1) would be |0⟩⟨0|.
+    density(1) do _
+        u = QBool(true)
+        apply_noise!(u, bit_flip(1.0) ∘ reset_channel())
+        ρ = density_matrix(Sturm.contextof(u))
+        @test real(ρ[2, 2]) ≈ 1.0 atol = 1e-12    # reset ran FIRST, then X
+        nothing
+    end
+end
+
+@testset "M11.NOISE.TENSOR-LOCALITY" begin
+    # A ⊗ of three 1-local factors lowers through three 1-local applications —
+    # a monolithic 4³ superop would be REJECTED by the guarded channel_1q entry,
+    # so successful execution + the exact product state IS the structural pin
+    # (V3). i.i.d. via the QInt handle exercises the same path.
+    t = bit_flip(0.5) ⊗ (bit_flip(0.5) ⊗ bit_flip(0.5))
+    @test nwires(t) == 3
+    density(3) do ctx
+        x = QInt{3}(0)
+        apply!(Sturm.contextof(x), t, x.wires)
+        ρ = density_matrix(Sturm.contextof(x))
+        for i in 1:8
+            @test real(ρ[i, i]) ≈ 1 / 8 atol = 1e-12   # p=1/2 flips fully mix
+        end
+        nothing
+    end
+    # A dense 3-wire KrausFamily CONSTRUCTS (values are backend-agnostic) but
+    # has no native DM lowering in M11 — loud, naming the ⊗ escape.
+    K3 = zeros(ComplexF64, 8, 8); for i in 1:8; K3[i, i] = 1; end
+    dense3 = KrausFamily([K3])
+    density(3) do _
+        x = QInt{3}(0)
+        err = try
+            apply!(Sturm.contextof(x), dense3, x.wires); nothing
+        catch e; e end
+        @test err isa ErrorException
+        @test occursin("1-wire factors", sprint(showerror, err))
+        nothing
+    end
+end
+
+@testset "M11.NOISE.GUARDRAIL-1" begin
+    # Noise under a live control frame is guardrail 1 — on DM and Eager, through
+    # the handle layer (the S3 guard sits at the entry, closing udtl's class).
+    density(2) do _
+        c = QBool(0.5); u = QBool(false)
+        err = try
+            when(c) do
+                apply_noise!(u, bit_flip(0.1))
+            end
+            nothing
+        catch e; e end
+        @test err isa ErrorException
+        @test occursin("control", sprint(showerror, err))
+        nothing
+    end
+    eager(2) do _
+        c = QBool(0.5); u = QBool(false)
+        err = try
+            when(c) do
+                apply_noise!(u, bit_flip(0.1); stinespring = true)
+            end
+            nothing
+        catch e; e end
+        @test err isa ErrorException
+        @test occursin("control", sprint(showerror, err))
+        nothing
+    end
+end
+
+@testset "M11.NOISE.EAGER-LOUD" begin
+    # Eager without the flag errors, naming ALL THREE escapes (S12/S16).
+    eager(1) do _
+        u = QBool(false)
+        err = try
+            apply_noise!(u, bit_flip(0.1)); nothing
+        catch e; e end
+        @test err isa ErrorException
+        msg = sprint(showerror, err)
+        @test occursin("density", msg)
+        @test occursin("shots", msg)
+        @test occursin("stinespring=true", msg)
+        nothing
+    end
+end
+
+@testset "M11.NOISE.TRACING-RECORDS-CHANNEL" begin
+    # A traced noisy program yields a NoiseN carrying the REAL family — and no
+    # AllocN (the IR records the channel, never a dilation environment).
+    fam = amplitude_damping(0.3)
+    dag = trace(q -> (apply_noise!(q, fam); q), 1)
+    noiseidx = findall(n -> n isa NoiseN, collect(dag.nodes))
+    @test length(noiseidx) == 1
+    nd = dag.nodes[noiseidx[1]]
+    @test nd.ch === fam                        # the real value, not a summary
+    @test !any(n -> n isa AllocN, dag.nodes)
+    # stinespring=true under Tracing is a LOUD error (S12) — the IR never holds
+    # a dilation (M11.DILATE.NOT-IN-IR, pinned early).
+    err = try
+        trace(q -> (apply_noise!(q, fam; stinespring = true); q), 1); nothing
+    catch e; e end
+    @test err isa ArgumentError
+    @test occursin("never a dilation", sprint(showerror, err))
+end
+
+@testset "M11.NOISE.REPLAY-AND-PASS-BARRIER" begin
+    # The traced NoiseN replays natively on DM (S29) and the composite denotes
+    # the right channel: H-conjugated phase_flip is bit_flip in the H frame —
+    # trace [apply H, phase_flip(p), H], replay on |0⟩: populations {1−p, p}.
+    p = 0.2
+    dag = trace(1) do q
+        Sturm.apply!(Sturm.current_context(), Sturm.H, (q.wire,))
+        apply_noise!(q, phase_flip(p))
+        Sturm.apply!(Sturm.current_context(), Sturm.H, (q.wire,))
+        q
+    end
+    density(1) do ctx
+        u = QBool(false)
+        Sturm._replay_dm!(ctx, dag, [u.wire])
+        ρ = density_matrix(ctx)
+        @test real(ρ[1, 1]) ≈ 1 - p atol = 1e-12
+        @test real(ρ[2, 2]) ≈ p atol = 1e-12
+        nothing
+    end
+    # FuseUnitaryRunsPass fuses on both sides of the NoiseN and moves NOTHING
+    # across it: 2 ApplyNs collapse to ≤ the per-segment count and the NoiseN
+    # survives with the same family.
+    g2 = Sturm.apply_pass(Sturm.FuseUnitaryRunsPass(), dag)
+    @test count(n -> n isa NoiseN, collect(g2.nodes)) == 1
+    nd2 = g2.nodes[findfirst(n -> n isa NoiseN, collect(g2.nodes))]
+    @test nd2.ch === dag.nodes[findfirst(n -> n isa NoiseN, collect(dag.nodes))].ch
+    density(1) do ctx
+        u = QBool(false)
+        Sturm._replay_dm!(ctx, g2, [u.wire])
+        ρ = density_matrix(ctx)
+        @test real(ρ[2, 2]) ≈ p atol = 1e-12     # pass preserved the channel
+        nothing
+    end
+end

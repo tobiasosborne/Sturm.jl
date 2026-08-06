@@ -488,6 +488,12 @@ function _replay_nodes!(ctx::DensityMatrixContext, nodes, p2w, p2rec)
             delete!(p2w, nd.in)
         elseif nd isa CasesN
             _replay_casesn!(ctx, nd, p2w, p2rec)
+        elseif nd isa NoiseN
+            # S29 (M11): execute the recorded channel value natively — the full
+            # `apply!` entry, so the guardrail/liveness checks run (top-level
+            # replay has an empty control stack; a NoiseN inside a `cases` arm
+            # never reaches here — `_replay_branch_controlled!` refuses it).
+            apply!(ctx, nd.ch, ntuple(i -> p2w[nd.ports[i]], length(nd.ports)))
         else
             error("_replay_dm!: unsupported node $(typeof(nd))")
         end
