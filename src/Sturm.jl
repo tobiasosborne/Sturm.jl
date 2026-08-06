@@ -179,6 +179,13 @@ include("context/tracing.jl")
 # `_emit_dilation!` choke point is a forward reference resolved at call time.
 include("context/noise.jl")
 
+# --- M11: the Stinespring dilation (bead Sturm.jl-qmpo; design m11-82su
+# synthesis S9-S16, F33). The `ChannelArtifact` tree (outside BOTH value
+# trees), `dilate` (env-leading pin S10, Householder completion S9), and the
+# `_emit_dilation!` choke point (region-owned environment S15; catalogue
+# classes P/D, loud class X — S14).
+include("channel/stinespring.jl")
+
 # --- M9: QMod, the in-place-Perm compiler, mulmod!, shor_order (bead 8oo9) ---
 # `types/qmod.jl` (the ℤ_N register handle, static modulus F24) needs the M2
 # context layer + kernel `X`. `bennett/inplace.jl` (the in-place-Perm compiler
@@ -352,7 +359,11 @@ public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
     krausrank, kraus_matrices, choi_matrix, channel, same_channel, apply_noise!,
     bit_flip, phase_flip, pauli_channel, depolarizing, dephasing,
     phase_damping, amplitude_damping, reset_channel, pinch_channel,
-    KRAUS_TP_ATOL, KRAUS_MAXDATA, CHOI_ATOL, CHANNEL_CHOI_MAXWIRES
+    KRAUS_TP_ATOL, KRAUS_MAXDATA, CHOI_ATOL, CHANNEL_CHOI_MAXWIRES,
+    # M11 Stinespring (S9-S16): the artifact tree + dilate. The emission choke
+    # point `_emit_dilation!` stays private (boot-linted single consumer).
+    ChannelArtifact, StinespringDilation, dilate,
+    STINESPRING_ATOL, DILATION_MAXWIRES
 
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,

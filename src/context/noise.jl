@@ -123,14 +123,16 @@ function _apply_channel_value!(ctx::DensityMatrixContext, ch::MixedUnitary{W},
     if W == 1
         _flush_wire!(ctx, wires[1])
         _apply_channel_1q!(ctx, kraus_matrices(ch), q(ctx, wires[1]))
+    elseif stinespring
+        # Σᵢ wᵢ Ad_{Uᵢ} on W ≥ 2 wires: the dilation is executable for exactly
+        # this class (S14 class P), and on DM the region-exit trace is EXACT —
+        # the composite is the true channel, not an unravelling.
+        _emit_dilation!(ctx, ch, wires)
     else
-        # Σᵢ wᵢ Ad_{Uᵢ} on W ≥ 2 wires needs either the k-local superop entry
-        # (deferred, V3) or an environment register. The dilation is executable
-        # for exactly this class (S14 class P) — but on DM it must be ASKED for.
         error("apply!: a $(W)-wire MixedUnitary has no native DM lowering in M11 " *
               "(Orkan's channel entry is 1-local). Its Stinespring dilation IS " *
-              "executable (class P): pass stinespring=true to dilate + trace, or " *
-              "decompose into 1-wire factors.")
+              "executable (class P): pass stinespring=true to dilate + trace " *
+              "(EXACT on DM), or decompose into 1-wire factors.")
     end
     nothing
 end
