@@ -137,6 +137,23 @@ function noise!(b::DAGBuilder, ch::ChannelValue, ports::PortID...)
 end
 
 """
+    trace_record!(b::DAGBuilder, recpid::PortID) -> b
+
+Discard a classical measurement record INSIDE the DAG (M11): a `TraceN` on the
+record port, and the record leaves `cout` — the block-accumulation of the
+code-capacity model (a record consumed and discarded is not an output; its
+branches are summed at the discard). The DM replay lowers it as an exact trace
+of the pinched record wire.
+"""
+function trace_record!(b::DAGBuilder, recpid::PortID)
+    idx = findfirst(p -> p.id == recpid, b.couts)
+    idx === nothing && error("trace_record!: port $recpid is not a live record")
+    deleteat!(b.couts, idx)
+    push!(b.nodes, TraceN(recpid, nothing))
+    return b
+end
+
+"""
     freeze(b::DAGBuilder; qout=nothing) -> ChannelDAG
 
 Freeze the builder into an immutable `ChannelDAG` (F28): `qin` = declared inputs,

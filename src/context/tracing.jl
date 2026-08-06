@@ -481,8 +481,18 @@ function _replay_nodes!(ctx::DensityMatrixContext, nodes, p2w, p2rec)
         elseif nd isa ApplyN
             apply!(ctx, nd.v, ntuple(i -> p2w[nd.ports[i]], length(nd.ports)))
         elseif nd isa TraceN
-            _trace_and_free!(ctx, p2w[nd.in])
-            delete!(p2w, nd.in)
+            if haskey(p2w, nd.in)
+                _trace_and_free!(ctx, p2w[nd.in])
+                delete!(p2w, nd.in)
+            elseif haskey(p2rec, nd.in)
+                # M11: a discarded classical record (`trace_record!`) — the
+                # block-accumulation of the code-capacity model: trace the
+                # pinched record wire (exact sum over record configurations).
+                _trace_and_free!(ctx, p2rec[nd.in])
+                delete!(p2rec, nd.in)
+            else
+                error("_replay_dm!: TraceN references unknown port $(nd.in)")
+            end
         elseif nd isa MeasureN
             p2rec[nd.out] = _instrument_record!(ctx, p2w[nd.in])
             delete!(p2w, nd.in)

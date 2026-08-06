@@ -153,3 +153,178 @@ end
         nothing
     end
 end
+
+# ─── Slice 6: the superchannel (S21-S27, T1) ───────────────────────────────────
+
+using Sturm: PhysicalChannel, LogicalChannel, Protect, TableDecoder, NoRecovery,
+    effective_logical_noise, physical_iid, TRANSFORM_REGISTRY,
+    fault_tolerant_lift, channel_dag, channel, bit_flip, phase_flip,
+    depolarizing, choi_matrix, same_channel, ctrl, _replay_dm!, _adopt_qbool,
+    apply_noise!, mulword, letter_at, I2, ⊗
+
+_replay_lch(Φ) = function (qin)
+    outs = _replay_dm!(qin.ctx, Φ.dag, [qin.wire])
+    return _adopt_qbool(qin.ctx, outs[1])
+end
+
+function _choiK_qecc(ops)
+    d = size(ops[1], 1)
+    J = zeros(ComplexF64, d * d, d * d)
+    for K in ops
+        v = zeros(ComplexF64, d * d)
+        for a in 1:d, b in 1:d
+            v[(a - 1) * d + b] = K[a, b]
+        end
+        J .+= v * v'
+    end
+    return J ./ d
+end
+const _mI = ComplexF64[1 0; 0 1]; const _mX = ComplexF64[0 1; 1 0]
+const _mY = ComplexF64[0 -im; im 0]; const _mZ = ComplexF64[1 0; 0 -1]
+
+@testset "M11.QECC.EFFECTIVE-NOISE-EXACT" begin
+    # Θ(bit_flip(p)^⊗3) ≈ bit_flip(3p² − 2p³) at the Choi level — the
+    # repetition_code_effective_noise.md derivation, executed.
+    enc = bit_flip_code()
+    θ = Protect(enc)
+    for p in (0.01, 0.05, 0.1, 0.3, 0.5, 0.7)
+        Φ = θ(physical_iid(enc, bit_flip(p)))
+        @test Φ isa LogicalChannel
+        J = choi(_replay_lch(Φ), 1; cap = 6)
+        pL = 3p^2 - 2p^3
+        @test J ≈ choi_matrix(bit_flip(pL)) atol = 1e-10
+    end
+end
+
+@testset "M11.QECC.BREAK-EVEN" begin
+    # TWO-SIDED (risk R-d): correction HELPS below p = ½ and HURTS above —
+    # a sign-flipped recovery table would pass a one-sided "protection helps".
+    pL = p -> 3p^2 - 2p^3
+    @test pL(0.1) ≈ 0.028 atol = 1e-12
+    @test pL(0.1) < 0.1
+    @test pL(0.6) ≈ 0.648 atol = 1e-12
+    @test pL(0.6) > 0.6
+    @test pL(0.5) ≈ 0.5 atol = 1e-12                 # exact break-even (2p−1)(p−1)=0
+    enc = bit_flip_code()
+    for p in (0.1, 0.6)
+        Φ = Protect(enc)(physical_iid(enc, bit_flip(p)))
+        J = choi(_replay_lch(Φ), 1; cap = 6)
+        @test J ≈ choi_matrix(bit_flip(pL(p))) atol = 1e-10
+    end
+end
+
+@testset "M11.QECC.PHASE-NOISE-IS-WORSE" begin
+    # The wm28-shaped anti-test: the bit-flip code AMPLIFIES phase noise —
+    # every Zᵢ is a logical Z̄ with trivial syndrome, so no correction ever
+    # fires and the residual is Z̄ iff an odd number of Zs landed:
+    # Θ(phase_flip(p)^⊗3) = phase_flip((1 − (1−2p)³)/2) ≈ 3p. A
+    # population-only probe is BLIND to this; the Choi is not.
+    enc = bit_flip_code()
+    for p in (0.05, 0.1, 0.3)
+        Φ = Protect(enc)(physical_iid(enc, phase_flip(p)))
+        J = choi(_replay_lch(Φ), 1; cap = 6)
+        pZ = (1 - (1 - 2p)^3) / 2
+        @test J ≈ choi_matrix(phase_flip(pZ)) atol = 1e-10
+        @test pZ > p                                  # amplification, pinned
+    end
+end
+
+@testset "M11.QECC.INDEPENDENT-REFERENCE" begin
+    # For depolarizing(p): the expected logical channel from a TEST-SIDE
+    # brute-force enumerator over all 4³ Pauli patterns (pattern prob →
+    # syndrome → validated-table correction → residual's logical class by
+    # commutation with X̄/Z̄ — an independent implementation, not a pinned
+    # number), compared against the executed Choi.
+    enc = bit_flip_code()
+    p = 0.3
+    probs = Dict('I' => 1 - 3p / 4, 'X' => p / 4, 'Y' => p / 4, 'Z' => p / 4)
+    logi = zeros(Float64, 4)                          # I, X, Y, Z logical weights
+    for l1 in "IXYZ", l2 in "IXYZ", l3 in "IXYZ"
+        w = PauliWord{3}(String([l1, l2, l3]))
+        pr = probs[l1] * probs[l2] * probs[l3]
+        σ = syndrome(enc.code, w)
+        r = mulword(w, enc.corrections[σ + 1])[2]     # residual (phase-free class)
+        a = !commutes(r, enc.code.logical_z[1])       # X̄ component
+        b = !commutes(r, enc.code.logical_x[1])       # Z̄ component
+        cls = a ? (b ? 4 : 2) : (b ? 3 : 1)           # I/X/Z/Y → 1/2/3/4 (a,b) map
+        logi[cls] += pr
+    end
+    expected = logi[1] .* _choiK_qecc([_mI]) .+ logi[2] .* _choiK_qecc([_mX]) .+
+               logi[3] .* _choiK_qecc([_mZ]) .+ logi[4] .* _choiK_qecc([_mY])
+    Φ = Protect(enc)(physical_iid(enc, depolarizing(p)))
+    J = choi(_replay_lch(Φ), 1; cap = 6)
+    @test J ≈ expected atol = 1e-10
+end
+
+@testset "M11.QECC.SUPERCHANNEL-TYPING" begin
+    enc = bit_flip_code()
+    # A bare family is refused, pointing at physical_iid (S24).
+    err = try
+        effective_logical_noise(bit_flip(0.1), Protect(enc)); nothing
+    catch e; e end
+    @test err isa ArgumentError
+    @test occursin("physical_iid", sprint(showerror, err))
+    # Arity/instrument validation (S22).
+    @test_throws ArgumentError PhysicalChannel(enc.code, channel_dag(bit_flip(0.1), 1))
+    bb = Sturm.DAGBuilder()
+    ws = [Sturm.input!(bb) for _ in 1:3]
+    Sturm.measure!(bb, ws[3])
+    @test_throws ArgumentError PhysicalChannel(enc.code, Sturm.freeze(bb))
+    # The result is typed; nothing here is controllable.
+    Φ = Protect(enc)(physical_iid(enc, bit_flip(0.1)))
+    @test Φ isa LogicalChannel{typeof(enc.code)}
+    @test length(Φ.dag.qin) == 1 && isempty(Φ.dag.cout)
+    @test_throws MethodError ctrl(Φ)
+    @test_throws MethodError ctrl(Protect(enc))
+    # physical_iid refuses a multi-wire factor.
+    @test_throws ArgumentError physical_iid(enc, bit_flip(0.1) ⊗ bit_flip(0.1))
+end
+
+@testset "M11.QECC.FT-LIFT-HONEST" begin
+    enc = bit_flip_code()
+    Φ = Protect(enc)(physical_iid(enc, bit_flip(0.1)))
+    err = try
+        fault_tolerant_lift(Φ, nothing); nothing
+    catch e; e end
+    @test err isa ArgumentError
+    msg = sprint(showerror, err)
+    for needle in ("fault model", "gadget", "magic-state", "syndrome", "threshold",
+                   "Eastin–Knill")
+        @test occursin(needle, msg)
+    end
+end
+
+@testset "M11.TRANSFORM.LAW-AND-IDENTITY" begin
+    # Registry-driven (S23): EVERY registered transform runs both laws here —
+    # a shipped-but-unregistered or registered-but-untested transform fails.
+    @test !isempty(TRANSFORM_REGISTRY)
+    for (name, T) in TRANSFORM_REGISTRY
+        if name === :protect
+            enc = bit_flip_code()
+            # (b) IDENTITY law: Θ(id_P) ≈ id_L.
+            Φid = Protect(enc)(physical_iid(enc, channel(I2)))
+            Jid = choi(_replay_lch(Φid), 1; cap = 6)
+            bell = ComplexF64[1 0 0 1; 0 0 0 0; 0 0 0 0; 1 0 0 1] ./ 2
+            @test Jid ≈ bell atol = 1e-10
+            # (a) SPEC law: the composite assembled INDEPENDENTLY — separate
+            # replays of E, the native noise value, R, D in one DM run (no
+            # slice-4 ∘ anywhere), vs the spliced superchannel.
+            fam = bit_flip(0.2)
+            Jspec = choi(1; cap = 6) do q
+                ctx = q.ctx
+                eouts = _replay_dm!(ctx, Sturm._encode_dag(enc), [q.wire])
+                for w in eouts
+                    Sturm.apply!(ctx, fam, (w,))
+                end
+                routs = _replay_dm!(ctx, Sturm._recovery_dag(enc), eouts)
+                douts = _replay_dm!(ctx, Sturm._decode_dag(enc), routs)
+                _adopt_qbool(ctx, douts[1])
+            end
+            Jexe = choi(_replay_lch(Protect(enc)(physical_iid(enc, fam))), 1; cap = 6)
+            @test Jexe ≈ Jspec atol = 1e-10
+        else
+            @test false || error("TRANSFORM_REGISTRY entry :$name has no law arm " *
+                                 "in M11.TRANSFORM.LAW-AND-IDENTITY — add one (S23)")
+        end
+    end
+end

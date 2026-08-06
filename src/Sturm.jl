@@ -242,6 +242,12 @@ include("library/evolve/evolve.jl")
 # verbs and reads the context internals.
 include("qecc/codes.jl")
 include("qecc/blocks.jl")
+# `qecc/superchannel.jl` (S21-S24/S27, T1): PhysicalChannel/LogicalChannel,
+# Protect + TRANSFORM_REGISTRY, effective_logical_noise = D∘R∘𝓝∘E spliced via
+# the slice-4 DAG ∘, physical_iid. `qecc/ft.jl` (S26): the Eastin-Knill-
+# grounded fault_tolerant_lift refusal.
+include("qecc/superchannel.jl")
+include("qecc/ft.jl")
 
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
@@ -390,7 +396,12 @@ public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
     # encode/decode verbs are exported (T5); the value vocabulary is `public`.
     StabilizerCode, CodeEncoding, CodeBlock, bit_flip_code, decoder, code,
     encoding, syndrome, nphysical, nlogical, stabilizers, distance,
-    verify_distance
+    verify_distance,
+    # M11 slice 6 (S21-S27, T1): the typed superchannel surface.
+    PhysicalChannel, LogicalChannel, ChannelTransform, RecoveryPolicy,
+    TableDecoder, NoRecovery, Protect, effective_logical_noise, physical_iid,
+    TRANSFORM_REGISTRY, FaultModel, GadgetSet, FTImplementation,
+    fault_tolerant_lift, trace_record!
 
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,
