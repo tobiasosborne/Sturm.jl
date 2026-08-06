@@ -177,7 +177,7 @@ end
     # DM. Both replay paths already refuse it — VERIFIED, not added (a prior review
     # claimed `_replay_branch_controlled!` needed a refusal; it does not). Pinned so
     # the `else`-branch refusals cannot be widened by accident.
-    _noisy_arm(p) = Sturm.ChannelDAG((Sturm.NoiseN(Sturm.KrausFamily(1), (p,)),), (), ())
+    _noisy_arm(p) = Sturm.ChannelDAG((Sturm.NoiseN(Sturm.bit_flip(0.25), (p,)),), (), ())
 
     # (1) A `cases` ARM under control (the DM replay's own control stack): the arm
     #     admits ONLY `ApplyN` (unitary corrections) and a nested `CasesN`.
@@ -204,7 +204,7 @@ end
     #     that is the whole point of the udtl bug class.
     b2 = Sturm.DAGBuilder()
     p3 = Sturm.input!(b2)
-    push!(b2.nodes, Sturm.NoiseN(Sturm.KrausFamily(1), (p3,)))
+    push!(b2.nodes, Sturm.NoiseN(Sturm.bit_flip(0.25), (p3,)))
     dag_top = Sturm.freeze(b2)
     density(2) do ctx
         u = QBool(0.5)

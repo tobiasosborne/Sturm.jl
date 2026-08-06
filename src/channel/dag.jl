@@ -74,19 +74,6 @@ value). All deeply immutable (F28).
 abstract type Node end
 
 """
-    KrausFamily(nwires::Int)
-
-RESERVED SEAM (design §6): a placeholder for a noise channel's Kraus operators,
-carried by `NoiseN`. A `NoiseN` is a unitary-pass barrier and `certify` refuses
-any DAG containing one, so this slice needs only the type to shape the node
-signature; the concrete Kraus algebra lands with the channel-pass framework
-(NOT this slice).
-"""
-struct KrausFamily
-    nwires::Int
-end
-
-"""
     ChannelDAG
 
 The effect-typed channel IR (design §1.2). Topologically-ordered `nodes`, with
@@ -193,17 +180,24 @@ end
 CasesN(sel::PortID, branches::AbstractVector{ChannelDAG}) = CasesN(sel, Tuple(branches))
 
 """
-    NoiseN(kraus::KrausFamily, ports::NTuple{K,PortID})   [BARRIER]
+    NoiseN(ch::ChannelValue, ports::NTuple{K,PortID})   [BARRIER]
 
-A noise channel value applied to `ports`. A UNITARY-PASS BARRIER — `certify`
-refuses it. RESERVED SEAM: shaped for the channel-pass framework (NOT this slice).
+A noise channel value (`KrausFamily`/`MixedUnitary`/lazy composite —
+`channel/channel_values.jl`, M11 ruling S1) applied to `ports` (position 1 =
+the channel's MSB wire). A UNITARY-PASS BARRIER — `certify` refuses it, and
+the DM replay applies the real family (`_replay_dm!`'s `NoiseN` branch).
+Width-checked at construction: `length(ports) == nwires(ch)` (fail-loud).
 """
 struct NoiseN <: Node
-    kraus::KrausFamily
+    ch::ChannelValue
     ports::NTuple{K,PortID} where {K}
-    NoiseN(kraus::KrausFamily, ports::Tuple{Vararg{PortID}}) = new(kraus, ports)
+    function NoiseN(ch::ChannelValue, ports::Tuple{Vararg{PortID}})
+        length(ports) == nwires(ch) || error(
+            "NoiseN: channel acts on $(nwires(ch)) wires but $(length(ports)) ports given")
+        return new(ch, ports)
+    end
 end
-NoiseN(kraus::KrausFamily, ports::AbstractVector{PortID}) = NoiseN(kraus, Tuple(ports))
+NoiseN(ch::ChannelValue, ports::AbstractVector{PortID}) = NoiseN(ch, Tuple(ports))
 
 # --- Barrier / structural predicates -----------------------------------------
 

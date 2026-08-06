@@ -46,6 +46,11 @@ module Sturm
 include("kernel/numerics.jl")
 include("kernel/u2.jl")
 include("kernel/perm.jl")
+# --- M11 channel values: STRUCTS + constructors (bead Sturm.jl-qmpo; design
+# m11-82su-synthesis §3.1 S1–S8). Included BEFORE dag.jl (whose `NoiseN` carries
+# a `ChannelValue`); the `⊗` methods wait in channel/channel_algebra.jl (the
+# structs-early/methods-late pattern — `⊗` is born in algebra.jl).
+include("channel/channel_values.jl")
 # --- M8 channel IR: STRUCTS (bead Sturm.jl-szx1; design m8-5hr7 §1/§2) ------
 # Included BEFORE ctrl.jl so the single new method `ctrl(::UnitaryBlock)` can
 # dispatch (design §1.4: the one edit to the choke-point file). Dependency order:
@@ -70,6 +75,7 @@ include("kernel/constants.jl")
 include("channel/replay.jl")
 include("channel/cert.jl")
 include("channel/block_algebra.jl")
+include("channel/channel_algebra.jl")
 include("channel/builder.jl")
 # --- M8 pass frameworks (parts 5–6; design m8-5hr7 §3): the ChannelPass /
 # UnitaryPass abstractions, `apply_pass`, the trusted phase-faithful `_commit`
@@ -329,6 +335,18 @@ public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
 # effect nodes, the certified `UnitaryBlock` process value + `certify` sealer, the
 # closed `CleanCert` constructor set, and the mutable `DAGBuilder` tooling. All
 # reachable as `Sturm.certify`, `Sturm.UnitaryBlock`, …, never `using`-dumped.
+# --- M11 channel values (bead Sturm.jl-qmpo; kernel `public`, not exported —
+# T5: "export what a program does to itself; keep `public` what the experimenter
+# does to a program"). The stratum-2 value tree, the denotation quotient
+# `channel` (total, never inverted), the semantic comparison `same_channel`
+# (Choi-level; `==` stays structural, no `Base.isapprox`), and the named
+# convention-pinned families.
+public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
+    krausrank, kraus_matrices, choi_matrix, channel, same_channel,
+    bit_flip, phase_flip, pauli_channel, depolarizing, dephasing,
+    phase_damping, amplitude_damping, reset_channel, pinch_channel,
+    KRAUS_TP_ATOL, KRAUS_MAXDATA, CHOI_ATOL, CHANNEL_CHOI_MAXWIRES
+
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,
     Node, ApplyN, AllocN, TraceN, MeasureN, CasesN, NoiseN, KrausFamily,

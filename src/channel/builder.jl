@@ -120,12 +120,19 @@ function measure!(b::DAGBuilder, pid::PortID; ttype::DataType = Bool)
 end
 
 """
-    noise!(b::DAGBuilder, ports::PortID...; nwires=length(ports)) -> b   [BARRIER]
+    noise!(b::DAGBuilder, ch::ChannelValue, ports::PortID...) -> b   [BARRIER]
 
-Append a `NoiseN` (channel value) — a unitary-pass barrier. RESERVED SEAM.
+Append a `NoiseN` carrying the REAL channel value `ch` on `ports` (position 1 =
+`ch`'s MSB wire) — a unitary-pass barrier. Width-checked (`NoiseN`'s own
+constructor, fail-loud); ports must be live. M11 (ruling S1) replaced the M8
+placeholder signature `noise!(b, ports...)` — a `NoiseN` now always knows WHAT
+channel it applies, which is what lets `_replay_dm!` execute it.
 """
-function noise!(b::DAGBuilder, ports::PortID...; nwires::Int = length(ports))
-    push!(b.nodes, NoiseN(KrausFamily(nwires), ports))
+function noise!(b::DAGBuilder, ch::ChannelValue, ports::PortID...)
+    for pid in ports
+        haskey(b.id2port, pid) || error("noise!: unknown/dead port $pid")
+    end
+    push!(b.nodes, NoiseN(ch, ports))
     return b
 end
 

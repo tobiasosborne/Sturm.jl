@@ -41,10 +41,9 @@ function DensityMatrixContext(capacity::Integer; rng=nothing, strict::Bool=false
 end
 
 # The trace-and-reset (|0⟩) channel: K0=|0⟩⟨0|, K1=|0⟩⟨1|. ρ ↦ ptrace ⊗ |0⟩⟨0|.
-const _RESET_KRAUS = Matrix{ComplexF64}[
-    ComplexF64[1 0; 0 0],   # |0⟩⟨0|
-    ComplexF64[0 1; 0 0],   # |0⟩⟨1|
-]
+# DERIVED from the canonical M11 channel value (S8 re-homing, principle 13):
+# `reset_channel()` in channel/channel_values.jl is the single definition.
+const _RESET_KRAUS = kraus_matrices(reset_channel())
 
 """
     _apply_channel_1q!(ctx::DensityMatrixContext, kmats, qubit)
@@ -145,10 +144,9 @@ end
 # CHANNEL denotation of the qc measurement cast with its classical bit traced out
 # (§3.8). CPTP. Distinct from `_RESET_KRAUS`, which resets to |0⟩; the pinch
 # leaves the diagonal in place and kills only the coherences.
-const _PINCH_KRAUS = Matrix{ComplexF64}[
-    ComplexF64[1 0; 0 0],   # |0⟩⟨0|
-    ComplexF64[0 0; 0 1],   # |1⟩⟨1|
-]
+# DERIVED from the canonical M11 channel value (S8 re-homing, principle 13):
+# `pinch_channel()` in channel/channel_values.jl is the single definition.
+const _PINCH_KRAUS = kraus_matrices(pinch_channel())
 
 """
     _instrument!(ctx::DensityMatrixContext, w::WireID)

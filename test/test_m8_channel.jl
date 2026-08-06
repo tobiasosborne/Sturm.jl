@@ -69,7 +69,7 @@ end
         bm = DAGBuilder(); wm = input!(bm); measure!(bm, wm)
         @test has_barrier(freeze(bm))
         @test_throws ArgumentError certify(bm)
-        bn = DAGBuilder(); wn = input!(bn); noise!(bn, wn)
+        bn = DAGBuilder(); wn = input!(bn); noise!(bn, Sturm.bit_flip(0.1), wn)
         @test_throws ArgumentError certify(bn)
     end
 
