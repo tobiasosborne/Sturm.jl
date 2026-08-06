@@ -399,4 +399,12 @@ end
     @testset "M12 — hamsim phases 2+3: QDrift/Composite/Auto + channel harness" begin
         include("test_m12_random.jl")   # S4/S7/S8/S10 as ruled: T5–T8, T11, guard additions, H1 (HEAVY)
     end
+
+    @testset "M11 — noise values, Stinespring, DAG algebra, QECC, analysis (bead qmpo)" begin
+        include("test_m11_noise.jl")       # S1–S8 values + S3/S12/S13/S16/S29 application
+        include("test_m11_stinespring.jl") # S9–S16: env-leading pin, Householder, P/D catalogue
+        include("test_m11_dag.jl")         # S28: ∘/⊗ relabel + seam lineage + negative control
+        include("test_m11_qecc.jl")        # S17–S27 + T3/T4: codes, blocks, superchannel, FT refusal
+        include("test_m11_analysis.jl")    # S30/S31 + T2: classicalise/record_distribution + portability
+    end
 end
