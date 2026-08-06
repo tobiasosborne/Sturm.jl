@@ -233,6 +233,16 @@ include("library/evolve/plans.jl")
 include("library/evolve/auto.jl")
 include("library/evolve/evolve.jl")
 
+# --- M11: QECC (bead Sturm.jl-qmpo; design m11-82su S17-S27, rulings T1-T5) --
+# `qecc/codes.jl` (StabilizerCode + GF(2) validation + CodeEncoding + the
+# self-validating table + bit_flip_code) needs `PauliWord`/`commutes`
+# (evolve/pauli.jl), `trace`/`certify` (M8), and the surface `⊻=` (M4) — so it
+# is included after the library. `qecc/blocks.jl` (CodeBlock + the T4
+# ownership-transfer encode/decode + the T3 refusals) extends the surface
+# verbs and reads the context internals.
+include("qecc/codes.jl")
+include("qecc/blocks.jl")
+
 # --- Surface scaffolding (exported; region vocabulary users type) -----
 export @context, region, ptrace!
 
@@ -294,6 +304,11 @@ export amplify, find, phase_estimate, evolve!, interfere!
 # ε is an `evolve!` kwarg). Exported like `amplify`: they ARE the user-facing
 # vocabulary of the HOF signature. The plans/bounds machinery stays `public`.
 export Trotter, QDrift, Composite, Auto
+
+# --- Surface M11 QECC state channels (exported; ruling T5: "export what a
+# program does to itself" — a program genuinely encodes its own state, the P6
+# promise). Everything else M11 stays `public`.
+export encode_state, decode_state
 
 public U2, Perm, Ctrl, Tensor, Seq, ProcessValue,
     ctrl, ⊗, denoted_matrix, nwires,
@@ -370,7 +385,12 @@ public ChannelValue, MixedUnitary, ChannelTensor, ChannelSeq,
     STINESPRING_ATOL, DILATION_MAXWIRES,
     # M11 slice 4 (S28): the channel-DAG algebra entry point. The ∘/⊗ methods
     # ride Base.∘ / the kernel ⊗ on ChannelDAG operands.
-    channel_dag
+    channel_dag,
+    # M11 slices 5 (S17-S20, T3/T4): code values, encodings, blocks. The
+    # encode/decode verbs are exported (T5); the value vocabulary is `public`.
+    StabilizerCode, CodeEncoding, CodeBlock, bit_flip_code, decoder, code,
+    encoding, syndrome, nphysical, nlogical, stabilizers, distance,
+    verify_distance
 
 public ChannelDAG, UnitaryBlock, certify, denoted_full, boundary,
     PortID, Port, PortKind, QuantumPort, ClassicalPort, is_quantum, portwidth,
