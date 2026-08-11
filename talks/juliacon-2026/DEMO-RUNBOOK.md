@@ -51,9 +51,11 @@ here needs time to fix.
    produces `talk.html`. Open it two ways:
    - Normal: `file:///home/tobiasosborne/Projects/Sturm.jl/talks/juliacon-2026/talk.html`
      — click through all 17 slides (s0–s16) once with →, confirm every
-     build step advances, the badge rail lights on schedule, and the two
-     SMIL figures (s3 pipeline, s7 Bennett construction) render without
-     console errors (open devtools, check for red).
+     build step advances, the badge rail lights on schedule, and both
+     figures render without console errors (open devtools, check for
+     red): the s3 pipeline diagram (static SVG) and the s7 Bennett
+     construction (the only SMIL-animated figure in the deck — confirm
+     its animation actually runs, and restarts when you re-enter s7).
    - **`?still` smoke test**: append the query string,
      `talk.html?still#s8` (and repeat for a few other slide hashes,
      especially s8/s11/s12 which carry components) — every `.build`
@@ -66,6 +68,12 @@ here needs time to fix.
      that `#fallback`'s embedded recording plays/displays.
 
 4. **Terminal setup.**
+   - **Glyph check**: open the deck at `#s12` and confirm the `⊻` operator
+     renders as a proper wedge-with-bar, not a boxed/underlined fallback —
+     the deck's mono stack falls back through JuliaMono → DejaVu; on a
+     freshly imaged venue machine install JuliaMono or any font with
+     U+22BB before trusting the teleport slide. Same check in the terminal:
+     type `⊻` at the REPL once.
    - **Font size ≥ 24 pt**, monospace. Stage lighting washes out small
      text far worse than a laptop screen suggests — err large (28–32 pt
      is safer than 24 if the venue allows it).
@@ -155,19 +163,32 @@ min) that a surprise (e.g. a stale `demoenv`) doesn't become a crisis.
    | warm `deutsch_jozsa(dj_bal, ...)` | ~2.1 s (now warm) |
    | warm 200-shot teleport probe | ~0.25 s |
 
-   Total ≈ 30 s. If any stage errors instead of timing out slowly,
-   STOP — do not walk on stage with a broken session. Diagnose now (most
-   likely: stale `demoenv`, wrong env var, or a rebuilt-but-not-restarted
-   `liborkan.so`). Re-run `include(...)` in a fresh `julia` process after
-   fixing — the script is idempotent (redefinitions are harmless).
+   Total ≈ 30 s. Every stage **asserts its expected value** (f(5)=41,
+   reversibility, the mirror equality, `cc`'s two truth-table rows, DJ
+   `true`/`false`, the 200-shot probe): a ✅ means "produced the number
+   the deck's pre-baked transcript claims", not merely "didn't throw".
+   On mismatch the script prints a loud ❌ with the actual value and
+   exits(1) — `STAGE READY` is never printed. If any stage errors or
+   asserts instead of timing out slowly, STOP — do not walk on stage
+   with a broken session. Diagnose now (most likely: stale `demoenv`,
+   wrong env var, or a rebuilt-but-not-restarted `liborkan.so`). Re-run
+   `include(...)` in a fresh `julia` process after fixing — the script
+   is idempotent (redefinitions are harmless).
 
 3. **Retype the nine live lines once**, in the exact REVERSE-stage order
    `warmup.jl` prints at the end, pressing Enter after each. This is the
    step that actually populates REPL history — `include()` does not.
-   Typing them in reverse order means each beat needs a small, fixed,
-   **strictly increasing** number of ↑ presses (documented per-beat in
-   §c) instead of counting backward through unrelated history. All nine
-   are now warm, so retyping costs no visible time.
+   `warmup.jl` has already bound `c`, `c1` and `cc` to the warm objects,
+   so every seeding line executes cleanly even though the lines that USE
+   them are retyped before the lines that DEFINE them. All nine are warm,
+   so retyping costs no visible time.
+
+   Reverse-stage order still buys recency (each beat's line is the most
+   recent match for its own prefix) but it does **not** buy a fixed
+   ↑-count: running a recalled line appends it to history, so any count
+   you memorise drifts by one after every beat, and the optional s12 beat
+   shifts everything after it. **Recall by prefix, not by count** — see
+   §c. Rehearse the prefixes backstage until they are reflex.
 
 4. **Ctrl-L** to clear the visible screen. (History is untouched — only
    the visible scrollback is cleared. Do this last, right before opening
@@ -181,24 +202,36 @@ min) that a surprise (e.g. a stale `demoenv`) doesn't become a crisis.
 
 ## (c) The four live beats
 
-Every command below is now the top of a small, warm, well-understood
-slice of REPL history (per §b.3) — on stage, press ↑ the noted number
-of times, confirm the line on screen, press Enter. Never type from
-scratch on stage.
+Every command below is warm and already in REPL history (per §b.3). On
+stage, recall it **by prefix**: type the 2–3 characters in the "recall"
+column, press **↑** (Julia's prefix history search jumps to the most
+recent line starting with what you typed), **read the line on screen**,
+press Enter. Never type from scratch on stage, and never count ↑ presses
+— counts drift as soon as you run anything (§b.3).
 
-| Slide | ↑-count | Command(s) | Expected output | Timing | Say while it runs |
+**Backup recall, works for every beat:** **Ctrl+R**, type a distinctive
+substring (`dj_bal`, `false, false`, `gates`), accept the match, check
+the line, run it. Rehearse both backstage so the accept-vs-execute
+keystroke of your build is muscle memory.
+
+Prefix notes: the trailing space in `c = ` is what skips `c1 = …` and
+`count(…)`; `Stu` matches both s13 lines, so use Ctrl+R for the second
+one rather than pressing ↑ twice and hoping.
+
+| Slide | Recall (type → ↑) | Command(s) | Expected output | Timing | Say while it runs |
 |---|---|---|---|---|---|
-| **s2** — "The answer, immediately" | 1× then 2× | `f(x::Int8) = x*x + Int8(3)*x + Int8(1)` then `c = reversible_compile(f, Int8)` | (silent) then `ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae` | ~0.2 s warm | "That's an ordinary Julia function. That's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library. The `Int8(3)` is Julia promotion, not ceremony." |
-| **s7** — "The theorem is a for-loop" | 3× then 4× | `c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)` then `gs = c1.gates; gs[14:23] == reverse(gs[1:10])` | `… 23 gates (NOT=6, CNOT=15, Toffoli=2) …` then `true` | ~0.2 s + ~60 ms | OPEN IN SILENCE first — let the SMIL construction animation run ~5 s before speaking at all. Then: "Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a negative step. And it's a doctest: CI fails if the theorem does." |
-| **s11** — "I never wrote a quantum gate" | 5×, 6×, 7× | `cc = controlled(reversible_compile(x -> !x, Bool))` then `simulate(cc, true, false)` then `simulate(cc, false, false)` | (silent), `true`, `false` | ~0.3 s total | Terminal first: the three ↑+Enter lines, proving `cc` behaves as a controlled-NOT. THEN drive the on-slide `entangle` component (→/Space, 7 consumed advances — the deck's own live two-branch statevector, running the SAME 20-gate compiled circuit in the browser): "the deck is running the compiled circuit right now." One more advance reveals the headline. Pause three full seconds after saying "I never wrote a quantum gate." This is the signature moment — do not rush it. 10:00 hard checkpoint lands here. |
-| **s13** — "The loop closes: oracle(f, x)" | 8×, 9× | `Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end` then `Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end` | `true`, `false` | ~2.1 s each, warm | "Here's the whole talk in five lines. `f` is the same ordinary-function idea we compiled at 0:35. One query each." If Orkan misbehaves here: press D, keep walking — do not debug live. |
+| **s2** — "The answer, immediately" | `f(x` then `c = ` | `f(x::Int8) = x*x + Int8(3)*x + Int8(1)` then `c = reversible_compile(f, Int8)` | (silent) then `ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae` | ~0.2 s warm | "That's an ordinary Julia function. That's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library. The `Int8(3)` is Julia promotion, not ceremony." |
+| **s7** — "The theorem is a for-loop" | `c1` then `gs` | `c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)` then `gs = c1.gates; gs[14:23] == reverse(gs[1:10])` | `… 23 gates (NOT=6, CNOT=15, Toffoli=2) …` then `true` | ~0.2 s + ~60 ms | OPEN IN SILENCE first — let the SMIL construction animation run ~5 s before speaking at all. Then: "Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a negative step. And it's a doctest: CI fails if the theorem does." |
+| **s11** — "I never wrote a quantum gate" | `cc`, `simulate(cc, t`, `simulate(cc, f` | `cc = controlled(reversible_compile(x -> !x, Bool))` then `simulate(cc, true, false)` then `simulate(cc, false, false)` | (silent), `true`, `false` | ~0.3 s total | Terminal first: the three recalled lines, proving `cc` behaves as a controlled-NOT. THEN drive the on-slide `entangle` component (→/Space, 7 consumed advances — the deck's own live two-branch statevector, running the SAME 20-gate compiled circuit in the browser): "the deck is running the compiled circuit right now." One more advance reveals the headline. Pause three full seconds after saying "I never wrote a quantum gate." This is the signature moment — do not rush it. 10:00 hard checkpoint lands here. |
+| **s13** — "The loop closes: oracle(f, x)" | `Stu` then Ctrl+R `dj_b` | `Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end` then `Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end` | `true`, `false` | ~2.1 s each, warm | "Here's the whole talk in five lines. `f` is the same ordinary-function idea we compiled at 0:35. One query each." If Orkan misbehaves here: press D, keep walking — do not debug live. |
 
 **Conditional 5th beat — s12, "Teleportation, zero gates"** (band:
 shadow, not one of the four LIVE slides — normally shown via `D`).
 If, and only if, you are AHEAD of the clock at s12: run it live instead.
 Retype `count(_ -> teleport_ok(), 1:200)` as a tenth history line (it
-was warmed in §b.2) → expect `200`, ~0.25 s. Otherwise leave this one as
-shadow-only; press D and narrate over the pre-baked transcript.
+was warmed in §b.2; recall it with prefix `cou`) → expect `200`,
+~0.25 s. Otherwise leave this one as shadow-only; press D and narrate
+over the pre-baked transcript.
 
 ---
 
@@ -223,6 +256,18 @@ stage. You have exactly one move: press **D**.
   (`demo.cast`/`demo.svg`), captioned "recorded run — the live machine
   is having a moment." Narrate over it the same way. Press **B** to
   return to the last linear slide once past the trouble spot.
+- **Known behavior — reverse navigation resets components.** Stepping
+  **Left** back over an interactive component (`costbars`, `entangle`,
+  `stepper`) resets that component's consumed steps in ONE keypress —
+  it does not un-step gate by gate. So a single ← on s8/s11/#stepper
+  puts the component back to its start; to show it again you simply
+  advance again (→/Space) through its steps. Related: the stepper's
+  on-slide **⟲ run all** button advances the component's internal state
+  without the engine knowing, so the engine's step count and what you
+  see can disagree afterwards. **Don't mix ⟲ run all with
+  arrow-stepping mid-demo** — pick one for the duration of that slide
+  (arrows on stage, ⟲ only if you are showing the autoplay in Q&A).
+  Neither is a failure; both look like one if it surprises you live.
 - **Never debug, never apologize.** No "sorry", no "let me just—", no
   visible troubleshooting. The moment a live command misbehaves, the
   talk's on-screen state should look BETTER within two seconds (shadow

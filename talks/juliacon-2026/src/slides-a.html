@@ -216,7 +216,7 @@ true
 
 <section class="slide" id="s8" data-title="What arithmetic costs"
          data-band="off"
-         data-notes="sin costs 5,000× x+x and is still ≤1 ULP. 11,027,852 gates — measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
+         data-notes="sin costs ~175× the Float64 addition (11,027,852 vs 63,058 gates) and ≈23,000× the 482-gate Int8 polynomial — and is still ≤1 ULP. Measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
   <h2 class="frametitle">What arithmetic costs<span class="rule"></span></h2>
   <div class="body">
     <div class="component" data-component="costbars"></div>

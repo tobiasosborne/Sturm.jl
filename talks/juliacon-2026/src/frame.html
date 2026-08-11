@@ -279,6 +279,17 @@ figure.figure-card,.figure-card{
 .figure-card figcaption{
   color:var(--muted);font-size:var(--f-small);
 }
+/* A screen recording is bound by HEIGHT, not width: it must show its whole
+   frame (960x776 for the demo cast) above the band. Sizing it from its own
+   max-height with width:auto preserves the aspect ratio and can never crop —
+   unlike a fixed-height overflow:hidden wrapper, which cut ~9% off the bottom. */
+.figure-card > img.recording,.figure-card img.recording{
+  display:block;
+  width:auto;height:auto;
+  max-width:100%;
+  max-height:46cqh;   /* body 55cqh − caption 3.5 − gap 0.8 − card padding 2.4 */
+  border-radius:8px;
+}
 figcaption{color:var(--muted);font-size:var(--f-small);margin-top:.9cqh}
 
 /* ---- component mounts -------------------------------------------------- */

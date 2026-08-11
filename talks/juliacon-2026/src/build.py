@@ -44,7 +44,10 @@ def main() -> None:
         "{{SVG:circuit23}}": namespace_svg((BENNETT_ASSETS / "circuit_x_plus_1.svg").read_text(), "cx1"),
         "{{SVG:bennett}}": namespace_svg((BENNETT_ASSETS / "bennett_construction.svg").read_text(), "bc", "smil"),
         "{{IMG:democast}}": (
-            '<img alt="recorded demo run" style="width:100%;height:auto" src="data:image/svg+xml;base64,'
+            # No inline sizing: an inline width:100% would beat the stylesheet
+            # and force the 960x776 recording past its height budget. The
+            # .recording rule in frame.html sizes it by max-height instead.
+            '<img alt="recorded demo run" class="recording" src="data:image/svg+xml;base64,'
             + base64.b64encode((BENNETT_ASSETS / "demo.svg").read_bytes()).decode()
             + '">'
         ),

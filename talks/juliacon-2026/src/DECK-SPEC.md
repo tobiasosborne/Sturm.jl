@@ -69,8 +69,9 @@ Every color in the deck comes from these tokens — no ad-hoc hex values.
   content into the band area: `.slide` gets `padding-bottom:29cqh`.
 - **Badge rail**: right edge, vertical flex, six chips, each 5.2cqh circle +
   1.7cqh label under it. Chips: ①…⑥ with labels
-  `reflection` / `dispatch=lowering` / `dispatch=semantics` / `reflection stack` /
-  `types=physics` / `dispatch refuses`. Unlit: `--line` border, `--muted` text.
+  `reflection` / `lowering table` / `semantics` / `reflection stack` /
+  `types=physics` / `dispatch refuses` (②/③ shortened from `dispatch=…` after
+  render testing showed mid-word wraps in the rail). Unlit: `--line` border, `--muted` text.
   Lit: filled with (in order) --purple, --blue, --green, --purple, --gold, --red;
   ink-strong text; subtle 300ms transition + one-time 600ms glow when first lit.
   Lever→slide mapping (lit when slide index ≥ introducing slide, engine-computed):
@@ -462,8 +463,9 @@ pinned in the repos' committed docs. Do not alter them.
 
 ### s16 — unchanged  (band: off)
 - BYTE-IDENTICAL visual of s2's code panel (same f, same compile line), same
-  position — plus: all six badges lit in the rail; small caption under the
-  panel in `--muted`: `unchanged`; URLs footer (2.0cqh):
+  position — plus: all six badges lit in the rail (the frametitle IS the word
+  `unchanged`; no separate caption — a caption duplicating the title was
+  removed after render review); URLs footer (2.0cqh):
   `github.com/tobiasosborne — Sturm.jl · Bennett.jl · BennettVM.jl · AGPL-3.0`.
 - build 1 (the close, display 4.2cqh): `That word “given” has been doing the
   work for forty years.` then `--gold` line: **In Julia, it's a function call.**

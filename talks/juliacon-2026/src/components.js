@@ -181,10 +181,14 @@
     '.cb-sub.shown{opacity:1}',
 
     /* 2. entangle -------------------------------------------------- */
-    '.en-root{justify-content:center;gap:1.6cqh}',
+    /* The height budget on s11 is exact: grid + verdict + caption + foot must
+     * fit the component box, or the foot rides down onto the "I never wrote a
+     * quantum gate" headline that follows it. Root gap and card padding/gap
+     * are the three dials — measured, not guessed. */
+    '.en-root{justify-content:center;gap:1.0cqh}',
     '.en-grid{display:grid;grid-template-columns:1fr 24cqw 1fr;gap:1.4cqw;align-items:stretch}',
     '.en-card{background:var(--panel,#151A22);border:1px solid var(--line,#232A35);border-radius:10px;',
-    '  padding:1.6cqh 1.4cqw;display:flex;flex-direction:column;gap:1.2cqh;opacity:0;',
+    '  padding:1.2cqh 1.4cqw;display:flex;flex-direction:column;gap:0.9cqh;opacity:0;',
     '  transform:translateY(1.2cqh);transition:opacity 400ms ease,transform 400ms ease}',
     '.en-root.armed .en-card{opacity:1;transform:none}',
     '.en-cardhead{display:flex;align-items:baseline;justify-content:space-between;gap:1cqw}',

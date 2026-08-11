@@ -7,7 +7,8 @@
 # `Base.include`s (well, defines top-level in Main) every helper function
 # the four live beats call, so that after this script runs, the ONLY thing
 # left to do is retype the nine live command lines once (see the printed
-# cheat-sheet at the end) so they land in REPL history for ↑+Enter.
+# cheat-sheet at the end) so they land in REPL history for PREFIX recall
+# (type 2–3 characters, press ↑).
 #
 # THIS SCRIPT DOES NOT AND CANNOT POPULATE REPL HISTORY. `include()` runs
 # code; it does not feed lines through the interactive readline history
@@ -94,6 +95,34 @@ function stage(f, name::AbstractString)
     return val
 end
 
+"""
+    expect(actual, wanted, what) -> actual
+
+Hard assertion for a warm-up stage. A stage that merely *doesn't throw* is
+NOT evidence the demo works — the ✅ printed by `stage` must mean "produced
+the value the deck's pre-baked transcript claims", not "returned something".
+On mismatch: print the actual value loudly and `exit(1)` BEFORE the stage's
+✅ (and therefore before "STAGE READY") can ever be printed.
+"""
+function expect(actual, wanted, what::AbstractString)
+    if actual != wanted
+        println()                       # break out of stage()'s pending line
+        println("!"^72)
+        println("❌ WARM-UP ASSERTION FAILED — ", what)
+        println("   expected: ", repr(wanted))
+        println("   actual:   ", repr(actual))
+        println()
+        println("   DO NOT WALK ON STAGE with this session. The pre-baked")
+        println("   shadow transcripts in the deck no longer match reality.")
+        println("   Diagnose in a FRESH julia process (stale demoenv? rebuilt")
+        println("   liborkan.so? changed Bennett/Sturm on disk?).")
+        println("!"^72)
+        flush(stdout)
+        exit(1)
+    end
+    return actual
+end
+
 # ─── Stage 1: load packages ─────────────────────────────────────────────────
 
 stage("using Sturm") do
@@ -172,12 +201,15 @@ _warmc = stage("warm: reversible_compile(f, Int8)  [pays s2's live command]") do
     Bennett.reversible_compile(f, Int8)
 end
 
-stage("warm: simulate(_warmc, Int8(5))  [FIRST simulate call — ~2.8s JIT expected]") do
-    Bennett.simulate(_warmc, Int8(5))
+stage("warm: simulate(_warmc, Int8(5)) == 41  [FIRST simulate — ~2.8s JIT]") do
+    # f(5) = 25 + 15 + 1 = 41 — the number printed on s16 / DECK-SPEC §numbers.
+    expect(Int(Bennett.simulate(_warmc, Int8(5))), 41,
+           "simulate(c, Int8(5)) — f(5) must be 41")
 end
 
-stage("warm: verify_reversibility(_warmc)") do
-    Bennett.verify_reversibility(_warmc)
+stage("warm: verify_reversibility(_warmc) == true") do
+    expect(Bennett.verify_reversibility(_warmc), true,
+           "verify_reversibility(c) — compiled circuit must be reversible")
 end
 
 _warmc1 = stage("warm: reversible_compile(x+1, UInt8; bit_width=3, ...)  [pays s7]") do
@@ -187,15 +219,24 @@ end
 
 stage("warm: gs[14:23] == reverse(gs[1:10])  [mirror equality]") do
     gs = _warmc1.gates
-    gs[14:23] == reverse(gs[1:10])
+    expect(gs[14:23] == reverse(gs[1:10]), true,
+           "s7 mirror equality — uncompute must be the compute half reversed")
 end
 
 _warmcc = stage("warm: controlled(reversible_compile(!x, Bool))  [pays s11]") do
     Bennett.controlled(Bennett.reversible_compile(x -> !x, Bool))
 end
 
-stage("warm: simulate(_warmcc, true, false) / (false, false)") do
-    (Bennett.simulate(_warmcc, true, false), Bennett.simulate(_warmcc, false, false))
+stage("warm: simulate(_warmcc, true, false)==true / (false,false)==false") do
+    # `Bool(·)` normalises a 1/0 return as well as a true/false one; anything
+    # else (a tuple, say) throws loudly here rather than on stage.
+    on  = Bennett.simulate(_warmcc, true, false)
+    off = Bennett.simulate(_warmcc, false, false)
+    expect(Bool(on), true,
+           "simulate(cc, true, false) — control set ⇒ target flips")
+    expect(Bool(off), false,
+           "simulate(cc, false, false) — control clear ⇒ target unchanged")
+    (on, off)
 end
 println()
 flush(stdout)
@@ -205,44 +246,52 @@ println("    Measured cold: ~20.8 s. This is EXPECTED — do not interrupt.")
 flush(stdout)
 
 stage("warm: FIRST oracle() call via deutsch_jozsa(dj_const, Val(2))  [~20.8s COLD]") do
-    Sturm.eager(18) do _
+    got = Sturm.eager(18) do _
         deutsch_jozsa(dj_const, Val(2))
     end
+    expect(got, true, "deutsch_jozsa(dj_const, Val(2)) — constant ⇒ true")
 end
 
 stage("warm: deutsch_jozsa(dj_bal, Val(2))  [now warm, pays s13's 2nd line]") do
-    Sturm.eager(18) do _
+    got = Sturm.eager(18) do _
         deutsch_jozsa(dj_bal, Val(2))
     end
+    expect(got, false, "deutsch_jozsa(dj_bal, Val(2)) — balanced ⇒ false")
 end
 
-stage("warm: teleport 200-shot probe  [optional s12 live beat]") do
-    count(_ -> teleport_ok(), 1:200)
+stage("warm: teleport 200-shot probe == 200  [optional s12 live beat]") do
+    expect(count(_ -> teleport_ok(), 1:200), 200,
+           "200-shot teleport probe — every shot must read false in the dual view")
 end
 println()
 flush(stdout)
 
-# ─── Stage 4: cheat-sheet — retype these NINE lines once, in this order ────
+# ─── Stage 4a: pre-bind the names the SEEDING lines reference ──────────────
 #
-# ↑ recall on stage is fastest and safest if you now retype every live line
-# ONCE, in REVERSE stage order (last-used first). Reason: REPL history is
-# LIFO — the LAST thing you type is the FIRST thing a single ↑ recalls.
-# Typing in reverse stage order means the number of ↑ presses needed at
-# each beat is small, fixed, and STRICTLY INCREASING through the talk:
+# The seeding list is typed in REVERSE stage order, so the lines that USE
+# `c1` and `cc` get retyped BEFORE the lines that DEFINE them. Without these
+# bindings `simulate(cc, ...)` and `gs = c1.gates` would throw UndefVarError
+# during seeding — which still seeds history, but noisily, and leaves you
+# reading a stack trace minutes before walking on. Bind them here from the
+# already-warm objects so EVERY seeding line executes cleanly. (`c` too, for
+# symmetry; its own seeding line rebinds it identically.)
+
+c  = _warmc
+c1 = _warmc1
+cc = _warmcc
+
+# ─── Stage 4b: cheat-sheet — retype these NINE lines once, in this order ───
 #
-#   s2  line 1 (f def)                 → 1×↑
-#   s2  line 2 (c = reversible_compile) → 2×↑
-#   s7  line 1 (c1 = reversible_compile) → 3×↑
-#   s7  line 2 (gs = ...; gs[...]==...)  → 4×↑
-#   s11 line 1 (cc = controlled(...))    → 5×↑
-#   s11 line 2 (simulate(cc,true,false)) → 6×↑
-#   s11 line 3 (simulate(cc,false,false))→ 7×↑
-#   s13 line 1 (deutsch_jozsa dj_const)  → 8×↑
-#   s13 line 2 (deutsch_jozsa dj_bal)    → 9×↑
+# Retype every live line ONCE, in REVERSE stage order (last-used first).
+# Reason: REPL history is LIFO, so reverse-stage seeding leaves each beat's
+# line as the MOST RECENT match for its own prefix — recency still helps.
 #
-# Practice the exact ↑-count backstage until it's reflex. See
-# DEMO-RUNBOOK.md §(b) for the full retype procedure and §(c) for the
-# live-beat table these lines feed.
+# What it does NOT buy you is a fixed ↑-count: executing a recalled command
+# APPENDS it to history, so every count drifts by one after every beat, and
+# the optional s12 beat shifts everything after it. Fixed counts are a trap.
+# Recall by PREFIX instead (type 2–3 chars, then ↑ — Julia's prefix history
+# search), with Ctrl+R incremental search as the backup. The printed table
+# below gives the exact prefix per beat; DEMO-RUNBOOK.md §(b)/§(c) repeat it.
 
 println("="^72)
 println("STAGE READY ✅ — all JIT paid, all helpers defined.")
@@ -250,7 +299,9 @@ println("="^72)
 println()
 println("Now RETYPE these 9 lines, ONE AT A TIME, in this exact (REVERSE")
 println("stage) order, pressing Enter after each. This is what populates")
-println("REPL history for ↑+Enter on stage — see DEMO-RUNBOOK.md §(b).")
+println("REPL history for prefix-recall on stage — see DEMO-RUNBOOK.md §(b).")
+println("`c`, `c1` and `cc` are already bound to the warm objects, so every")
+println("line below executes cleanly as you seed it.")
 println()
 
 for line in [
@@ -267,6 +318,41 @@ for line in [
     println("    ", line)
 end
 println()
+
+println("-"^72)
+println("RECALL ON STAGE — BY PREFIX, NEVER BY A FIXED ↑-COUNT.")
+println("-"^72)
+println("Running a recalled line APPENDS it to history, so any ↑-count you")
+println("memorised drifts by one after every beat (and the optional s12 beat")
+println("shifts the rest). Instead: type the prefix, press ↑, READ the line")
+println("on screen, press Enter.")
+println()
+println("    beat   type this       then ↑ recalls")
+println("    -----  --------------  --------------------------------------")
+for (beat, prefix, what) in [
+    ("s2  a", "f(x",            "f(x::Int8) = x*x + Int8(3)*x + Int8(1)"),
+    ("s2  b", "c = ",           "c = reversible_compile(f, Int8)"),
+    ("s7  a", "c1",             "c1 = reversible_compile(x -> x + UInt8(1), ...)"),
+    ("s7  b", "gs",             "gs = c1.gates; gs[14:23] == reverse(gs[1:10])"),
+    ("s11 a", "cc",             "cc = controlled(reversible_compile(x -> !x, Bool))"),
+    ("s11 b", "simulate(cc, t", "simulate(cc, true, false)"),
+    ("s11 c", "simulate(cc, f", "simulate(cc, false, false)"),
+    ("s13 a", "Stu",            "... deutsch_jozsa(dj_const, Val(2)) ..."),
+    ("s13 b", "Ctrl+R, dj_b",   "... deutsch_jozsa(dj_bal, Val(2)) ..."),
+    ("s12  ", "cou",            "count(_ -> teleport_ok(), 1:200)   [optional]"),
+]
+    println("    ", rpad(beat, 7), rpad(prefix, 16), what)
+end
+println()
+println("Notes: the trailing space in `c = ` is what skips `c1 = ...` and")
+println("`count(...)`. `Stu` matches BOTH s13 lines — it recalls the more")
+println("recent one first, so use Ctrl+R + `dj_b` for the second rather than")
+println("counting ↑ presses. Ctrl+R is the general fallback for every beat:")
+println("Ctrl+R, type a distinctive substring, accept the match, check the")
+println("line, run it. Rehearse both backstage so you know which keystroke")
+println("your build uses to accept vs. execute.")
+println()
 println("Then Ctrl-L to clear the visible screen (history is unaffected).")
-println("Then open ../talk.html in the browser and you are ready to walk on.")
+println("Then open the deck in the browser and you are ready to walk on:")
+println("    file://", joinpath(@__DIR__, "talk.html"))
 flush(stdout)

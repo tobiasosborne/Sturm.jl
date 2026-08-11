@@ -189,7 +189,17 @@
   function fitCode(el) {
     if (!el) return;
     $$('pre', el).forEach(function (p) {
-      p.style.fontSize = '';
+      /* The AUTHORED size is the ceiling. Cache the author's inline
+         font-size string once — '' means "whatever the stylesheet says" —
+         and restore it before every fit. Caching the STRING (which may be
+         '2.2cqh') rather than a resolved px value keeps the slide
+         responsive: a resize re-resolves the author's units, then shrinks
+         from there if it still does not fit. Blindly clearing the inline
+         size, as this once did, silently promoted a deliberately small
+         pre back up to var(--f-code). */
+      if (p.dataset.fitBase === undefined) p.dataset.fitBase = p.style.fontSize || '';
+      var base = p.dataset.fitBase;
+      if (p.style.fontSize !== base) p.style.fontSize = base;
       if (!p.clientWidth) return;
       var fs = parseFloat(window.getComputedStyle(p).fontSize) || 0;
       if (!fs) return;
@@ -206,6 +216,40 @@
       var lines = (p.textContent || '').replace(/\s+$/, '').split('\n').length;
       if (lines > 10) p.classList.add('long');
     });
+  }
+
+  /* ======================================================================
+     printing / PDF export
+     Print CSS lays every slide out at once, but a printed slide is a STILL:
+     nothing will ever press space on it. Without this, a PDF made from the
+     live deck (i.e. without ?still) shows costbars with zero-width fills and
+     the stepper parked at gate 0 — the slides that carry the numbers print
+     empty. So: reveal every build and drive every component to its end
+     state, exactly as ?still does. There is no afterprint restore: the deck
+     is simply left at its final state, which is a state the speaker can keep
+     presenting from (and reverse out of).
+     ====================================================================== */
+  function stillEverything() {
+    $$('.build').forEach(function (b) { b.classList.add('shown'); });
+    $$('[data-component]').forEach(function (c) {
+      callComp(c, 'onStill');
+      c._k = Number.MAX_SAFE_INTEGER;      // already at its end state
+    });
+    slides.forEach(fitCode);
+    updateChrome();
+  }
+
+  function installPrintHooks() {
+    try {
+      window.addEventListener('beforeprint', stillEverything);
+    } catch (e) { warn('[deck] beforeprint unavailable:', e); }
+    /* Safari never fires beforeprint; the print media query does. */
+    try {
+      var mq = window.matchMedia('print');
+      var onMQ = function (e) { if (e.matches) stillEverything(); };
+      if (mq.addEventListener) mq.addEventListener('change', onMQ);
+      else if (mq.addListener) mq.addListener(onMQ);
+    } catch (e) {}
   }
 
   /* ======================================================================
@@ -614,6 +658,8 @@
 
     var hashId = (location.hash || '').replace(/^#/, '');
     enter(byId[hashId] ? hashId : order[0], { force: true });
+
+    installPrintHooks();
 
     document.addEventListener('keydown', onKey);
     if (stage) stage.addEventListener('click', onClick);
