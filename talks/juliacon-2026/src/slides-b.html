@@ -1,0 +1,330 @@
+<!-- slides-b.html — agent SLIDES-B — sections s9…s16 + the five backups.
+     Fragment only: section elements, nothing else. frame.html owns the document. -->
+
+<section class="slide" id="s9" data-title="0.5 + 0.5 == 0.0" data-band="off"
+         data-notes="War story, 50 s budget. Sheddable line: the hostile-review aside (Carmack persona caught Pkg.test() at 4m06 vs a claimed ~90 s).">
+  <h2 class="frametitle"><span class="mono">0.5 + 0.5 == 0.0</span><span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="center mono" style="font-size:5.5cqh;line-height:1.2;margin:4.5cqh 0 1cqh;">0.5 + 0.5 <span class="red">==</span> 0.0</div>
+
+    <div class="build stack" style="display:flex;flex-direction:column;gap:0.7cqh;margin-top:5cqh;">
+      <div>The datapath is branchless — every path computes, always.</div>
+      <div>A subtraction-path condition wire fired on the addition path.</div>
+      <div>VLSI has a name for this: <strong>false-path sensitization</strong> (Bergamaschi, 1992).</div>
+    </div>
+
+    <div class="build muted" style="margin-top:2.6cqh;max-width:78cqw;">No published system converts a multi-way φ-node from an arbitrary CFG into a correct reversible MUX tree. That part is uncharted.</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s10" data-title="A loop wants an interpreter" data-band="off"
+         data-notes="BennettVM's one beat, 45 s. Backup #vmtape if Q&amp;A.">
+  <h2 class="frametitle">A loop wants an interpreter<span class="rule"></span></h2>
+  <div class="body">
+
+    <div>Collatz as a circuit (<span class="mono">max_loop_iterations = 20</span>):</div>
+    <div class="mono" style="font-size:3.4cqh;margin:0.9cqh 0 0.5cqh;"><strong>14,074 gates · 2,320 Toffoli · 8,868 ancillae</strong></div>
+    <div class="muted small" style="margin-bottom:1.8cqh;">bounded, MUX-frozen, convergence-guarded. It works. It&rsquo;s also the wrong shape.</div>
+
+<pre><code>vm = reversible_compile(collatz_steps, Int64; target = :reversible_vm)
+run!(rs, vm);  unrun!(rs, vm)
+rs.current == rs.initial     <span class="muted"># true — bit-for-bit</span>
+isempty(rs.history)          <span class="muted"># true — the tape is drained</span></code></pre>
+
+    <div class="build" style="margin-top:2.2cqh;">&ldquo;every ancilla returns to zero&rdquo; becomes <span class="mono">isempty(history)</span> — same theorem, different data structure.</div>
+
+    <div class="build muted small" style="margin-top:1.4cqh;">three-layer tape: injective steps log nothing · min-cut deltas (Enzyme&rsquo;s idea) · checkpoint+replay (rr&rsquo;s idea)</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s11" data-title="I never wrote a quantum gate" data-band="live"
+         data-notes="THE SIGNATURE MOMENT. Live: three ↑+Enter lines. Then the deck's own sim: 'the deck is running the compiled circuit right now.' THREE-SECOND PAUSE after the headline. 10:00 hard checkpoint lands here.">
+  <h2 class="frametitle">I never wrote a quantum gate<span class="rule"></span></h2>
+  <div class="body">
+
+<div style="display:flex;align-items:baseline;gap:2cqw;flex-wrap:nowrap;">
+      <pre style="margin:0;padding:0.9cqh 1.4cqw;flex:0 0 auto;"><code style="font-size:2.0cqh;">cc = controlled(reversible_compile(x -&gt; !x, Bool))</code></pre>
+      <div class="muted" style="font-size:1.9cqh;white-space:nowrap;">NOT→CNOT · CNOT→Toffoli · Toffoli→3 Toffoli+ancilla</div>
+    </div>
+
+    <div class="component" data-component="entangle" style="margin:0.8cqh 0 0;"></div>
+
+    <div class="build center" style="font-size:3.8cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:0.6cqh;">I never wrote a quantum gate.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; simulate(cc, true, false)
+true
+julia&gt; simulate(cc, false, false)
+false
+julia&gt; show_ket(apply_as_permutation(cc, plus_control()))
+(|0,0,0⟩ + |1,0,1⟩)/√2    ‖ψ‖ = 1.0
+  </template>
+</section>
+
+<section class="slide" id="s12" data-title="Teleportation, zero gates" data-band="shadow"
+         data-notes="OPTIONAL-A: sheddable in full (40 s). If kept and ahead of clock, run the 200-shot live beat — measured 0.25 s.">
+  <h2 class="frametitle">Teleportation, zero gates<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:56cqw 1fr;gap:1.6cqw;align-items:start;">
+
+<pre style="margin:0;"><code style="font-size:2.3cqh;">function teleport(ψ::QBool)
+    b = QBool(0.5)
+    c = false ⊻ b
+    b ⊻= ψ
+    m_phase = Bool(dual(ψ))
+    m_value = Bool(b)
+    m_value &amp;&amp; not!(c)
+    m_phase &amp;&amp; not!(dual(c))
+    return c
+end</code></pre>
+
+      <div style="display:grid;grid-template-rows:repeat(10,3.45cqh);font-size:2.1cqh;padding-top:2.2cqh;line-height:1.45;">
+        <div class="muted" style="grid-row:2;">← fair quantum coin</div>
+        <div class="muted" style="grid-row:3;">← Bell pair</div>
+        <div class="muted" style="grid-row:5;">← conjugate-basis readout — <span class="gold">CONSUMES ψ</span></div>
+        <div class="muted" style="grid-row:7 / span 2;">← ordinary conditionals — one in the dual view</div>
+      </div>
+
+    </div>
+
+    <div class="build serif center" style="font-style:italic;font-size:2.8cqh;margin-top:2.4cqh;">&ldquo;If your program reads like a circuit diagram, it is wrong.&rdquo;</div>
+
+    <div class="build muted small center" style="margin-top:1.2cqh;"><span class="mono">⊻=</span> mutates — against Julia precedent (#249, #3217) and correct here: no-cloning means no caller could expect a value.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; count(_ -&gt; teleport_ok(), 1:200)
+200
+# |+⟩ probe, X-basis readout: 200/200 deterministic — 0.25 s
+  </template>
+</section>
+
+<section class="slide" id="s13" data-title="The loop closes: oracle(f, x)" data-band="live"
+         data-notes="Here's the whole talk in five lines. f is the SAME ordinary function idea we compiled at 0:35. Live: two calls, ~2.1 s each, measured. If Orkan misbehaved in the green room: press D, keep walking.">
+  <h2 class="frametitle">The loop closes: <span class="mono">oracle(f, x)</span><span class="rule"></span></h2>
+  <div class="body">
+
+<pre><code>function deutsch_jozsa(f, ::Val{N}) where {N}
+    x = QInt{N}(0); superpose!(x)
+    b = minus()
+<mark>    b ⊻= oracle(f, x)          <span class="muted"># ordinary Julia f, compiled by Bennett</span></mark>
+    return Int(dual(x)) == 0   <span class="muted"># one query</span>
+end</code></pre>
+
+    <div class="build muted" style="margin-top:2.6cqh;max-width:82cqw;"><span class="mono">oracle(f, x)</span> crosses a weakdep extension — the only file in Sturm that names a Bennett type; <span class="mono">using Sturm</span> never pays LLVM&rsquo;s precompile. Both package seams are the same trick: a <span class="mono">Ref{Any}(nothing)</span> filled by the downstream package&rsquo;s <span class="mono">__init__</span>.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end
+true
+julia&gt; Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end
+false
+# one query each — ~2 s warm
+  </template>
+</section>
+
+<section class="slide" id="s14" data-title="Two lessons" data-band="off"
+         data-notes="50 s. Panel (b) is sheddable (25 s) — bridge straight to s15 with 'error correction is a higher-order function on channels — and here's what happens when you try to control one.'">
+  <h2 class="frametitle">Two lessons<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2.4cqw;align-items:start;">
+
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
+        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">The marginals lied</div>
+        <div class="small">Our first teleport moved the value and dropped the phase. Its test passed — output statistics looked fine. The fixed one reads <strong>1024/1024</strong> on a probe where the broken one reads <strong>≈512</strong>.</div>
+        <div class="small gold" style="margin-top:1.2cqh;">Test the whole channel, not what leaks out of it.</div>
+      </div>
+
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
+        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">Error correction is a function</div>
+<pre style="margin:0 0 1.2cqh;"><code style="font-size:2.1cqh;">Protect(enc)(physical_iid(enc, bit_flip(p)))
+<span class="muted"># channel in → channel out</span></code></pre>
+        <div class="small">pinned two-sided: helps below <span class="mono">p = ½</span>, hurts above — a sign-flipped decoder passes any one-sided test.</div>
+      </div>
+
+    </div>
+
+  </div>
+</section>
+
+<section class="slide" id="s15" data-title="The zinger" data-band="off"
+         data-notes="Read the error slowly. This is lever ⑥ and the Sturm thesis in one screen.">
+  <h2 class="frametitle">The zinger<span class="rule"></span></h2>
+  <div class="body">
+
+<pre style="margin-top:2cqh;"><code style="font-size:3.6cqh;line-height:1.5;"><span class="green">julia&gt;</span> ctrl(Protect(enc))
+<span class="red">ERROR: MethodError: no method matching ctrl(::Protect{…})</span></code></pre>
+
+    <div class="build" style="font-size:3.2cqh;margin-top:3cqh;max-width:84cqw;">Bădescu–Panangaden: a quantum <span class="mono">if</span> has no channel semantics. Gavorová et al.: controlled-<em>U</em> cannot be built from black-box <em>U</em>. In most frameworks that&rsquo;s documentation. Here it&rsquo;s a <span class="mono">MethodError</span>.</div>
+
+    <div class="build" style="font-size:4cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:2.4cqh;">The no-go theorem and the method table are the same object.</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s16" data-title="unchanged" data-band="off"
+         data-notes="If time is short: say only the last two lines and let the slide carry the rest.">
+  <h2 class="frametitle">unchanged<span class="rule"></span></h2>
+  <div class="body">
+
+<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+
+c = reversible_compile(f, Int8)</code></pre>
+
+    <div class="build" style="margin-top:3.2cqh;">
+      <div style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;">That word &ldquo;given&rdquo; has been doing the work for forty years.</div>
+      <div class="gold" style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;margin-top:0.8cqh;">In Julia, it&rsquo;s a function call.</div>
+    </div>
+
+    <div class="build muted" style="font-size:2.8cqh;margin-top:2cqh;">Ancillae restored to zero. Thank you.</div>
+
+    <div class="muted mono" style="font-size:2cqh;margin-top:2.4cqh;">github.com/tobiasosborne — Sturm.jl · Bennett.jl · BennettVM.jl · AGPL-3.0</div>
+
+  </div>
+</section>
+
+<!-- ===================== BACKUPS (not in linear order) ===================== -->
+
+<section class="slide backup" id="fallback" data-title="Fallback — recorded run" data-band="off"
+         data-notes="Key 0. The live machine is having a moment. Narrate over the recording at the same pace and keep walking; press B to return.">
+  <h2 class="frametitle">Fallback — recorded run<span class="rule"></span></h2>
+  <div class="body center">
+
+    <figure class="figure-card" style="width:44cqw;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:0.8cqh;">
+      <div style="max-height:56cqh;overflow:hidden;border-radius:8px;">{{IMG:democast}}</div>
+      <figcaption class="muted small">recorded run — the live machine is having a moment</figcaption>
+    </figure>
+
+  </div>
+</section>
+
+<section class="slide backup" id="pebbling" data-title="Q&amp;A: the space–time dial" data-band="off"
+         data-notes="Knill 1995, Theorem 2.1. The dial trades gates for wires: recompute instead of store. Six strategies, all one dispatch away.">
+  <h2 class="frametitle">Q&amp;A: the space–time dial<span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="muted small">Knill 1995, Theorem 2.1 — the reversible pebble game on <span class="mono">n</span> steps with <span class="mono">s</span> pebbles:</div>
+
+<pre style="margin-top:1cqh;"><code>F(1, s) = 1                        <span class="muted">for s ≥ 1</span>
+F(n, 1) = ∞                        <span class="muted">for n ≥ 2</span>
+F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
+
+    <div class="serif center" style="font-style:italic;font-size:3.2cqh;margin:2cqh 0;">F(n, s) finite ⟺ n ≤ 2<sup>(s−1)</sup></div>
+
+    <div class="small muted">Six pluggable <span class="mono">BennettStrategy</span> subtypes — adding a seventh is adding a method:</div>
+    <div class="mono small" style="display:grid;grid-template-columns:1fr 1fr;gap:0.4cqh 2cqw;margin-top:0.8cqh;">
+      <div>DefaultStrategy <span class="muted">— forward + CNOT-copy + reverse</span></div>
+      <div>CheckpointStrategy <span class="muted">— per-group checkpoint-and-free</span></div>
+      <div>EagerStrategy <span class="muted">— gate-level dead-end cleanup</span></div>
+      <div>PebbledStrategy(max_pebbles) <span class="muted">— Knill, gate-level</span></div>
+      <div>ValueEagerStrategy <span class="muted">— PRS15 Alg. 2, Kahn reverse</span></div>
+      <div>PebbledGroupStrategy(max_pebbles) <span class="muted">— group-level, wire reuse</span></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="vmtape" data-title="Q&amp;A: the three-layer history tape" data-band="off"
+         data-notes="The tape is what replaces ancillae in the VM. L1 costs nothing, L2 is Enzyme's min-cut idea, L3 is rr's record-replay. unrun! drains all three.">
+  <h2 class="frametitle">Q&amp;A: the three-layer history tape<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:1.2cqh 2cqw;align-items:baseline;font-size:2.6cqh;margin-top:2cqh;">
+
+      <div class="mono gold">L1</div>
+      <div><strong>injective</strong></div>
+      <div class="muted">the step is a bijection on machine state — reversal recomputes it. Nothing is logged.</div>
+      <div class="mono muted small">0 bytes</div>
+
+      <div class="mono gold">L2</div>
+      <div><strong>min-cut delta</strong></div>
+      <div class="muted">log the smallest set of overwritten words that makes the step invertible. Enzyme&rsquo;s idea.</div>
+      <div class="mono muted small">O(cut)</div>
+
+      <div class="mono gold">L3</div>
+      <div><strong>checkpoint + replay</strong></div>
+      <div class="muted">snapshot every K steps, replay forward from the nearest checkpoint. rr&rsquo;s idea.</div>
+      <div class="mono muted small">O(state)/K</div>
+
+    </div>
+
+    <div class="muted small" style="margin-top:2.6cqh;"><span class="mono">unrun!(rs, vm)</span> drains all three layers: <span class="mono">rs.current == rs.initial</span> and <span class="mono">isempty(rs.history)</span>.</div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="numbers-full" data-title="Q&amp;A: the full number table" data-band="off"
+         data-notes="Every number measured on this machine 2026-08-11 or pinned in the committed docs. The SHA-256 row is the one we lose; it stays in the table.">
+  <h2 class="frametitle">Q&amp;A: the full number table<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:0.55cqh 2cqw;font-size:2.1cqh;line-height:1.35;align-items:baseline;">
+
+      <div class="mono">Int8 &nbsp;x*x + 3x + 1</div>
+      <div><strong>482</strong> gates (NOT 14 / CNOT 300 / Toffoli 168) · depth 89 · Toffoli-depth 36 · 249 ancillae</div>
+
+      <div class="mono">UInt8 x + 1 &nbsp;(3-bit)</div>
+      <div><strong>23</strong> gates (NOT 6 / CNOT 15 / Toffoli 2) · 16 wires · 10 ancillae · depth 9 · <span class="mono">simulate(c1, 3) = 4</span></div>
+
+      <div class="mono">Int8 &nbsp;f(5)</div>
+      <div><strong>41</strong> — the circuit agrees with the function</div>
+
+      <div class="mono">Float64 x + x</div>
+      <div><strong>63,058</strong> gates — bit-exact soft-float</div>
+
+      <div class="mono">Float64 sin(x)</div>
+      <div><strong>11,027,852</strong> gates (1,629,722 NOT / 7,059,276 CNOT / 2,338,854 Toffoli) · 38.8 s compile · <span class="mono">sin(1.2345)</span> bit-identical, ≤1 ULP vs <span class="mono">Base.sin</span></div>
+
+      <div class="mono">QCLA 32-bit multiply</div>
+      <div>Toffoli-depth <strong>56</strong> vs <strong>180</strong> schoolbook</div>
+
+      <div class="mono">QROM</div>
+      <div>T-count exactly <strong>4(L−1)</strong>, width-independent — matches Babbush–Gidney</div>
+
+      <div class="mono">shadow-memory store</div>
+      <div><strong>24</strong> CNOT vs a <strong>7,122</strong>-gate MUX</div>
+
+      <div class="mono red">SHA-256 round</div>
+      <div><strong>1,632</strong> Toffoli vs hand-optimized <strong>683</strong> — ~2.4× worse, and it stays in our own table</div>
+
+      <div class="mono">Collatz circuit (20)</div>
+      <div><strong>14,074</strong> gates · <strong>2,320</strong> Toffoli · <strong>8,868</strong> ancillae</div>
+
+      <div class="mono">persistent map @ 128</div>
+      <div>linear scan beats Okasaki <strong>2,400×</strong> — the naive structure wins</div>
+
+      <div class="mono">Deutsch–Jozsa (Sturm)</div>
+      <div>warm <strong>≈2.1 s</strong> · first oracle call <strong>20.8 s</strong> cold</div>
+
+      <div class="mono">teleport probe</div>
+      <div><strong>200/200</strong> deterministic in <strong>0.25 s</strong></div>
+
+      <div class="mono">wm28 channel probe</div>
+      <div>fixed <strong>1024/1024</strong> vs broken <strong>≈512</strong> — the marginal test was blind</div>
+
+      <div class="mono">TTFX</div>
+      <div><strong>20.7 s → 0.99 s</strong> after the precompile workload</div>
+
+      <div class="mono">test suites</div>
+      <div><strong>≈692k</strong> Bennett assertions · <strong>&gt;27k</strong> Sturm assertions</div>
+
+    </div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="stepper" data-title="Q&amp;A: 23 gates, one at a time" data-band="off"
+         data-notes="Arrow keys run one gate each. Compute 1–10, copy 11–13, uncompute 14–23. Input x = 3; out = 4; every ancilla back to zero.">
+  <h2 class="frametitle">Q&amp;A: 23 gates, one at a time<span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="component" data-component="stepper" style="min-height:52cqh;"></div>
+
+  </div>
+</section>

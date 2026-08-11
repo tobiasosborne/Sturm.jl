@@ -1,0 +1,3168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Given an Oracle for f</title>
+<style>
+/* ==========================================================================
+   Given an Oracle for f — JuliaCon 2026
+   Single-file stage deck. Vanilla CSS, no external requests.
+   Single fixed dark theme: every surface is painted explicitly from tokens.
+   ========================================================================== */
+
+/* ---- reset ------------------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+h1,h2,h3,h4,p,ul,ol,li,figure,blockquote,pre,table{margin:0;padding:0}
+ul,ol{list-style:none}
+button{font:inherit;color:inherit;background:none;border:none}
+img,svg{max-width:100%}
+
+/* ---- design tokens ----------------------------------------------------- */
+:root{
+  --bg:#0E1116;          /* stage ground — blue-biased near-black */
+  --panel:#151A22;       /* raised panels */
+  --code-bg:#10151C;     /* code blocks */
+  --band:#0A0D11;        /* terminal band (darkest) */
+  --ink:#E8E6E1;         /* warm off-white body text */
+  --ink-strong:#FFFFFF;
+  --muted:#8A93A6;       /* blue-gray muted */
+  --line:#232A35;        /* hairlines */
+  /* Julia brand, lifted for legibility on the dark ground: */
+  --purple:#B385D6;  --green:#5CBD6A;  --red:#E06C5F;  --blue:#6B8FE8;
+  /* raw brand (only inside light figure cards): */
+  --raw-purple:#9558B2; --raw-green:#389826; --raw-red:#CB3C33; --raw-blue:#4063D8;
+  --gold:#E0B45F;        /* the "Given" highlight + timer amber */
+  /* two non-stage grounds: the letterbox surround, and the paper of the
+     light figure cards (the SVGs were authored on #fbfbfe and stay that way) */
+  --backdrop:#000000;
+  --card:#FBFBFE;
+  /* the only rgba() literals in this file are these four scrims/shadows —
+     each is a token color carrying an alpha, not a new colour:
+     rgba(14,17,22,a)=--bg · rgba(10,13,17,a)=--band ·
+     rgba(0,0,0,a)=--backdrop · rgba(224,180,95,.12)=--gold at 12% (<mark>) */
+
+  /* type */
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"JuliaMono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono","DejaVu Sans",monospace;
+  --serif:Georgia,"Times New Roman",serif;
+
+  /* scale — container-query units against the 1280x720 stage */
+  --f-title:4.2cqh;
+  --f-lead:3.4cqh;
+  --f-body:3.0cqh;
+  --f-small:2.3cqh;
+  --f-code:2.5cqh;
+  --f-display:4.6cqh;
+}
+
+/* ---- deck / stage ------------------------------------------------------ */
+body{
+  background:var(--backdrop);
+  color:var(--ink);
+  font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+#deck{
+  position:fixed; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--backdrop);
+}
+#stage{
+  position:relative;
+  width:min(100vw,177.78vh);
+  height:min(56.25vw,100vh);
+  container-type:size;
+  background:var(--bg);
+  color:var(--ink);
+  overflow:hidden;
+}
+
+/* progress hairline across the very top of the stage */
+#progress{
+  position:absolute; top:0; left:0; z-index:40;
+  height:2px; width:0;
+  background:var(--purple);
+  transition:width 320ms ease;
+}
+
+/* ---- slides ------------------------------------------------------------ */
+.slide{
+  position:absolute; inset:0;
+  display:none;
+  flex-direction:column;
+  /* right padding clears the badge rail; bottom clears the 26cqh band */
+  padding:6cqh 11cqw 29cqh 6cqw;
+  overflow:hidden;
+  font-size:var(--f-body);
+  line-height:1.5;
+}
+.slide.current{display:flex}
+.slide.wide{padding-right:6cqw}  /* opt out of the rail gutter (title, figures) */
+.slide.backup{}                  /* backups differ only in the linear order */
+
+.frametitle{
+  font-size:var(--f-title);
+  font-weight:700;
+  letter-spacing:-0.015em;
+  text-wrap:balance;
+  color:var(--ink-strong);
+  margin-bottom:2.2cqh;
+  flex:0 0 auto;
+}
+.frametitle .rule{
+  display:block;
+  height:2px; width:100%;
+  margin-top:1.1cqh;
+  background:linear-gradient(90deg,var(--purple),transparent 62%);
+}
+.slide > .body,.slide .body{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:1.8cqh;
+  overflow:hidden;
+}
+
+/* builds */
+.build{
+  opacity:0;
+  transform:translateY(1.2cqh);
+  transition:opacity 400ms ease,transform 400ms ease;
+  pointer-events:none;
+}
+.build.shown{opacity:1;transform:none;pointer-events:auto}
+
+/* ---- typography utilities --------------------------------------------- */
+p,li{text-wrap:pretty}
+.lead{font-size:var(--f-lead);line-height:1.45}
+.small,.note,.caption,.annot{font-size:var(--f-small);line-height:1.5}
+.tiny{font-size:1.9cqh;line-height:1.5}
+.display{
+  font-size:var(--f-display);font-weight:700;letter-spacing:-0.015em;
+  text-wrap:balance;color:var(--ink-strong);line-height:1.2;
+}
+.display-lg{
+  font-size:7cqh;font-weight:700;letter-spacing:-0.02em;
+  text-wrap:balance;color:var(--ink-strong);line-height:1.1;
+}
+.eyebrow{
+  font-size:2.2cqh;letter-spacing:0.18em;text-transform:uppercase;
+  color:var(--muted);font-weight:600;
+}
+.muted{color:var(--muted)}
+.strong,.ink-strong{color:var(--ink-strong)}
+.gold{color:var(--gold)}
+.green{color:var(--green)}
+.red{color:var(--red)}
+.blue{color:var(--blue)}
+.purple{color:var(--purple)}
+.center{text-align:center}
+.middle{justify-content:center}
+.mono{font-family:var(--mono);font-variant-ligatures:none}
+.nums{font-variant-numeric:tabular-nums}
+b,strong{font-weight:700;color:var(--ink-strong)}
+em,i{font-style:italic}
+a{color:var(--blue);text-decoration:none;border-bottom:1px solid var(--line)}
+
+/* the one serif voice in the deck: the oracle equation + physics quotes */
+.serif,.eq,.quote,.paper{font-family:var(--serif);font-style:italic}
+.eq{font-size:6cqh;line-height:1.25;color:var(--ink-strong);text-align:center}
+.eq sub,.eq sup{font-size:.55em}
+.quote{font-size:2.8cqh;color:var(--ink)}
+
+ul.bullets{display:flex;flex-direction:column;gap:1.1cqh}
+ul.bullets > li{position:relative;padding-left:2.4cqw}
+ul.bullets > li::before{
+  content:"";position:absolute;left:0;top:.62em;
+  width:.9cqh;height:.9cqh;border-radius:50%;background:var(--purple);
+}
+
+/* two-column bodies */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:3cqw;min-height:0;align-items:start}
+.cols-55-45{display:grid;grid-template-columns:55fr 45fr;gap:2.6cqw;min-height:0;align-items:center}
+.col{min-width:0;min-height:0;display:flex;flex-direction:column;gap:1.6cqh}
+
+/* raised panels */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:2cqh 1.8cqw;
+}
+.panel > .panel-title{
+  font-size:var(--f-small);font-weight:700;color:var(--ink-strong);
+  margin-bottom:.9cqh;letter-spacing:.01em;
+}
+
+/* footers / bylines */
+.footer,.slide-footer{
+  margin-top:auto;font-size:2.0cqh;color:var(--muted);
+}
+
+/* right-margin annotations (s12) */
+.annots{display:flex;flex-direction:column;gap:.8cqh;color:var(--muted);font-size:var(--f-small)}
+.annots > li::before{content:"↳ ";color:var(--line)}
+
+/* the four Julia-dot ornament */
+.dots{display:flex;gap:1.1cqw;justify-content:center}
+.dots > i{display:block;width:1.6cqh;height:1.6cqh;border-radius:50%}
+.dots > i:nth-child(1){background:var(--raw-purple)}
+.dots > i:nth-child(2){background:var(--raw-red)}
+.dots > i:nth-child(3){background:var(--raw-green)}
+.dots > i:nth-child(4){background:var(--raw-blue)}
+
+/* tables (benchmark rows, vm tape) */
+table{border-collapse:collapse;width:100%;font-size:var(--f-small)}
+th,td{
+  text-align:left;padding:.7cqh 1cqw;border-bottom:1px solid var(--line);
+  vertical-align:top;
+}
+th{color:var(--muted);font-weight:600;letter-spacing:.02em}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- code -------------------------------------------------------------- */
+pre,code,kbd,samp{font-family:var(--mono);font-variant-ligatures:none}
+pre{
+  background:var(--code-bg);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:2.2cqh 1.8cqw;
+  font-size:var(--f-code);
+  line-height:1.5;
+  color:var(--ink);
+  white-space:pre;
+  overflow:hidden;
+  tab-size:2;
+}
+pre.long{font-size:2.1cqh}       /* >10 lines — set by the engine */
+pre.repl{font-size:3.6cqh;line-height:1.45}
+:not(pre) > code{
+  font-size:.92em;
+  background:var(--code-bg);
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:.06em .32em;
+}
+/* MINIMAL two-tone highlighting — never rainbow. Aliases are deliberate:
+   whatever the slide author reaches for, it lands on the same two hues. */
+pre .c,pre .cm,pre .comment{color:var(--muted)}
+pre .s,pre .st,pre .string{color:var(--green)}
+pre .k,pre .kw,pre .keyword{color:var(--purple)}
+pre .m,pre .muted{color:var(--muted)}
+pre .p,pre .prompt{color:var(--green)}
+pre .r,pre .err{color:var(--red)}
+pre .g,pre .ok{color:var(--green)}
+mark{
+  background:rgba(224,180,95,.12);   /* --gold at 12% */
+  color:inherit;
+  border-radius:3px;
+  padding:.05em 0;
+}
+
+/* ---- figure cards (the light "paper" figures) -------------------------- */
+figure.figure-card,.figure-card{
+  background:var(--card);
+  border-radius:12px;
+  padding:1.2cqh;
+  margin:0;
+  box-shadow:0 1.2cqh 3.4cqh rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;
+  min-height:0;max-width:100%;
+}
+.figure-card > svg,.figure-card > img,.figure-card svg,.figure-card img{
+  display:block;width:100%;height:auto;max-height:100%;
+}
+.figure-card figcaption{
+  color:var(--muted);font-size:var(--f-small);
+}
+figcaption{color:var(--muted);font-size:var(--f-small);margin-top:.9cqh}
+
+/* ---- component mounts -------------------------------------------------- */
+.component{
+  flex:1 1 auto;min-height:0;min-width:0;width:100%;
+  display:block;position:relative;
+}
+.component button,.deck-btn{
+  font-family:var(--sans);font-size:var(--f-small);
+  color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;
+  padding:.6cqh 1.1cqw;cursor:pointer;
+  transition:border-color 200ms ease,color 200ms ease;
+}
+.component button:hover,.deck-btn:hover{border-color:var(--purple);color:var(--ink-strong)}
+
+/* ---- badge rail -------------------------------------------------------- */
+#rail{
+  position:absolute;
+  right:1.6cqw; top:7cqh; bottom:29cqh;
+  z-index:30;
+  width:7.4cqw;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1.4cqh;
+  pointer-events:none;
+}
+.badge{display:flex;flex-direction:column;align-items:center;gap:.35cqh;width:100%}
+.badge .chip{
+  width:5.2cqh;height:5.2cqh;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:2.6cqh;font-weight:700;line-height:1;
+  border:1px solid var(--line);
+  color:var(--muted);
+  background:transparent;
+  transition:background-color 300ms ease,color 300ms ease,border-color 300ms ease;
+}
+.badge .chip-label{
+  font-size:1.7cqh;line-height:1.15;text-align:center;
+  color:var(--muted);
+  transition:color 300ms ease;
+  overflow-wrap:anywhere;
+}
+.badge[data-lever="1"]{--lit:var(--purple)}
+.badge[data-lever="2"]{--lit:var(--blue)}
+.badge[data-lever="3"]{--lit:var(--green)}
+.badge[data-lever="4"]{--lit:var(--purple)}
+.badge[data-lever="5"]{--lit:var(--gold)}
+.badge[data-lever="6"]{--lit:var(--red)}
+.badge.lit .chip{
+  background:var(--lit);
+  border-color:var(--lit);
+  color:var(--ink-strong);
+}
+.badge.lit .chip-label{color:var(--ink)}
+.badge.glow .chip{animation:badge-glow 600ms ease-out 1}
+@keyframes badge-glow{
+  0%{box-shadow:0 0 0 0 var(--lit)}
+  60%{box-shadow:0 0 2.4cqh .5cqh var(--lit)}
+  100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}
+}
+#rail.flash .chip{animation:rail-flash 900ms ease-out 1}
+@keyframes rail-flash{
+  0%{border-color:var(--line)}
+  35%{border-color:var(--lit);box-shadow:0 0 1.6cqh 0 var(--lit)}
+  100%{border-color:var(--line);box-shadow:0 0 0 0 rgba(0,0,0,0)}
+}
+
+/* ---- terminal band ----------------------------------------------------- */
+#band{
+  position:absolute;left:0;right:0;bottom:0;z-index:35;
+  height:26cqh;
+  background:var(--band);
+  border-top:1px solid var(--line);
+  overflow:hidden;
+}
+#band .band-dots{
+  position:absolute;top:1.6cqh;left:1.6cqw;
+  display:flex;gap:.8cqw;
+}
+#band .band-dots > i{
+  display:block;width:1.3cqh;height:1.3cqh;border-radius:50%;
+  background:var(--line);
+}
+#band-state{
+  position:absolute;top:1.6cqh;right:1.6cqw;
+  font-size:1.7cqh;letter-spacing:.04em;color:var(--muted);
+  font-family:var(--mono);
+}
+#band[data-state="live"] #band-state{color:var(--green);animation:live-pulse 2.6s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+#band .band-label{
+  position:absolute;bottom:1.2cqh;right:1.6cqw;
+  font-size:1.6cqh;color:var(--muted);
+}
+#band-out{
+  position:absolute;left:1.6cqw;right:1.6cqw;top:4.4cqh;bottom:3.4cqh;
+  display:flex;flex-direction:column;justify-content:flex-end;
+  font-family:var(--mono);font-size:1.9cqh;line-height:1.45;
+  color:var(--ink);
+  white-space:pre-wrap;overflow:hidden;
+}
+#band-out .term-line{min-height:1.45em}
+#band-out .term-prompt{color:var(--green)}
+
+/* ---- slide counter ----------------------------------------------------- */
+#counter{
+  position:absolute;right:2cqw;bottom:26.8cqh;z-index:30;
+  font-size:1.8cqh;color:var(--muted);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---- timer HUD --------------------------------------------------------- */
+#timer{
+  position:absolute;left:2cqw;top:1.8cqh;z-index:45;
+  font-size:1.9cqh;color:var(--muted);
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+  letter-spacing:.04em;
+}
+#timer[data-late="soft"]{color:var(--gold)}
+#timer[data-late="hard"]{color:var(--red)}
+#timer[hidden]{display:none}
+
+/* ---- speaker notes overlay --------------------------------------------- */
+#notes{
+  position:absolute;left:2cqw;bottom:27cqh;z-index:45;
+  max-width:62cqw;
+  font-size:2.0cqh;line-height:1.4;color:var(--muted);
+  background:rgba(10,13,17,.86);
+  border:1px solid var(--line);border-radius:8px;
+  padding:1cqh 1.2cqw;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
+  line-clamp:3;overflow:hidden;
+}
+#notes[hidden]{display:none}
+
+/* ---- help overlay ------------------------------------------------------ */
+#help{
+  position:absolute;inset:0;z-index:60;
+  background:rgba(14,17,22,.94);
+  display:flex;align-items:center;justify-content:center;
+}
+#help[hidden]{display:none}
+#help .help-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:3cqh 3cqw;max-width:70cqw;
+  box-shadow:0 2cqh 5cqh rgba(0,0,0,.6);
+}
+#help h3{font-size:3cqh;font-weight:700;color:var(--ink-strong);margin-bottom:1.6cqh}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:.7cqh 1.6cqw;font-size:2.2cqh}
+#help dt{font-family:var(--mono);color:var(--gold);white-space:nowrap}
+#help dd{color:var(--ink);margin:0}
+#help .help-foot{margin-top:1.8cqh;font-size:1.9cqh;color:var(--muted)}
+kbd{
+  font-family:var(--mono);font-size:.95em;
+  border:1px solid var(--line);border-radius:5px;padding:.05em .35em;
+  background:var(--code-bg);
+}
+
+/* ---- focus ------------------------------------------------------------- */
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
+
+/* ---- ?still (screenshot mode) ------------------------------------------ */
+body.still .build{opacity:1;transform:none;pointer-events:auto}
+body.still *,body.still *::before,body.still *::after{
+  transition-duration:0ms !important;
+  animation:none !important;
+}
+
+/* ---- reduced motion ---------------------------------------------------- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    transition-duration:0ms !important;
+    animation-duration:0ms !important;
+    animation-iteration-count:1 !important;
+  }
+  .build{transform:none}
+}
+
+/* ---- print ------------------------------------------------------------- */
+@media print{
+  @page{size:1280px 720px;margin:0}
+  html,body{height:auto;overflow:visible;background:var(--bg)}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #deck{position:static;display:block;background:var(--bg)}
+  #stage{
+    position:static;width:auto;height:auto;container-type:normal;overflow:visible;
+  }
+  #progress,#help,#notes,#timer,#counter{display:none !important}
+  #rail,#band{display:none !important}
+  .slide{
+    display:flex !important;
+    position:relative !important;inset:auto !important;
+    width:1280px;height:720px;
+    container-type:size;
+    background:var(--bg);
+    padding:6cqh 6cqw 6cqh 6cqw;
+    break-after:page;page-break-after:always;
+    overflow:hidden;
+  }
+  .slide:last-of-type{break-after:auto;page-break-after:auto}
+  .build{opacity:1 !important;transform:none !important}
+  svg.smil [opacity], svg.smil * { opacity:1 !important }
+}
+</style>
+</head>
+<body>
+<div id="deck">
+  <div id="stage">
+
+    <div id="progress" aria-hidden="true"></div>
+
+<!-- slides-a.html — slides s0–s8 (agent SLIDES-A). Fragment only: no html/head/body. -->
+
+<section class="slide" id="s0" data-title="Given an Oracle for f"
+         data-band="off"
+         data-notes="Terminal already warm, docked bottom. Say nothing about it.">
+  <h2 class="frametitle" style="font-size:7cqh;line-height:1.12">
+    <span class="small muted" style="display:block;font-size:2.6cqh;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:1.2cqh">JuliaCon 2026</span>
+    <span class="gold">Given</span> an Oracle for <span class="serif" style="font-style:italic">f</span><span class="rule"></span>
+  </h2>
+  <div class="body">
+    <div class="center" style="margin:1.6cqh 0 2.6cqh;display:flex;gap:1.1cqh;justify-content:flex-start">
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#9558B2"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#389826"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#CB3C33"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#4063D8"></span>
+    </div>
+    <div class="stack">
+      <p class="lead mono">Sturm.jl · Bennett.jl · BennettVM.jl</p>
+      <p class="muted">a quantum language · a reversible compiler · a reversible VM</p>
+    </div>
+    <p class="small muted" style="margin-top:4.4cqh">
+      Tobias J. Osborne — Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
+    </p>
+  </div>
+</section>
+
+<section class="slide" id="s1" data-title="The word"
+         data-band="off"
+         data-notes="Every quantum algorithm starts here. You don't need the equation — only the word under it. Given. That word is where quantum software dies. f is ordinary code — x²+3x+1, SHA-256, your loss function — and every framework answers it with a circuit-drawing API and good luck.">
+  <h2 class="frametitle">The word<span class="rule"></span></h2>
+  <div class="body center">
+    <p class="serif" style="font-style:italic;font-size:6cqh;margin-top:6cqh;letter-spacing:0.01em">
+      <span>O</span><sub style="font-size:0.6em">f</sub>
+      <span>&nbsp;|x⟩|y⟩&nbsp;=&nbsp;|x⟩|y&nbsp;⊕&nbsp;f(x)⟩</span>
+    </p>
+    <div class="build">
+      <p class="serif" style="font-style:italic;font-size:3.4cqh;margin-top:4.6cqh">
+        “<span class="gold">Given</span> an oracle for <span style="font-style:italic">f</span> …”
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted small" style="margin-top:3.2cqh;letter-spacing:0.06em">
+        Grover · Shor · Deutsch–Jozsa · phase estimation · QSVT
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s2" data-title="The answer, immediately"
+         data-band="live"
+         data-notes="TYPE IT LIVE (↑+Enter). ~0.2 s warm — measured. 'That's an ordinary Julia function; that's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library.' The Int8(3) is Julia promotion, not ceremony.">
+  <h2 class="frametitle">The answer, immediately<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+
+c = reversible_compile(f, Int8)
+</code></pre>
+    <div class="build">
+      <p class="mono muted small" style="margin-top:2.4cqh">
+        ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae
+      </p>
+    </div>
+    <div class="build">
+      <p style="font-size:4.6cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:3.4cqh">
+        Every Julia function is already a quantum gate.
+      </p>
+      <p class="muted serif" style="font-style:italic;font-size:3cqh;margin-top:1cqh">
+        you just have to run it backwards.
+      </p>
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+f (generic function with 1 method)
+
+julia&gt; c = reversible_compile(f, Int8)
+ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168)
+  depth 89 · Toffoli-depth 36 · 249 ancillae
+  </template>
+</section>
+
+<section class="slide" id="s3" data-title="Three packages, one arrow"
+         data-band="off"
+         data-notes="Bennett gets the next seven minutes. Sturm is the language it feeds. BennettVM gets forty-five seconds and earns them.">
+  <h2 class="frametitle">Three packages, one arrow<span class="rule"></span></h2>
+  <div class="body">
+    <figure class="figure-card" style="width:100%"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="pipe-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+  </defs>
+
+  <rect x="2" y="2" width="956" height="246" rx="14" fill="#fbfbfe" stroke="#e6e8eb" stroke-width="1"/>
+  <text x="480" y="34" text-anchor="middle" font-size="13" fill="#57606a">Plain Julia in &#8594; reversible circuit out</text>
+
+  <!-- main pipeline row -->
+  <!-- N1: source -->
+  <rect x="20" y="62" width="150" height="58" rx="10" fill="#efe7f7" stroke="#9558B2" stroke-width="1.6"/>
+  <text x="95" y="88" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">f(x::Int8)</text>
+  <text x="95" y="106" text-anchor="middle" font-size="10.5" fill="#6e7781">Julia &#183; C &#183; Rust</text>
+
+  <!-- N2: LLVM IR -->
+  <rect x="215" y="62" width="135" height="58" rx="10" fill="#fdeaea" stroke="#f24f4f" stroke-width="1.6"/>
+  <text x="282" y="96" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">LLVM IR</text>
+
+  <!-- N3: ParsedIR -->
+  <rect x="405" y="62" width="135" height="58" rx="10" fill="#e9effb" stroke="#7aa2f7" stroke-width="1.6"/>
+  <text x="472" y="96" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">ParsedIR</text>
+
+  <!-- N4: gates -->
+  <rect x="595" y="62" width="150" height="58" rx="10" fill="#e7f6ec" stroke="#2ea043" stroke-width="1.6"/>
+  <text x="670" y="88" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">gates</text>
+  <text x="670" y="106" text-anchor="middle" font-size="10.5" fill="#6e7781">NOT &#183; CNOT &#183; Toffoli</text>
+
+  <!-- N5: circuit -->
+  <rect x="800" y="62" width="142" height="58" rx="10" fill="#dff3e6" stroke="#2ea043" stroke-width="2"/>
+  <text x="871" y="88" text-anchor="middle" font-size="14" font-weight="700" fill="#1f2328">Reversible</text>
+  <text x="871" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="#1f2328">Circuit</text>
+
+  <!-- arrows + stage captions -->
+  <line x1="170" y1="91" x2="213" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
+  <text x="191" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">code_llvm</text>
+
+  <line x1="350" y1="91" x2="403" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
+  <text x="376" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">extract</text>
+
+  <line x1="540" y1="91" x2="593" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
+  <text x="566" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">lower</text>
+
+  <line x1="745" y1="91" x2="798" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
+  <text x="771" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">bennett</text>
+
+  <!-- VM fork from ParsedIR -->
+  <line x1="472" y1="120" x2="472" y2="184" stroke="#e8920c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#pipe-arrow)"/>
+  <text x="484" y="152" font-size="9" font-style="italic" fill="#b06a00">target = :reversible_vm</text>
+
+  <rect x="360" y="184" width="300" height="50" rx="10" fill="#fff3e0" stroke="#e8920c" stroke-width="1.6"/>
+  <text x="510" y="206" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1f2328">BennettVM &#8594; VMProgram</text>
+  <text x="510" y="223" text-anchor="middle" font-size="10.5" fill="#6e7781">reversible interpreter &#183; run! / unrun!</text>
+
+  <!-- outputs of circuit -->
+  <text x="871" y="150" text-anchor="middle" font-size="9.5" fill="#6e7781">simulate &#183; verify_reversibility</text>
+  <text x="871" y="164" text-anchor="middle" font-size="9.5" fill="#6e7781">gate_count &#183; toffoli_depth</text>
+  <text x="871" y="178" text-anchor="middle" font-size="9.5" fill="#6e7781">controlled</text>
+  <line x1="871" y1="120" x2="871" y2="138" stroke="#57606a" stroke-width="1.2" marker-end="url(#pipe-arrow)"/>
+</svg>
+</figure>
+    <p class="mono" style="font-size:2.6cqh;margin-top:1.8cqh">
+      f(x) → Bennett.jl → NOT/CNOT/Toffoli → controlled(·) → Sturm.jl: oracle(f, x)
+    </p>
+    <p class="mono muted small" style="margin-top:0.6cqh">
+      ↳ target = :reversible_vm → BennettVM.jl
+    </p>
+    <div class="build">
+      <p style="font-size:3.2cqh;margin-top:2.2cqh">
+        Julia is uniquely placed to be a quantum programming language — I won't argue it
+        abstractly. Watch for six levers.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s4" data-title="① The compiler is a library"
+         data-band="off"
+         data-notes="Lever ① — this is the slide the whole talk stands on. The build-2 aside is the FIRST thing to cut if behind.">
+  <h2 class="frametitle">① The compiler is a library<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>ir_string = sprint(io -&gt; code_llvm(io, f, arg_types;
+                       debuginfo = :none, optimize, dump_module = true))
+mod = parse(LLVM.Module, ir_string)
+</code></pre>
+    <p style="font-size:3cqh;margin-top:2cqh">
+      A runtime function value in — the compiler's IR out. In-process.
+      While <span class="mono">f</span> is still callable.
+    </p>
+    <div class="build">
+      <p class="muted" style="margin-top:2cqh">
+        C++: write a clang plugin. Python: there is no IR. Julia: two lines, and it works
+        for anything that reaches LLVM.
+      </p>
+    </div>
+    <div class="build">
+      <p class="small" style="margin-top:2cqh;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.6cqh 2cqh">
+        Julia 1.12 outlines slow paths — some closures have no <span class="mono">.instance</span>
+        to compile. Fix: rebuild <span class="mono">InteractiveUtils._dump_function</span> from
+        <span class="mono">Base._which</span> + <span class="mono">specialize_method</span> +
+        <span class="mono">typeinf_code</span>. The reflection stack is just more Julia you can call.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s5" data-title="② Dispatch is the lowering table"
+         data-band="off"
+         data-notes="In a C++ compiler this is a 400-case switch.">
+  <h2 class="frametitle">② Dispatch is the lowering table<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>_lower_inst!(ctx, inst::IRBinOp,  …) = lower_binop!(…)
+_lower_inst!(ctx, inst::IRICmp,   …) = lower_icmp!(…)
+_lower_inst!(ctx, inst::IRSelect, …) = lower_select!(…)
+_lower_inst!(ctx, inst::IRPhi,    …) = lower_phi!(…)
+<span class="muted"># … 13 instruction types, 13 methods …</span>
+_lower_inst!(ctx, inst::IRInst, …) =
+    error("no lowering for $(typeof(inst))")
+</code></pre>
+    <div class="build">
+      <p style="margin-top:2.4cqh">
+        No switch. No visitor. Adding an instruction = adding a method — from any package.
+        The catch-all's only job is to be loud.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s6" data-title="③ The entire simulator"
+         data-band="off"
+         data-notes="When someone asks what the gate set is, I don't have a spec document. I have this file.">
+  <h2 class="frametitle">③ The entire simulator<span class="rule"></span></h2>
+  <div class="body">
+<pre style="font-size:2.6cqh;overflow-x:auto"><code>@inline apply!(b, g::NOTGate)     = (b[g.target] ⊻= true;                          nothing)
+@inline apply!(b, g::CNOTGate)    = (b[g.target] ⊻= b[g.control];                  nothing)
+@inline apply!(b, g::ToffoliGate) = (b[g.target] ⊻= b[g.control1] &amp; b[g.control2]; nothing)
+</code></pre>
+    <div class="build">
+      <p style="font-size:3.2cqh;margin-top:3cqh">
+        This is not an excerpt. This is the simulator.
+      </p>
+      <p class="muted" style="margin-top:1.2cqh">
+        union-splitting on three concrete gate types — a 28k-gate circuit simulates with
+        &lt;200 KiB allocated.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s7" data-title="The theorem is a for-loop"
+         data-band="live"
+         data-notes="OPEN IN SILENCE — let the animation run ~5s before speaking. Cost law: 2× gates + one ancilla per output bit. Then the live equality. Backup stepper on key S if Q&amp;A wants gate-by-gate.">
+  <h2 class="frametitle">The theorem is a for-loop<span class="rule"></span></h2>
+  <div class="body">
+    <div style="display:flex;gap:2.4cqw;align-items:flex-start">
+      <figure class="figure-card" style="flex:0 0 55%;margin:0"><svg class="smil" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 912 534" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <rect x="1" y="1" width="910" height="532" rx="14" fill="#fbfbfe" stroke="#e6e8eb"/>
+  <text x="456" y="30" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2328">Bennett&#8217;s construction:  compute &#8594; copy &#8594; uncompute&#8194;(x + 1 at 3 bits, x = 3)</text>
+  <text x="456" y="50" text-anchor="middle" font-size="12" fill="#57606a">thick blue = wire holds 1 &#183; ten ancillae rise in the forward pass and are all provably 0 again at the end</text>
+  <rect x="168.0" y="80.0" width="300.0" height="420.0" fill="#e9effb" rx="6"/>
+  <rect x="468.0" y="80.0" width="90.0" height="420.0" fill="#fff3e0" rx="6"/>
+  <rect x="558.0" y="80.0" width="300.0" height="420.0" fill="#e7f6ec" rx="6"/>
+  <text x="318.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="#2a78d6">1 · forward — compute</text>
+  <text x="513.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="#b26a00">2 · copy the answer</text>
+  <text x="708.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="#1a7f4b">3 · reverse — uncompute</text>
+  <line x1="158.0" y1="96.0" x2="866.0" y2="96.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="100.0" text-anchor="end" font-size="12" fill="#1f2328">x<tspan font-size="9" dy="3">0</tspan><tspan dy="-3">&#8203;</tspan> = 1</text>
+  <line x1="158.0" y1="122.0" x2="866.0" y2="122.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="126.0" text-anchor="end" font-size="12" fill="#1f2328">x<tspan font-size="9" dy="3">1</tspan><tspan dy="-3">&#8203;</tspan> = 1</text>
+  <line x1="158.0" y1="148.0" x2="866.0" y2="148.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="152.0" text-anchor="end" font-size="12" fill="#1f2328">x<tspan font-size="9" dy="3">2</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="174.0" x2="866.0" y2="174.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="178.0" text-anchor="end" font-size="12" fill="#1f2328">pred = 0</text>
+  <line x1="158.0" y1="200.0" x2="866.0" y2="200.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="204.0" text-anchor="end" font-size="12" fill="#1f2328">const<tspan font-size="9" dy="3">0</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="226.0" x2="866.0" y2="226.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="230.0" text-anchor="end" font-size="12" fill="#1f2328">const<tspan font-size="9" dy="3">1</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="252.0" x2="866.0" y2="252.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="256.0" text-anchor="end" font-size="12" fill="#1f2328">const<tspan font-size="9" dy="3">2</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="278.0" x2="866.0" y2="278.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="282.0" text-anchor="end" font-size="12" fill="#1f2328">s<tspan font-size="9" dy="3">0</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="304.0" x2="866.0" y2="304.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="308.0" text-anchor="end" font-size="12" fill="#1f2328">s<tspan font-size="9" dy="3">1</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="330.0" x2="866.0" y2="330.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="334.0" text-anchor="end" font-size="12" fill="#1f2328">s<tspan font-size="9" dy="3">2</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="356.0" x2="866.0" y2="356.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="360.0" text-anchor="end" font-size="12" fill="#1f2328">carry-in = 0</text>
+  <line x1="158.0" y1="382.0" x2="866.0" y2="382.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="386.0" text-anchor="end" font-size="12" fill="#1f2328">carry<tspan font-size="9" dy="3">1</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="408.0" x2="866.0" y2="408.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="412.0" text-anchor="end" font-size="12" fill="#1f2328">carry<tspan font-size="9" dy="3">2</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="434.0" x2="866.0" y2="434.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="438.0" text-anchor="end" font-size="12" fill="#1f2328">out<tspan font-size="9" dy="3">0</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="460.0" x2="866.0" y2="460.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="464.0" text-anchor="end" font-size="12" fill="#1f2328">out<tspan font-size="9" dy="3">1</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="158.0" y1="486.0" x2="866.0" y2="486.0" stroke="#b6bcc4" stroke-width="1"/>
+  <text x="152.0" y="490.0" text-anchor="end" font-size="12" fill="#1f2328">out<tspan font-size="9" dy="3">2</tspan><tspan dy="-3">&#8203;</tspan> = 0</text>
+  <line x1="20" y1="161.0" x2="154.0" y2="161.0" stroke="#d8dce1" stroke-width="1" stroke-dasharray="3 5"/>
+  <line x1="20" y1="187.0" x2="154.0" y2="187.0" stroke="#d8dce1" stroke-width="1" stroke-dasharray="3 5"/>
+  <line x1="20" y1="265.0" x2="154.0" y2="265.0" stroke="#d8dce1" stroke-width="1" stroke-dasharray="3 5"/>
+  <line x1="20" y1="343.0" x2="154.0" y2="343.0" stroke="#d8dce1" stroke-width="1" stroke-dasharray="3 5"/>
+  <line x1="20" y1="421.0" x2="154.0" y2="421.0" stroke="#d8dce1" stroke-width="1" stroke-dasharray="3 5"/>
+  <line x1="158.0" y1="96.0" x2="183.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.0178;0.0202;0.9852;0.9875;1.0"/></line>
+  <line x1="183.0" y1="96.0" x2="213.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1039;0.1062;0.9852;0.9875;1.0"/></line>
+  <line x1="213.0" y1="96.0" x2="243.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1365;0.1389;0.9852;0.9875;1.0"/></line>
+  <line x1="243.0" y1="96.0" x2="273.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1691;0.1715;0.9852;0.9875;1.0"/></line>
+  <line x1="273.0" y1="96.0" x2="303.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2018;0.2042;0.9852;0.9875;1.0"/></line>
+  <line x1="303.0" y1="96.0" x2="333.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2344;0.2368;0.9852;0.9875;1.0"/></line>
+  <line x1="333.0" y1="96.0" x2="363.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2671;0.2694;0.9852;0.9875;1.0"/></line>
+  <line x1="363.0" y1="96.0" x2="393.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2997;0.3021;0.9852;0.9875;1.0"/></line>
+  <line x1="393.0" y1="96.0" x2="423.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3323;0.3347;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="96.0" x2="453.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="96.0" x2="483.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="96.0" x2="513.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="96.0" x2="543.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="96.0" x2="573.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="96.0" x2="603.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="96.0" x2="633.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="633.0" y1="96.0" x2="663.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6237;0.6261;0.9852;0.9875;1.0"/></line>
+  <line x1="663.0" y1="96.0" x2="693.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6487;0.651;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="96.0" x2="723.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="723.0" y1="96.0" x2="753.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6985;0.7009;0.9852;0.9875;1.0"/></line>
+  <line x1="753.0" y1="96.0" x2="783.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7234;0.7258;0.9852;0.9875;1.0"/></line>
+  <line x1="783.0" y1="96.0" x2="813.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7484;0.7507;0.9852;0.9875;1.0"/></line>
+  <line x1="813.0" y1="96.0" x2="843.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7733;0.7757;0.9852;0.9875;1.0"/></line>
+  <line x1="843.0" y1="96.0" x2="866.0" y2="96.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7982;0.8006;0.9852;0.9875;1.0"/></line>
+  <line x1="158.0" y1="122.0" x2="183.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.0178;0.0202;0.9852;0.9875;1.0"/></line>
+  <line x1="183.0" y1="122.0" x2="213.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1039;0.1062;0.9852;0.9875;1.0"/></line>
+  <line x1="213.0" y1="122.0" x2="243.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1365;0.1389;0.9852;0.9875;1.0"/></line>
+  <line x1="243.0" y1="122.0" x2="273.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1691;0.1715;0.9852;0.9875;1.0"/></line>
+  <line x1="273.0" y1="122.0" x2="303.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2018;0.2042;0.9852;0.9875;1.0"/></line>
+  <line x1="303.0" y1="122.0" x2="333.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2344;0.2368;0.9852;0.9875;1.0"/></line>
+  <line x1="333.0" y1="122.0" x2="363.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2671;0.2694;0.9852;0.9875;1.0"/></line>
+  <line x1="363.0" y1="122.0" x2="393.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2997;0.3021;0.9852;0.9875;1.0"/></line>
+  <line x1="393.0" y1="122.0" x2="423.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3323;0.3347;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="122.0" x2="453.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="122.0" x2="483.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="122.0" x2="513.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="122.0" x2="543.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="122.0" x2="573.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="122.0" x2="603.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="122.0" x2="633.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="633.0" y1="122.0" x2="663.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6237;0.6261;0.9852;0.9875;1.0"/></line>
+  <line x1="663.0" y1="122.0" x2="693.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6487;0.651;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="122.0" x2="723.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="723.0" y1="122.0" x2="753.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6985;0.7009;0.9852;0.9875;1.0"/></line>
+  <line x1="753.0" y1="122.0" x2="783.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7234;0.7258;0.9852;0.9875;1.0"/></line>
+  <line x1="783.0" y1="122.0" x2="813.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7484;0.7507;0.9852;0.9875;1.0"/></line>
+  <line x1="813.0" y1="122.0" x2="843.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7733;0.7757;0.9852;0.9875;1.0"/></line>
+  <line x1="843.0" y1="122.0" x2="866.0" y2="122.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7982;0.8006;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="174.0" x2="483.0" y2="174.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="174.0" x2="513.0" y2="174.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="174.0" x2="543.0" y2="174.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="174.0" x2="573.0" y2="174.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="200.0" x2="453.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="200.0" x2="483.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="200.0" x2="513.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="200.0" x2="543.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="200.0" x2="573.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="200.0" x2="603.0" y2="200.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="183.0" y1="278.0" x2="213.0" y2="278.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1039;0.1062;0.9852;0.9875;1.0"/></line>
+  <line x1="813.0" y1="278.0" x2="843.0" y2="278.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7733;0.7757;0.9852;0.9875;1.0"/></line>
+  <line x1="273.0" y1="304.0" x2="303.0" y2="304.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2018;0.2042;0.9852;0.9875;1.0"/></line>
+  <line x1="303.0" y1="304.0" x2="333.0" y2="304.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2344;0.2368;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="304.0" x2="723.0" y2="304.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="723.0" y1="304.0" x2="753.0" y2="304.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6985;0.7009;0.9852;0.9875;1.0"/></line>
+  <line x1="393.0" y1="330.0" x2="423.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3323;0.3347;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="330.0" x2="453.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="330.0" x2="483.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="330.0" x2="513.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="330.0" x2="543.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="330.0" x2="573.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="330.0" x2="603.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="330.0" x2="633.0" y2="330.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="243.0" y1="382.0" x2="273.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.1691;0.1715;0.9852;0.9875;1.0"/></line>
+  <line x1="273.0" y1="382.0" x2="303.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2018;0.2042;0.9852;0.9875;1.0"/></line>
+  <line x1="303.0" y1="382.0" x2="333.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2344;0.2368;0.9852;0.9875;1.0"/></line>
+  <line x1="333.0" y1="382.0" x2="363.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2671;0.2694;0.9852;0.9875;1.0"/></line>
+  <line x1="363.0" y1="382.0" x2="393.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2997;0.3021;0.9852;0.9875;1.0"/></line>
+  <line x1="393.0" y1="382.0" x2="423.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3323;0.3347;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="382.0" x2="453.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="382.0" x2="483.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="382.0" x2="513.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="382.0" x2="543.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="382.0" x2="573.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="382.0" x2="603.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="382.0" x2="633.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="633.0" y1="382.0" x2="663.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6237;0.6261;0.9852;0.9875;1.0"/></line>
+  <line x1="663.0" y1="382.0" x2="693.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6487;0.651;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="382.0" x2="723.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="723.0" y1="382.0" x2="753.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6985;0.7009;0.9852;0.9875;1.0"/></line>
+  <line x1="753.0" y1="382.0" x2="783.0" y2="382.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7234;0.7258;0.9852;0.9875;1.0"/></line>
+  <line x1="303.0" y1="408.0" x2="333.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2344;0.2368;0.9852;0.9875;1.0"/></line>
+  <line x1="333.0" y1="408.0" x2="363.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2671;0.2694;0.9852;0.9875;1.0"/></line>
+  <line x1="363.0" y1="408.0" x2="393.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.2997;0.3021;0.9852;0.9875;1.0"/></line>
+  <line x1="393.0" y1="408.0" x2="423.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3323;0.3347;0.9852;0.9875;1.0"/></line>
+  <line x1="423.0" y1="408.0" x2="453.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.365;0.3674;0.9852;0.9875;1.0"/></line>
+  <line x1="453.0" y1="408.0" x2="483.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.3976;0.4;0.9852;0.9875;1.0"/></line>
+  <line x1="483.0" y1="408.0" x2="513.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4481;0.4504;0.9852;0.9875;1.0"/></line>
+  <line x1="513.0" y1="408.0" x2="543.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4985;0.5009;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="408.0" x2="573.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="408.0" x2="603.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="408.0" x2="633.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="633.0" y1="408.0" x2="663.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6237;0.6261;0.9852;0.9875;1.0"/></line>
+  <line x1="663.0" y1="408.0" x2="693.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6487;0.651;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="408.0" x2="723.0" y2="408.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="543.0" y1="486.0" x2="573.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.549;0.5513;0.9852;0.9875;1.0"/></line>
+  <line x1="573.0" y1="486.0" x2="603.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5739;0.5763;0.9852;0.9875;1.0"/></line>
+  <line x1="603.0" y1="486.0" x2="633.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5988;0.6012;0.9852;0.9875;1.0"/></line>
+  <line x1="633.0" y1="486.0" x2="663.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6237;0.6261;0.9852;0.9875;1.0"/></line>
+  <line x1="663.0" y1="486.0" x2="693.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6487;0.651;0.9852;0.9875;1.0"/></line>
+  <line x1="693.0" y1="486.0" x2="723.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6736;0.676;0.9852;0.9875;1.0"/></line>
+  <line x1="723.0" y1="486.0" x2="753.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.6985;0.7009;0.9852;0.9875;1.0"/></line>
+  <line x1="753.0" y1="486.0" x2="783.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7234;0.7258;0.9852;0.9875;1.0"/></line>
+  <line x1="783.0" y1="486.0" x2="813.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7484;0.7507;0.9852;0.9875;1.0"/></line>
+  <line x1="813.0" y1="486.0" x2="843.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7733;0.7757;0.9852;0.9875;1.0"/></line>
+  <line x1="843.0" y1="486.0" x2="866.0" y2="486.0" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" opacity="0"><animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.7982;0.8006;0.9852;0.9875;1.0"/></line>
+  <line x1="183.0" y1="96.0" x2="183.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="183.0" cy="96.0" r="3.6" fill="#1f2328"/>
+  <circle cx="183.0" cy="278.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="176.0" y1="278.0" x2="190.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="183.0" y1="271.0" x2="183.0" y2="285.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="213.0" cy="278.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="206.0" y1="278.0" x2="220.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="213.0" y1="271.0" x2="213.0" y2="285.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="243.0" y1="96.0" x2="243.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="243.0" cy="96.0" r="3.6" fill="#1f2328"/>
+  <circle cx="243.0" cy="382.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="236.0" y1="382.0" x2="250.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="243.0" y1="375.0" x2="243.0" y2="389.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="273.0" y1="122.0" x2="273.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="273.0" cy="122.0" r="3.6" fill="#1f2328"/>
+  <circle cx="273.0" cy="304.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="266.0" y1="304.0" x2="280.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="273.0" y1="297.0" x2="273.0" y2="311.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="303.0" y1="304.0" x2="303.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="303.0" cy="304.0" r="3.6" fill="#1f2328"/>
+  <circle cx="303.0" cy="382.0" r="3.6" fill="#1f2328"/>
+  <circle cx="303.0" cy="408.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="296.0" y1="408.0" x2="310.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="303.0" y1="401.0" x2="303.0" y2="415.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="333.0" y1="304.0" x2="333.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="333.0" cy="382.0" r="3.6" fill="#1f2328"/>
+  <circle cx="333.0" cy="304.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="326.0" y1="304.0" x2="340.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="333.0" y1="297.0" x2="333.0" y2="311.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="363.0" y1="148.0" x2="363.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="363.0" cy="148.0" r="3.6" fill="#1f2328"/>
+  <circle cx="363.0" cy="330.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="356.0" y1="330.0" x2="370.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="363.0" y1="323.0" x2="363.0" y2="337.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="393.0" y1="330.0" x2="393.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="393.0" cy="408.0" r="3.6" fill="#1f2328"/>
+  <circle cx="393.0" cy="330.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="386.0" y1="330.0" x2="400.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="393.0" y1="323.0" x2="393.0" y2="337.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="423.0" cy="200.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="416.0" y1="200.0" x2="430.0" y2="200.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="423.0" y1="193.0" x2="423.0" y2="207.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="453.0" cy="174.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="446.0" y1="174.0" x2="460.0" y2="174.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="453.0" y1="167.0" x2="453.0" y2="181.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="483.0" y1="278.0" x2="483.0" y2="434.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="483.0" cy="278.0" r="3.6" fill="#1f2328"/>
+  <circle cx="483.0" cy="434.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="476.0" y1="434.0" x2="490.0" y2="434.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="483.0" y1="427.0" x2="483.0" y2="441.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="513.0" y1="304.0" x2="513.0" y2="460.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="513.0" cy="304.0" r="3.6" fill="#1f2328"/>
+  <circle cx="513.0" cy="460.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="506.0" y1="460.0" x2="520.0" y2="460.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="513.0" y1="453.0" x2="513.0" y2="467.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="543.0" y1="330.0" x2="543.0" y2="486.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="543.0" cy="330.0" r="3.6" fill="#1f2328"/>
+  <circle cx="543.0" cy="486.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="536.0" y1="486.0" x2="550.0" y2="486.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="543.0" y1="479.0" x2="543.0" y2="493.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="573.0" cy="174.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="566.0" y1="174.0" x2="580.0" y2="174.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="573.0" y1="167.0" x2="573.0" y2="181.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="603.0" cy="200.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="596.0" y1="200.0" x2="610.0" y2="200.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="603.0" y1="193.0" x2="603.0" y2="207.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="633.0" y1="330.0" x2="633.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="633.0" cy="408.0" r="3.6" fill="#1f2328"/>
+  <circle cx="633.0" cy="330.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="626.0" y1="330.0" x2="640.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="633.0" y1="323.0" x2="633.0" y2="337.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="663.0" y1="148.0" x2="663.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="663.0" cy="148.0" r="3.6" fill="#1f2328"/>
+  <circle cx="663.0" cy="330.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="656.0" y1="330.0" x2="670.0" y2="330.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="663.0" y1="323.0" x2="663.0" y2="337.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="693.0" y1="304.0" x2="693.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="693.0" cy="382.0" r="3.6" fill="#1f2328"/>
+  <circle cx="693.0" cy="304.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="686.0" y1="304.0" x2="700.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="693.0" y1="297.0" x2="693.0" y2="311.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="723.0" y1="304.0" x2="723.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="723.0" cy="304.0" r="3.6" fill="#1f2328"/>
+  <circle cx="723.0" cy="382.0" r="3.6" fill="#1f2328"/>
+  <circle cx="723.0" cy="408.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="716.0" y1="408.0" x2="730.0" y2="408.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="723.0" y1="401.0" x2="723.0" y2="415.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="753.0" y1="122.0" x2="753.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="753.0" cy="122.0" r="3.6" fill="#1f2328"/>
+  <circle cx="753.0" cy="304.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="746.0" y1="304.0" x2="760.0" y2="304.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="753.0" y1="297.0" x2="753.0" y2="311.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="783.0" y1="96.0" x2="783.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="783.0" cy="96.0" r="3.6" fill="#1f2328"/>
+  <circle cx="783.0" cy="382.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="776.0" y1="382.0" x2="790.0" y2="382.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="783.0" y1="375.0" x2="783.0" y2="389.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="813.0" cy="278.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="806.0" y1="278.0" x2="820.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="813.0" y1="271.0" x2="813.0" y2="285.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="843.0" y1="96.0" x2="843.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <circle cx="843.0" cy="96.0" r="3.6" fill="#1f2328"/>
+  <circle cx="843.0" cy="278.0" r="7" fill="none" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="836.0" y1="278.0" x2="850.0" y2="278.0" stroke="#1f2328" stroke-width="1.6"/>
+  <line x1="843.0" y1="271.0" x2="843.0" y2="285.0" stroke="#1f2328" stroke-width="1.6"/>
+  <g opacity="0.85"><line x1="0" y1="82.0" x2="0" y2="498.0" stroke="#eb6834" stroke-width="2"><animate attributeName="x1" dur="16.849999999999998s" repeatCount="indefinite" values="154.0;183.0;213.0;243.0;273.0;303.0;333.0;363.0;393.0;423.0;453.0;483.0;513.0;543.0;573.0;603.0;633.0;663.0;693.0;723.0;753.0;783.0;813.0;843.0;872.0;872.0" keyTimes="0.0;0.1039;0.1365;0.1691;0.2018;0.2344;0.2671;0.2997;0.3323;0.365;0.3976;0.4481;0.4985;0.549;0.5739;0.5988;0.6237;0.6487;0.6736;0.6985;0.7234;0.7484;0.7733;0.7982;0.822;1.0"/><animate attributeName="x2" dur="16.849999999999998s" repeatCount="indefinite" values="154.0;183.0;213.0;243.0;273.0;303.0;333.0;363.0;393.0;423.0;453.0;483.0;513.0;543.0;573.0;603.0;633.0;663.0;693.0;723.0;753.0;783.0;813.0;843.0;872.0;872.0" keyTimes="0.0;0.1039;0.1365;0.1691;0.2018;0.2344;0.2671;0.2997;0.3323;0.365;0.3976;0.4481;0.4985;0.549;0.5739;0.5988;0.6237;0.6487;0.6736;0.6985;0.7234;0.7484;0.7733;0.7982;0.822;1.0"/></line></g>
+  <text x="456" y="518" text-anchor="middle" font-size="13" fill="#57606a" opacity="0">run the computation forward on ancilla wires<animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.0178;0.0202;0.4243;0.4267;1.0"/></text>
+  <text x="456" y="518" text-anchor="middle" font-size="13" fill="#b26a00" opacity="0">CNOT-copy the 3 answer bits to the output register<animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.4243;0.4267;0.5561;0.5585;1.0"/></text>
+  <text x="456" y="518" text-anchor="middle" font-size="13" fill="#1a7f4b" opacity="0">replay every forward gate in reverse order<animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.5561;0.5585;0.822;0.8243;1.0"/></text>
+  <text x="456" y="518" text-anchor="middle" font-size="13" fill="#1f2328" opacity="0">inputs intact &#183; answer = 4 &#183; every ancilla back to 0 &#8212; verify_reversibility(c) == true<animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.822;0.8243;0.9852;0.9875;1.0"/></text>
+</svg>
+</figure>
+      <div style="flex:1 1 45%;min-width:0">
+<pre style="font-size:2.2cqh;overflow-x:auto"><code>append!(all_gates, lr.gates)             <span class="muted"># compute</span>
+_emit_copy_gates!(all_gates,             <span class="muted"># copy the answer out</span>
+                  lr.output_wires, copy_wires)
+for i in length(lr.gates):-1:1           <span class="muted"># uncompute</span>
+    push!(all_gates, lr.gates[i])
+end
+</code></pre>
+        <div class="build">
+          <p style="font-size:3.4cqh;margin-top:2cqh">
+            Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a
+            negative step.
+          </p>
+        </div>
+        <div class="build">
+          <p class="mono green" style="margin-top:1.8cqh">
+            julia&gt; gs[14:23] == reverse(gs[1:10])<br>true
+          </p>
+          <p class="muted small" style="margin-top:0.6cqh">
+            — and it's a doctest: CI fails if the theorem does.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; c1 = reversible_compile(x -&gt; x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)
+ReversibleCircuit: 23 gates (NOT=6, CNOT=15, Toffoli=2) · 16 wires · 10 ancillae · depth 9
+
+julia&gt; gs = c1.gates; gs[14:23] == reverse(gs[1:10])
+true
+  </template>
+</section>
+
+<section class="slide" id="s8" data-title="What arithmetic costs"
+         data-band="off"
+         data-notes="sin costs 5,000× x+x and is still ≤1 ULP. 11,027,852 gates — measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
+  <h2 class="frametitle">What arithmetic costs<span class="rule"></span></h2>
+  <div class="body">
+    <div class="component" data-component="costbars"></div>
+    <div class="build">
+      <p class="small" style="margin-top:1.6cqh;font-size:2.4cqh">
+        QCLA 32-bit multiply — Toffoli-depth 56 vs 180 schoolbook ·
+        QROM T-count exactly 4(L−1), width-independent (matches Babbush–Gidney) ·
+        shadow-memory store 24 CNOT vs a 7,122-gate MUX
+      </p>
+      <p class="gold small" style="margin-top:1cqh;font-size:2.4cqh">
+        SHA-256 round: 1,632 Toffoli vs hand-optimized 683 — ~2.4× worse.
+        It's in our own benchmark table.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- slides-b.html — agent SLIDES-B — sections s9…s16 + the five backups.
+     Fragment only: section elements, nothing else. frame.html owns the document. -->
+
+<section class="slide" id="s9" data-title="0.5 + 0.5 == 0.0" data-band="off"
+         data-notes="War story, 50 s budget. Sheddable line: the hostile-review aside (Carmack persona caught Pkg.test() at 4m06 vs a claimed ~90 s).">
+  <h2 class="frametitle"><span class="mono">0.5 + 0.5 == 0.0</span><span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="center mono" style="font-size:5.5cqh;line-height:1.2;margin:4.5cqh 0 1cqh;">0.5 + 0.5 <span class="red">==</span> 0.0</div>
+
+    <div class="build stack" style="display:flex;flex-direction:column;gap:0.7cqh;margin-top:5cqh;">
+      <div>The datapath is branchless — every path computes, always.</div>
+      <div>A subtraction-path condition wire fired on the addition path.</div>
+      <div>VLSI has a name for this: <strong>false-path sensitization</strong> (Bergamaschi, 1992).</div>
+    </div>
+
+    <div class="build muted" style="margin-top:2.6cqh;max-width:78cqw;">No published system converts a multi-way φ-node from an arbitrary CFG into a correct reversible MUX tree. That part is uncharted.</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s10" data-title="A loop wants an interpreter" data-band="off"
+         data-notes="BennettVM's one beat, 45 s. Backup #vmtape if Q&amp;A.">
+  <h2 class="frametitle">A loop wants an interpreter<span class="rule"></span></h2>
+  <div class="body">
+
+    <div>Collatz as a circuit (<span class="mono">max_loop_iterations = 20</span>):</div>
+    <div class="mono" style="font-size:3.4cqh;margin:0.9cqh 0 0.5cqh;"><strong>14,074 gates · 2,320 Toffoli · 8,868 ancillae</strong></div>
+    <div class="muted small" style="margin-bottom:1.8cqh;">bounded, MUX-frozen, convergence-guarded. It works. It&rsquo;s also the wrong shape.</div>
+
+<pre><code>vm = reversible_compile(collatz_steps, Int64; target = :reversible_vm)
+run!(rs, vm);  unrun!(rs, vm)
+rs.current == rs.initial     <span class="muted"># true — bit-for-bit</span>
+isempty(rs.history)          <span class="muted"># true — the tape is drained</span></code></pre>
+
+    <div class="build" style="margin-top:2.2cqh;">&ldquo;every ancilla returns to zero&rdquo; becomes <span class="mono">isempty(history)</span> — same theorem, different data structure.</div>
+
+    <div class="build muted small" style="margin-top:1.4cqh;">three-layer tape: injective steps log nothing · min-cut deltas (Enzyme&rsquo;s idea) · checkpoint+replay (rr&rsquo;s idea)</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s11" data-title="I never wrote a quantum gate" data-band="live"
+         data-notes="THE SIGNATURE MOMENT. Live: three ↑+Enter lines. Then the deck's own sim: 'the deck is running the compiled circuit right now.' THREE-SECOND PAUSE after the headline. 10:00 hard checkpoint lands here.">
+  <h2 class="frametitle">I never wrote a quantum gate<span class="rule"></span></h2>
+  <div class="body">
+
+<div style="display:flex;align-items:baseline;gap:2cqw;flex-wrap:nowrap;">
+      <pre style="margin:0;padding:0.9cqh 1.4cqw;flex:0 0 auto;"><code style="font-size:2.0cqh;">cc = controlled(reversible_compile(x -&gt; !x, Bool))</code></pre>
+      <div class="muted" style="font-size:1.9cqh;white-space:nowrap;">NOT→CNOT · CNOT→Toffoli · Toffoli→3 Toffoli+ancilla</div>
+    </div>
+
+    <div class="component" data-component="entangle" style="margin:0.8cqh 0 0;"></div>
+
+    <div class="build center" style="font-size:3.8cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:0.6cqh;">I never wrote a quantum gate.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; simulate(cc, true, false)
+true
+julia&gt; simulate(cc, false, false)
+false
+julia&gt; show_ket(apply_as_permutation(cc, plus_control()))
+(|0,0,0⟩ + |1,0,1⟩)/√2    ‖ψ‖ = 1.0
+  </template>
+</section>
+
+<section class="slide" id="s12" data-title="Teleportation, zero gates" data-band="shadow"
+         data-notes="OPTIONAL-A: sheddable in full (40 s). If kept and ahead of clock, run the 200-shot live beat — measured 0.25 s.">
+  <h2 class="frametitle">Teleportation, zero gates<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:56cqw 1fr;gap:1.6cqw;align-items:start;">
+
+<pre style="margin:0;"><code style="font-size:2.3cqh;">function teleport(ψ::QBool)
+    b = QBool(0.5)
+    c = false ⊻ b
+    b ⊻= ψ
+    m_phase = Bool(dual(ψ))
+    m_value = Bool(b)
+    m_value &amp;&amp; not!(c)
+    m_phase &amp;&amp; not!(dual(c))
+    return c
+end</code></pre>
+
+      <div style="display:grid;grid-template-rows:repeat(10,3.45cqh);font-size:2.1cqh;padding-top:2.2cqh;line-height:1.45;">
+        <div class="muted" style="grid-row:2;">← fair quantum coin</div>
+        <div class="muted" style="grid-row:3;">← Bell pair</div>
+        <div class="muted" style="grid-row:5;">← conjugate-basis readout — <span class="gold">CONSUMES ψ</span></div>
+        <div class="muted" style="grid-row:7 / span 2;">← ordinary conditionals — one in the dual view</div>
+      </div>
+
+    </div>
+
+    <div class="build serif center" style="font-style:italic;font-size:2.8cqh;margin-top:2.4cqh;">&ldquo;If your program reads like a circuit diagram, it is wrong.&rdquo;</div>
+
+    <div class="build muted small center" style="margin-top:1.2cqh;"><span class="mono">⊻=</span> mutates — against Julia precedent (#249, #3217) and correct here: no-cloning means no caller could expect a value.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; count(_ -&gt; teleport_ok(), 1:200)
+200
+# |+⟩ probe, X-basis readout: 200/200 deterministic — 0.25 s
+  </template>
+</section>
+
+<section class="slide" id="s13" data-title="The loop closes: oracle(f, x)" data-band="live"
+         data-notes="Here's the whole talk in five lines. f is the SAME ordinary function idea we compiled at 0:35. Live: two calls, ~2.1 s each, measured. If Orkan misbehaved in the green room: press D, keep walking.">
+  <h2 class="frametitle">The loop closes: <span class="mono">oracle(f, x)</span><span class="rule"></span></h2>
+  <div class="body">
+
+<pre><code>function deutsch_jozsa(f, ::Val{N}) where {N}
+    x = QInt{N}(0); superpose!(x)
+    b = minus()
+<mark>    b ⊻= oracle(f, x)          <span class="muted"># ordinary Julia f, compiled by Bennett</span></mark>
+    return Int(dual(x)) == 0   <span class="muted"># one query</span>
+end</code></pre>
+
+    <div class="build muted" style="margin-top:2.6cqh;max-width:82cqw;"><span class="mono">oracle(f, x)</span> crosses a weakdep extension — the only file in Sturm that names a Bennett type; <span class="mono">using Sturm</span> never pays LLVM&rsquo;s precompile. Both package seams are the same trick: a <span class="mono">Ref{Any}(nothing)</span> filled by the downstream package&rsquo;s <span class="mono">__init__</span>.</div>
+
+  </div>
+  <template class="shadow-term">
+julia&gt; Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end
+true
+julia&gt; Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end
+false
+# one query each — ~2 s warm
+  </template>
+</section>
+
+<section class="slide" id="s14" data-title="Two lessons" data-band="off"
+         data-notes="50 s. Panel (b) is sheddable (25 s) — bridge straight to s15 with 'error correction is a higher-order function on channels — and here's what happens when you try to control one.'">
+  <h2 class="frametitle">Two lessons<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2.4cqw;align-items:start;">
+
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
+        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">The marginals lied</div>
+        <div class="small">Our first teleport moved the value and dropped the phase. Its test passed — output statistics looked fine. The fixed one reads <strong>1024/1024</strong> on a probe where the broken one reads <strong>≈512</strong>.</div>
+        <div class="small gold" style="margin-top:1.2cqh;">Test the whole channel, not what leaks out of it.</div>
+      </div>
+
+      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
+        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">Error correction is a function</div>
+<pre style="margin:0 0 1.2cqh;"><code style="font-size:2.1cqh;">Protect(enc)(physical_iid(enc, bit_flip(p)))
+<span class="muted"># channel in → channel out</span></code></pre>
+        <div class="small">pinned two-sided: helps below <span class="mono">p = ½</span>, hurts above — a sign-flipped decoder passes any one-sided test.</div>
+      </div>
+
+    </div>
+
+  </div>
+</section>
+
+<section class="slide" id="s15" data-title="The zinger" data-band="off"
+         data-notes="Read the error slowly. This is lever ⑥ and the Sturm thesis in one screen.">
+  <h2 class="frametitle">The zinger<span class="rule"></span></h2>
+  <div class="body">
+
+<pre style="margin-top:2cqh;"><code style="font-size:3.6cqh;line-height:1.5;"><span class="green">julia&gt;</span> ctrl(Protect(enc))
+<span class="red">ERROR: MethodError: no method matching ctrl(::Protect{…})</span></code></pre>
+
+    <div class="build" style="font-size:3.2cqh;margin-top:3cqh;max-width:84cqw;">Bădescu–Panangaden: a quantum <span class="mono">if</span> has no channel semantics. Gavorová et al.: controlled-<em>U</em> cannot be built from black-box <em>U</em>. In most frameworks that&rsquo;s documentation. Here it&rsquo;s a <span class="mono">MethodError</span>.</div>
+
+    <div class="build" style="font-size:4cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:2.4cqh;">The no-go theorem and the method table are the same object.</div>
+
+  </div>
+</section>
+
+<section class="slide" id="s16" data-title="unchanged" data-band="off"
+         data-notes="If time is short: say only the last two lines and let the slide carry the rest.">
+  <h2 class="frametitle">unchanged<span class="rule"></span></h2>
+  <div class="body">
+
+<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+
+c = reversible_compile(f, Int8)</code></pre>
+
+    <div class="build" style="margin-top:3.2cqh;">
+      <div style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;">That word &ldquo;given&rdquo; has been doing the work for forty years.</div>
+      <div class="gold" style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;margin-top:0.8cqh;">In Julia, it&rsquo;s a function call.</div>
+    </div>
+
+    <div class="build muted" style="font-size:2.8cqh;margin-top:2cqh;">Ancillae restored to zero. Thank you.</div>
+
+    <div class="muted mono" style="font-size:2cqh;margin-top:2.4cqh;">github.com/tobiasosborne — Sturm.jl · Bennett.jl · BennettVM.jl · AGPL-3.0</div>
+
+  </div>
+</section>
+
+<!-- ===================== BACKUPS (not in linear order) ===================== -->
+
+<section class="slide backup" id="fallback" data-title="Fallback — recorded run" data-band="off"
+         data-notes="Key 0. The live machine is having a moment. Narrate over the recording at the same pace and keep walking; press B to return.">
+  <h2 class="frametitle">Fallback — recorded run<span class="rule"></span></h2>
+  <div class="body center">
+
+    <figure class="figure-card" style="width:44cqw;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:0.8cqh;">
+      <div style="max-height:56cqh;overflow:hidden;border-radius:8px;"><img alt="recorded demo run" style="width:100%;height:auto" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB3aWR0aD0iOTYwIiBoZWlnaHQ9Ijc3Ni40MyI+PHJlY3Qgd2lkdGg9Ijk2MCIgaGVpZ2h0PSI3NzYuNDMiIHJ4PSI1IiByeT0iNSIgY2xhc3M9ImEiLz48c3ZnIHk9IjAlIiB4PSIwJSI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iNiIgZmlsbD0iI2ZmNWY1OCIvPjxjaXJjbGUgY3g9IjQwIiBjeT0iMjAiIHI9IjYiIGZpbGw9IiNmZmJkMmUiLz48Y2lyY2xlIGN4PSI2MCIgY3k9IjIwIiByPSI2IiBmaWxsPSIjMThjMTMyIi8+PC9zdmc+PHN2ZyBoZWlnaHQ9IjcxNi40MyIgdmlld0JveD0iMCAwIDkyIDcxLjY0MyIgd2lkdGg9IjkyMCIgeD0iMTUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIHk9IjUwIj48c3R5bGU+QGtleWZyYW1lcyBrezAle3RyYW5zZm9ybTp0cmFuc2xhdGVYKDApfTEuMzYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC05MnB4KX00LjA3JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTg0cHgpfTcuNDYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yNzZweCl9MTAuMTcle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0zNjhweCl9MTEuNTMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC00NjBweCl9MTQuOTIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01NTJweCl9MTcuNjMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC02NDRweCl9MjAuNjgle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC03MzZweCl9MjguNDcle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC04MjhweCl9MzEuMTkle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC05MjBweCl9MzMuMjIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xMDEycHgpfTM3Ljk3JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTEwNHB4KX00MC42OCV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTExOTZweCl9NDMuMDUle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xMjg4cHgpfTQ4LjgxJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTM4MHB4KX01MS41MyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTE0NzJweCl9NTMuNTYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xNTY0cHgpfTU3LjYzJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTY1NnB4KX02MC4zNCV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTE3NDhweCl9NjMuNzMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xODQwcHgpfTY2LjQ0JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTkzMnB4KX02OC40NyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTIwMjRweCl9NzMuMjIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yMTE2cHgpfTc1LjkzJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMjIwOHB4KX03Ny45NyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTIzMDBweCl9ODIuNzEle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yMzkycHgpfXRve3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yNDg0cHgpfX0uYXtmaWxsOiMyODJkMzV9LmYsLmcsLmh7d2hpdGUtc3BhY2U6cHJlfS5me2ZpbGw6I2E4Y2M4Yztmb250LXdlaWdodDo3MDB9LmcsLmh7ZmlsbDojYjljMGNifS5oe2ZpbGw6IzZmNzc4M308L3N0eWxlPjxnIGZvbnQtZmFtaWx5PSJNb25hY28sQ29uc29sYXMsTWVubG8sJ0JpdHN0cmVhbSBWZXJhIFNhbnMgTW9ubycsJ1Bvd2VybGluZSBTeW1ib2xzJyxtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMS42NyI+PGRlZnM+PHN5bWJvbCBpZD0iMSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+dXNpbmc8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+QmVubmV0dDwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIzIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+Zih4OjpJbnQ4KTwvdGV4dD48dGV4dCB4PSIxOC4wMzYiIHk9IjEuNjciIGNsYXNzPSJnIj49PC90ZXh0Pjx0ZXh0IHg9IjIwLjA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+eCp4PC90ZXh0Pjx0ZXh0IHg9IjI0LjA0OCIgeT0iMS42NyIgY2xhc3M9ImciPis8L3RleHQ+PHRleHQgeD0iMjYuMDUyIiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCgzKSp4PC90ZXh0Pjx0ZXh0IHg9IjM2LjA3MiIgeT0iMS42NyIgY2xhc3M9ImciPis8L3RleHQ+PHRleHQgeD0iMzguMDc2IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCgxKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSI0Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZyI+ZjwvdGV4dD48dGV4dCB4PSIyLjAwNCIgeT0iMS42NyIgY2xhc3M9ImciPihnZW5lcmljPC90ZXh0Pjx0ZXh0IHg9IjExLjAyMiIgeT0iMS42NyIgY2xhc3M9ImciPmZ1bmN0aW9uPC90ZXh0Pjx0ZXh0IHg9IjIwLjA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+d2l0aDwvdGV4dD48dGV4dCB4PSIyNS4wNSIgeT0iMS42NyIgY2xhc3M9ImciPjE8L3RleHQ+PHRleHQgeD0iMjcuMDU0IiB5PSIxLjY3IiBjbGFzcz0iZyI+bWV0aG9kKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSI1Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+YzwvdGV4dD48dGV4dCB4PSI5LjAxOCIgeT0iMS42NyIgY2xhc3M9ImciPj08L3RleHQ+PHRleHQgeD0iMTEuMDIyIiB5PSIxLjY3IiBjbGFzcz0iZyI+cmV2ZXJzaWJsZV9jb21waWxlKGYsPC90ZXh0Pjx0ZXh0IHg9IjMzLjA2NiIgeT0iMS42NyIgY2xhc3M9ImciPkludDgpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+TExWTTwvdGV4dD48dGV4dCB4PSI1MS4xMDIiIHk9IjEuNjciIGNsYXNzPSJoIj5JUjwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNTYuMTEyIiB5PSIxLjY3IiBjbGFzcz0iaCI+Z2F0ZXM8L3RleHQ+PHRleHQgeD0iNjIuMTI0IiB5PSIxLjY3IiBjbGFzcz0iaCI+4oaSPC90ZXh0Pjx0ZXh0IHg9IjY0LjEyOCIgeT0iMS42NyIgY2xhc3M9ImgiPkJlbm5ldHQtaXplPC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjYiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj5SZXZlcnNpYmxlQ2lyY3VpdDo8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iNyI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5XaXJlczo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+MjY1PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjgiPjx0ZXh0IHg9IjIuMDA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW5wdXQ6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PHRleHQgeD0iMTUuMDMiIHk9IjEuNjciIGNsYXNzPSJnIj53aXJlczwvdGV4dD48dGV4dCB4PSIyMS4wNDIiIHk9IjEuNjciIGNsYXNzPSJnIj5bOF08L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iOSI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5PdXRwdXQ6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PHRleHQgeD0iMTUuMDMiIHk9IjEuNjciIGNsYXNzPSJnIj53aXJlczwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxMCI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5BbmNpbGxhZTo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+MjQ5PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjExIj48dGV4dCB4PSIyLjAwNCIgeT0iMS42NyIgY2xhc3M9ImciPkdhdGVzOjwvdGV4dD48dGV4dCB4PSIxMy4wMjYiIHk9IjEuNjciIGNsYXNzPSJnIj40ODI8L3RleHQ+PHRleHQgeD0iMTcuMDM0IiB5PSIxLjY3IiBjbGFzcz0iZyI+KE5PVD0xNCw8L3RleHQ+PHRleHQgeD0iMjYuMDUyIiB5PSIxLjY3IiBjbGFzcz0iZyI+Q05PVD0zMDAsPC90ZXh0Pjx0ZXh0IHg9IjM2LjA3MiIgeT0iMS42NyIgY2xhc3M9ImciPlRvZmZvbGk9MTY4KTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxMiI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5EZXB0aDo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+ODk8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTMiPjx0ZXh0IHg9IjIuMDA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+UGVhazwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPmxpdmU6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTQiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJmIj5qdWxpYSZndDs8L3RleHQ+PHRleHQgeD0iNy4wMTQiIHk9IjEuNjciIGNsYXNzPSJnIj5zaW11bGF0ZShjLDwvdGV4dD48dGV4dCB4PSIxOS4wMzgiIHk9IjEuNjciIGNsYXNzPSJnIj5JbnQ4KDUpKTwvdGV4dD48dGV4dCB4PSI0NC4wODgiIHk9IjEuNjciIGNsYXNzPSJoIj4jPC90ZXh0Pjx0ZXh0IHg9IjQ2LjA5MiIgeT0iMS42NyIgY2xhc3M9ImgiPj08L3RleHQ+PHRleHQgeD0iNDguMDk2IiB5PSIxLjY3IiBjbGFzcz0iaCI+MjU8L3RleHQ+PHRleHQgeD0iNTEuMTAyIiB5PSIxLjY3IiBjbGFzcz0iaCI+KzwvdGV4dD48dGV4dCB4PSI1My4xMDYiIHk9IjEuNjciIGNsYXNzPSJoIj4xNTwvdGV4dD48dGV4dCB4PSI1Ni4xMTIiIHk9IjEuNjciIGNsYXNzPSJoIj4rPC90ZXh0Pjx0ZXh0IHg9IjU4LjExNiIgeT0iMS42NyIgY2xhc3M9ImgiPjE8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTUiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj40MTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxNiI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPnZlcmlmeV9yZXZlcnNpYmlsaXR5KGMpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+ZXZlcnk8L3RleHQ+PHRleHQgeD0iNTIuMTA0IiB5PSIxLjY3IiBjbGFzcz0iaCI+YW5jaWxsYTwvdGV4dD48dGV4dCB4PSI2MC4xMiIgeT0iMS42NyIgY2xhc3M9ImgiPmJhY2s8L3RleHQ+PHRleHQgeD0iNjUuMTMiIHk9IjEuNjciIGNsYXNzPSJoIj50bzwvdGV4dD48dGV4dCB4PSI2OC4xMzYiIHk9IjEuNjciIGNsYXNzPSJoIj4wLDwvdGV4dD48dGV4dCB4PSI3MS4xNDIiIHk9IjEuNjciIGNsYXNzPSJoIj5pbnB1dDwvdGV4dD48dGV4dCB4PSI3Ny4xNTQiIHk9IjEuNjciIGNsYXNzPSJoIj5wcmVzZXJ2ZWQ8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTciPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj50cnVlPC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjE4Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+dG9mZm9saV9kZXB0aChjKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxOSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImciPjM2PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjIwIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+Y2M8L3RleHQ+PHRleHQgeD0iMTAuMDIiIHk9IjEuNjciIGNsYXNzPSJnIj49PC90ZXh0Pjx0ZXh0IHg9IjEyLjAyNCIgeT0iMS42NyIgY2xhc3M9ImciPmNvbnRyb2xsZWQoYyk7PC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+bGlmdDwvdGV4dD48dGV4dCB4PSI1MS4xMDIiIHk9IjEuNjciIGNsYXNzPSJoIj50bzwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj5hPC90ZXh0Pjx0ZXh0IHg9IjU2LjExMiIgeT0iMS42NyIgY2xhc3M9ImgiPnF1YW50dW0tY29udHJvbGxlZDwvdGV4dD48dGV4dCB4PSI3NS4xNSIgeT0iMS42NyIgY2xhc3M9ImgiPm9wZXJhdGlvbjwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyMSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPnNpbXVsYXRlKGNjLDwvdGV4dD48dGV4dCB4PSIyMC4wNCIgeT0iMS42NyIgY2xhc3M9ImciPnRydWUsPC90ZXh0Pjx0ZXh0IHg9IjI2LjA1MiIgeT0iMS42NyIgY2xhc3M9ImciPkludDgoNSkpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+Y29udHJvbDwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj5vbjwvdGV4dD48dGV4dCB4PSI1OC4xMTYiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNjAuMTIiIHk9IjEuNjciIGNsYXNzPSJoIj5jb21wdXRlPC90ZXh0Pjx0ZXh0IHg9IjY4LjEzNiIgeT0iMS42NyIgY2xhc3M9ImgiPmY8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMjIiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJmIj5qdWxpYSZndDs8L3RleHQ+PHRleHQgeD0iNy4wMTQiIHk9IjEuNjciIGNsYXNzPSJnIj5zaW11bGF0ZShjYyw8L3RleHQ+PHRleHQgeD0iMjAuMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5mYWxzZSw8L3RleHQ+PHRleHQgeD0iMjcuMDU0IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCg1KSk8L3RleHQ+PHRleHQgeD0iNDQuMDg4IiB5PSIxLjY3IiBjbGFzcz0iaCI+IzwvdGV4dD48dGV4dCB4PSI0Ni4wOTIiIHk9IjEuNjciIGNsYXNzPSJoIj5jb250cm9sPC90ZXh0Pjx0ZXh0IHg9IjU0LjEwOCIgeT0iMS42NyIgY2xhc3M9ImgiPm9mZjwvdGV4dD48dGV4dCB4PSI1OC4xMTYiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNjAuMTIiIHk9IjEuNjciIGNsYXNzPSJoIj5vdXRwdXQ8L3RleHQ+PHRleHQgeD0iNjcuMTM0IiB5PSIxLjY3IiBjbGFzcz0iaCI+cmVnaXN0ZXI8L3RleHQ+PHRleHQgeD0iNzYuMTUyIiB5PSIxLjY3IiBjbGFzcz0iaCI+c3RheXM8L3RleHQ+PHRleHQgeD0iODIuMTY0IiB5PSIxLjY3IiBjbGFzcz0iaCI+MDwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyMyI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImciPjA8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iYSI+PHBhdGggZmlsbD0idHJhbnNwYXJlbnQiIGQ9Ik0wIDBoOTJ2MzNIMHoiLz48L3N5bWJvbD48c3ltYm9sIGlkPSJiIj48cGF0aCBmaWxsPSIjNmY3NjgzIiBkPSJNMCAwaDEuMTAydjIuMTcxSDB6Ii8+PC9zeW1ib2w+PC9kZWZzPjxwYXRoIGNsYXNzPSJhIiBkPSJNMCAwaDkydjcxLjY0M0gweiIvPjxnIHN0eWxlPSJhbmltYXRpb24tZHVyYXRpb246MjkuNXM7YW5pbWF0aW9uLWl0ZXJhdGlvbi1jb3VudDppbmZpbml0ZTthbmltYXRpb24tbmFtZTprO2FuaW1hdGlvbi10aW1pbmctZnVuY3Rpb246c3RlcHMoMSxlbmQpIj48c3ZnIHdpZHRoPSIyNTc2Ij48c3ZnPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIvPjwvc3ZnPjxzdmcgeD0iOTIiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIvPjx1c2UgeGxpbms6aHJlZj0iIzEiLz48L3N2Zz48c3ZnIHg9IjE4NCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIyLjE0NiIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48L3N2Zz48c3ZnIHg9IjI3NiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9IjYuOTk2IiB5PSI0LjMxNyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSI0LjM0MiIvPjwvc3ZnPjxzdmcgeD0iMzY4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjYuNDg4Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PC9zdmc+PHN2ZyB4PSI0NjAiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iOC42NTkiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjwvc3ZnPjxzdmcgeD0iNTUyIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjEwLjgzIi8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSIxMC44NTUiLz48L3N2Zz48c3ZnIHg9IjY0NCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIxMy4wMDEiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjwvc3ZnPjxzdmcgeD0iNzM2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjMwLjM2OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PC9zdmc+PHN2ZyB4PSI4MjgiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIgeT0iMzIuNTQiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjMyLjU2NSIvPjwvc3ZnPjxzdmcgeD0iOTIwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjM0LjcxMSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjwvc3ZnPjxzdmcgeD0iMTAxMiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIzNi44ODIiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PC9zdmc+PHN2ZyB4PSIxMTA0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjM5LjA1MyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSIzOS4wNzgiLz48L3N2Zz48c3ZnIHg9IjExOTYiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iNDEuMjI0Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48L3N2Zz48c3ZnIHg9IjEyODgiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iNDMuMzk1Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PC9zdmc+PHN2ZyB4PSIxMzgwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjQ1LjU2NiIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjQ1LjU5MSIvPjwvc3ZnPjxzdmcgeD0iMTQ3MiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI0Ny43MzciLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PC9zdmc+PHN2ZyB4PSIxNTY0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjQ5LjkwOCIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PC9zdmc+PHN2ZyB4PSIxNjU2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjUyLjA3OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNTIuMTA0Ii8+PC9zdmc+PHN2ZyB4PSIxNzQ4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjU0LjI1Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PHVzZSB4bGluazpocmVmPSIjMTgiIHk9IjQ1LjU5MSIvPjx1c2UgeGxpbms6aHJlZj0iIzE5IiB5PSI0Ny43NjIiLz48dXNlIHhsaW5rOmhyZWY9IiMyMCIgeT0iNTIuMTA0Ii8+PC9zdmc+PHN2ZyB4PSIxODQwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjU2LjQyMSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjU2LjQ0NiIvPjwvc3ZnPjxzdmcgeD0iMTkzMiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI1OC41OTIiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PHVzZSB4bGluazpocmVmPSIjMTkiIHk9IjQ3Ljc2MiIvPjx1c2UgeGxpbms6aHJlZj0iIzIwIiB5PSI1Mi4xMDQiLz48dXNlIHhsaW5rOmhyZWY9IiMyMSIgeT0iNTYuNDQ2Ii8+PC9zdmc+PHN2ZyB4PSIyMDI0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjYwLjc2MyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PC9zdmc+PHN2ZyB4PSIyMTE2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjYyLjkzNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNjIuOTU5Ii8+PC9zdmc+PHN2ZyB4PSIyMjA4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjY1LjEwNSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMjIiIHk9IjYyLjk1OSIvPjwvc3ZnPjxzdmcgeD0iMjMwMCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI2Ny4yNzYiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PHVzZSB4bGluazpocmVmPSIjMTkiIHk9IjQ3Ljc2MiIvPjx1c2UgeGxpbms6aHJlZj0iIzIwIiB5PSI1Mi4xMDQiLz48dXNlIHhsaW5rOmhyZWY9IiMyMSIgeT0iNTYuNDQ2Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjU4LjYxNyIvPjx1c2UgeGxpbms6aHJlZj0iIzIyIiB5PSI2Mi45NTkiLz48dXNlIHhsaW5rOmhyZWY9IiMyMyIgeT0iNjUuMTMiLz48L3N2Zz48c3ZnIHg9IjIzOTIiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIgeT0iNjkuNDQ3Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PHVzZSB4bGluazpocmVmPSIjMTgiIHk9IjQ1LjU5MSIvPjx1c2UgeGxpbms6aHJlZj0iIzE5IiB5PSI0Ny43NjIiLz48dXNlIHhsaW5rOmhyZWY9IiMyMCIgeT0iNTIuMTA0Ii8+PHVzZSB4bGluazpocmVmPSIjMjEiIHk9IjU2LjQ0NiIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSI1OC42MTciLz48dXNlIHhsaW5rOmhyZWY9IiMyMiIgeT0iNjIuOTU5Ii8+PHVzZSB4bGluazpocmVmPSIjMjMiIHk9IjY1LjEzIi8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNjkuNDcyIi8+PC9zdmc+PHN2ZyB4PSIyNDg0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjY5LjQ0NyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMjIiIHk9IjYyLjk1OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIzIiB5PSI2NS4xMyIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjY5LjQ3MiIvPjwvc3ZnPjwvc3ZnPjwvZz48L2c+PC9zdmc+PC9zdmc+"></div>
+      <figcaption class="muted small">recorded run — the live machine is having a moment</figcaption>
+    </figure>
+
+  </div>
+</section>
+
+<section class="slide backup" id="pebbling" data-title="Q&amp;A: the space–time dial" data-band="off"
+         data-notes="Knill 1995, Theorem 2.1. The dial trades gates for wires: recompute instead of store. Six strategies, all one dispatch away.">
+  <h2 class="frametitle">Q&amp;A: the space–time dial<span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="muted small">Knill 1995, Theorem 2.1 — the reversible pebble game on <span class="mono">n</span> steps with <span class="mono">s</span> pebbles:</div>
+
+<pre style="margin-top:1cqh;"><code>F(1, s) = 1                        <span class="muted">for s ≥ 1</span>
+F(n, 1) = ∞                        <span class="muted">for n ≥ 2</span>
+F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
+
+    <div class="serif center" style="font-style:italic;font-size:3.2cqh;margin:2cqh 0;">F(n, s) finite ⟺ n ≤ 2<sup>(s−1)</sup></div>
+
+    <div class="small muted">Six pluggable <span class="mono">BennettStrategy</span> subtypes — adding a seventh is adding a method:</div>
+    <div class="mono small" style="display:grid;grid-template-columns:1fr 1fr;gap:0.4cqh 2cqw;margin-top:0.8cqh;">
+      <div>DefaultStrategy <span class="muted">— forward + CNOT-copy + reverse</span></div>
+      <div>CheckpointStrategy <span class="muted">— per-group checkpoint-and-free</span></div>
+      <div>EagerStrategy <span class="muted">— gate-level dead-end cleanup</span></div>
+      <div>PebbledStrategy(max_pebbles) <span class="muted">— Knill, gate-level</span></div>
+      <div>ValueEagerStrategy <span class="muted">— PRS15 Alg. 2, Kahn reverse</span></div>
+      <div>PebbledGroupStrategy(max_pebbles) <span class="muted">— group-level, wire reuse</span></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="vmtape" data-title="Q&amp;A: the three-layer history tape" data-band="off"
+         data-notes="The tape is what replaces ancillae in the VM. L1 costs nothing, L2 is Enzyme's min-cut idea, L3 is rr's record-replay. unrun! drains all three.">
+  <h2 class="frametitle">Q&amp;A: the three-layer history tape<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:1.2cqh 2cqw;align-items:baseline;font-size:2.6cqh;margin-top:2cqh;">
+
+      <div class="mono gold">L1</div>
+      <div><strong>injective</strong></div>
+      <div class="muted">the step is a bijection on machine state — reversal recomputes it. Nothing is logged.</div>
+      <div class="mono muted small">0 bytes</div>
+
+      <div class="mono gold">L2</div>
+      <div><strong>min-cut delta</strong></div>
+      <div class="muted">log the smallest set of overwritten words that makes the step invertible. Enzyme&rsquo;s idea.</div>
+      <div class="mono muted small">O(cut)</div>
+
+      <div class="mono gold">L3</div>
+      <div><strong>checkpoint + replay</strong></div>
+      <div class="muted">snapshot every K steps, replay forward from the nearest checkpoint. rr&rsquo;s idea.</div>
+      <div class="mono muted small">O(state)/K</div>
+
+    </div>
+
+    <div class="muted small" style="margin-top:2.6cqh;"><span class="mono">unrun!(rs, vm)</span> drains all three layers: <span class="mono">rs.current == rs.initial</span> and <span class="mono">isempty(rs.history)</span>.</div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="numbers-full" data-title="Q&amp;A: the full number table" data-band="off"
+         data-notes="Every number measured on this machine 2026-08-11 or pinned in the committed docs. The SHA-256 row is the one we lose; it stays in the table.">
+  <h2 class="frametitle">Q&amp;A: the full number table<span class="rule"></span></h2>
+  <div class="body">
+
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:0.55cqh 2cqw;font-size:2.1cqh;line-height:1.35;align-items:baseline;">
+
+      <div class="mono">Int8 &nbsp;x*x + 3x + 1</div>
+      <div><strong>482</strong> gates (NOT 14 / CNOT 300 / Toffoli 168) · depth 89 · Toffoli-depth 36 · 249 ancillae</div>
+
+      <div class="mono">UInt8 x + 1 &nbsp;(3-bit)</div>
+      <div><strong>23</strong> gates (NOT 6 / CNOT 15 / Toffoli 2) · 16 wires · 10 ancillae · depth 9 · <span class="mono">simulate(c1, 3) = 4</span></div>
+
+      <div class="mono">Int8 &nbsp;f(5)</div>
+      <div><strong>41</strong> — the circuit agrees with the function</div>
+
+      <div class="mono">Float64 x + x</div>
+      <div><strong>63,058</strong> gates — bit-exact soft-float</div>
+
+      <div class="mono">Float64 sin(x)</div>
+      <div><strong>11,027,852</strong> gates (1,629,722 NOT / 7,059,276 CNOT / 2,338,854 Toffoli) · 38.8 s compile · <span class="mono">sin(1.2345)</span> bit-identical, ≤1 ULP vs <span class="mono">Base.sin</span></div>
+
+      <div class="mono">QCLA 32-bit multiply</div>
+      <div>Toffoli-depth <strong>56</strong> vs <strong>180</strong> schoolbook</div>
+
+      <div class="mono">QROM</div>
+      <div>T-count exactly <strong>4(L−1)</strong>, width-independent — matches Babbush–Gidney</div>
+
+      <div class="mono">shadow-memory store</div>
+      <div><strong>24</strong> CNOT vs a <strong>7,122</strong>-gate MUX</div>
+
+      <div class="mono red">SHA-256 round</div>
+      <div><strong>1,632</strong> Toffoli vs hand-optimized <strong>683</strong> — ~2.4× worse, and it stays in our own table</div>
+
+      <div class="mono">Collatz circuit (20)</div>
+      <div><strong>14,074</strong> gates · <strong>2,320</strong> Toffoli · <strong>8,868</strong> ancillae</div>
+
+      <div class="mono">persistent map @ 128</div>
+      <div>linear scan beats Okasaki <strong>2,400×</strong> — the naive structure wins</div>
+
+      <div class="mono">Deutsch–Jozsa (Sturm)</div>
+      <div>warm <strong>≈2.1 s</strong> · first oracle call <strong>20.8 s</strong> cold</div>
+
+      <div class="mono">teleport probe</div>
+      <div><strong>200/200</strong> deterministic in <strong>0.25 s</strong></div>
+
+      <div class="mono">wm28 channel probe</div>
+      <div>fixed <strong>1024/1024</strong> vs broken <strong>≈512</strong> — the marginal test was blind</div>
+
+      <div class="mono">TTFX</div>
+      <div><strong>20.7 s → 0.99 s</strong> after the precompile workload</div>
+
+      <div class="mono">test suites</div>
+      <div><strong>≈692k</strong> Bennett assertions · <strong>&gt;27k</strong> Sturm assertions</div>
+
+    </div>
+
+  </div>
+</section>
+
+<section class="slide backup" id="stepper" data-title="Q&amp;A: 23 gates, one at a time" data-band="off"
+         data-notes="Arrow keys run one gate each. Compute 1–10, copy 11–13, uncompute 14–23. Input x = 3; out = 4; every ancilla back to zero.">
+  <h2 class="frametitle">Q&amp;A: 23 gates, one at a time<span class="rule"></span></h2>
+  <div class="body">
+
+    <div class="component" data-component="stepper" style="min-height:52cqh;"></div>
+
+  </div>
+</section>
+
+
+    <nav id="rail" aria-label="six levers">
+      <div class="badge" data-lever="1"><div class="chip">①</div><div class="chip-label">reflection</div></div>
+      <div class="badge" data-lever="2"><div class="chip">②</div><div class="chip-label">lowering table</div></div>
+      <div class="badge" data-lever="3"><div class="chip">③</div><div class="chip-label">semantics</div></div>
+      <div class="badge" data-lever="4"><div class="chip">④</div><div class="chip-label">reflection stack</div></div>
+      <div class="badge" data-lever="5"><div class="chip">⑤</div><div class="chip-label">types=physics</div></div>
+      <div class="badge" data-lever="6"><div class="chip">⑥</div><div class="chip-label">dispatch refuses</div></div>
+    </nav>
+
+    <div id="band" data-state="off">
+      <div class="band-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div id="band-state"></div>
+      <div id="band-out"></div>
+      <div class="band-label">live terminal</div>
+    </div>
+
+    <div id="counter">1/1</div>
+    <div id="timer" hidden data-late="none">00:00</div>
+    <div id="notes" hidden></div>
+
+    <div id="help" hidden>
+      <div class="help-card">
+        <h3>Deck keys</h3>
+        <dl>
+          <dt>→ / Space / PgDn</dt><dd>next build, then next slide</dd>
+          <dt>← / PgUp</dt><dd>back one build / slide</dd>
+          <dt>Home / End</dt><dd>first / last slide</dd>
+          <dt>D</dt><dd>shadow terminal into the band (again clears)</dd>
+          <dt>T / Shift+T</dt><dd>timer HUD / reset the clock</dd>
+          <dt>N</dt><dd>speaker notes</dd>
+          <dt>F</dt><dd>fullscreen</dd>
+          <dt>0</dt><dd>backup: recorded demo (#fallback)</dd>
+          <dt>S</dt><dd>backup: 23-gate stepper (#stepper)</dd>
+          <dt>B</dt><dd>back to the deck from a backup</dd>
+          <dt>?  /  Esc</dt><dd>this card / close</dd>
+        </dl>
+        <div class="help-foot">Click the right or left third of the stage to move. <code>?still</code> in the URL builds every slide for screenshots.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script id="circuits" type="application/json">
+{
+"x_plus_1": {
+  "n_wires": 16,
+  "input_wires": [1, 2, 3],
+  "output_wires": [14, 15, 16],
+  "ancilla_wires": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  "gates": [
+    {"t":"CNOT","control":1,"target":8},
+    {"t":"NOT","target":8},
+    {"t":"CNOT","control":1,"target":12},
+    {"t":"CNOT","control":2,"target":9},
+    {"t":"TOF","c1":9,"c2":12,"target":13},
+    {"t":"CNOT","control":12,"target":9},
+    {"t":"CNOT","control":3,"target":10},
+    {"t":"CNOT","control":13,"target":10},
+    {"t":"NOT","target":5},
+    {"t":"NOT","target":4},
+    {"t":"CNOT","control":8,"target":14},
+    {"t":"CNOT","control":9,"target":15},
+    {"t":"CNOT","control":10,"target":16},
+    {"t":"NOT","target":4},
+    {"t":"NOT","target":5},
+    {"t":"CNOT","control":13,"target":10},
+    {"t":"CNOT","control":3,"target":10},
+    {"t":"CNOT","control":12,"target":9},
+    {"t":"TOF","c1":9,"c2":12,"target":13},
+    {"t":"CNOT","control":2,"target":9},
+    {"t":"CNOT","control":1,"target":12},
+    {"t":"NOT","target":8},
+    {"t":"CNOT","control":1,"target":8}
+  ]
+},
+"controlled_not": {
+  "control_wire": 50,
+  "n_wires": 50,
+  "input_wires": [50, 1, 2, 3, 4, 5, 6, 7, 8],
+  "output_wires": [42, 43, 44, 45, 46, 47, 48, 49],
+  "ancilla_wires": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41],
+  "gates": [
+    {"t":"TOF","c1":50,"c2":1,"target":18},
+    {"t":"TOF","c1":50,"c2":18,"target":34},
+    {"t":"CNOT","control":50,"target":34},
+    {"t":"CNOT","control":50,"target":9},
+    {"t":"CNOT","control":50,"target":10},
+    {"t":"CNOT","control":50,"target":26},
+    {"t":"TOF","c1":50,"c2":34,"target":42},
+    {"t":"TOF","c1":50,"c2":35,"target":43},
+    {"t":"TOF","c1":50,"c2":36,"target":44},
+    {"t":"TOF","c1":50,"c2":37,"target":45},
+    {"t":"TOF","c1":50,"c2":38,"target":46},
+    {"t":"TOF","c1":50,"c2":39,"target":47},
+    {"t":"TOF","c1":50,"c2":40,"target":48},
+    {"t":"TOF","c1":50,"c2":41,"target":49},
+    {"t":"CNOT","control":50,"target":26},
+    {"t":"CNOT","control":50,"target":10},
+    {"t":"CNOT","control":50,"target":9},
+    {"t":"CNOT","control":50,"target":34},
+    {"t":"TOF","c1":50,"c2":18,"target":34},
+    {"t":"TOF","c1":50,"c2":1,"target":18}
+  ]
+}
+}
+
+</script>
+
+<script>
+/* components.js — "Given an Oracle for f" (JuliaCon 2026)
+ *
+ * Three interactive components for the deck, per DECK-SPEC.md §Components:
+ *
+ *   costbars  (s8)        the rescaling log-scale cost chart   — 3 consumed steps
+ *   entangle  (s11)       the REAL two-branch statevector      — 7 consumed steps
+ *   stepper   (#stepper)  the 23-gate walkthrough              — 24 consumed steps
+ *
+ * Contract: window.DeckComponents[name] = {mount, onEnter, onLeave, onStep, onStill}.
+ * `mount(el)` is called once at load; `onStep(el, k)` returns true when the
+ * component CONSUMES the advance (the engine then does not advance builds);
+ * `onStill(el)` jumps to the final state (?still screenshots + print).
+ *
+ * Everything is defensive: a missing circuits payload or a missing mount
+ * element must no-op, never throw — a deck that dies at 10:00 in front of a
+ * room is worse than a deck with one blank panel.
+ *
+ * All colour comes from the deck's CSS custom properties (read via
+ * getComputedStyle on :root, or via var() inside the injected stylesheet).
+ * All geometry is in container-query units against the 16:9 #stage.
+ *
+ * AGPL-3.0
+ */
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ *
+   * 0. Small utilities
+   * ------------------------------------------------------------------ */
+
+  /** prefers-reduced-motion: every animation in here becomes instant. */
+  function reducedMotion() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
+
+  /** ?still — screenshot/print mode: no transitions, final state only. */
+  function stillMode() {
+    try {
+      if (/[?&]still\b/.test(window.location.search)) return true;
+      return document.documentElement.classList.contains('still') ||
+             (document.body && document.body.classList.contains('still'));
+    } catch (e) { return false; }
+  }
+
+  /** Frozen = no animation at all (reduced motion or still). */
+  function frozen() { return reducedMotion() || stillMode(); }
+
+  /** Read a deck design token off :root, with a fallback if the CSS is absent. */
+  var _tokCache = null;
+  function tok(name, fallback) {
+    try {
+      if (!_tokCache) _tokCache = getComputedStyle(document.documentElement);
+      var v = _tokCache.getPropertyValue(name);
+      v = v ? v.trim() : '';
+      return v || fallback;
+    } catch (e) { return fallback; }
+  }
+  /** Tokens are read lazily but the cache must survive a late stylesheet. */
+  function refreshTokens() { _tokCache = null; }
+
+  /** The circuit payload, spliced into frame.html as <script id="circuits">. */
+  var _circuits;
+  function circuits() {
+    if (_circuits !== undefined) return _circuits;
+    try {
+      var el = document.getElementById('circuits');
+      _circuits = el ? JSON.parse(el.textContent) : null;
+    } catch (e) { _circuits = null; }
+    return _circuits;
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function svgEl(tag, attrs) {
+    var n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (attrs) for (var k in attrs) if (attrs[k] != null) n.setAttribute(k, String(attrs[k]));
+    return n;
+  }
+
+  function fmt(n) {
+    try { return Number(n).toLocaleString('en-US'); } catch (e) { return String(n); }
+  }
+
+  /** Unicode subscript for small integers (wire labels x₁, a₁₀, …). */
+  var SUB = ['₀', '₁', '₂', '₃', '₄',
+             '₅', '₆', '₇', '₈', '₉'];
+  function sub(n) {
+    return String(n).split('').map(function (d) { return SUB[+d] || d; }).join('');
+  }
+
+  /** Per-element component state, keyed weakly so nothing leaks. */
+  function store() {
+    var m = new WeakMap();
+    return {
+      get: function (e) { return e ? m.get(e) : null; },
+      set: function (e, v) { if (e) m.set(e, v); return v; }
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 1. Reversible-gate semantics — the whole simulator, three lines.
+   *    (Mirrors src/simulator.jl:1–3 of Bennett.jl; slide s6 shows the
+   *    Julia original. Bits are a 1-based boolean array: wires are 1-based
+   *    in the JSON, so index 0 is unused.)
+   * ------------------------------------------------------------------ */
+
+  function applyGate(b, g) {
+    if (!g) return;
+    if (g.t === 'NOT') b[g.target] = !b[g.target];
+    else if (g.t === 'CNOT') b[g.target] = b[g.target] !== b[g.control];
+    else if (g.t === 'TOF') b[g.target] = b[g.target] !== (b[g.c1] && b[g.c2]);
+  }
+
+  function freshBits(n) {
+    var b = new Array(n + 1);
+    for (var i = 0; i <= n; i++) b[i] = false;
+    return b;
+  }
+
+  /** Decode a wire list LSB-first into an integer. */
+  function decode(b, wires) {
+    var v = 0;
+    for (var i = 0; i < wires.length; i++) if (b[wires[i]]) v |= (1 << i);
+    return v;
+  }
+
+  function gateName(g) {
+    if (!g) return '—';
+    if (g.t === 'NOT') return 'NOT w' + g.target;
+    if (g.t === 'CNOT') return 'CNOT ' + g.control + '→' + g.target;
+    return 'TOF ' + g.c1 + '·' + g.c2 + '→' + g.target;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 2. One injected stylesheet for all three components.
+   *    Classes are prefixed cb- / en- / st- so nothing collides with the
+   *    frame's CSS. Colours are var() references to the deck tokens.
+   * ------------------------------------------------------------------ */
+
+  var CSS = [
+    /* shared ------------------------------------------------------- */
+    '.cb-root,.en-root,.st-root{width:100%;height:100%;display:flex;flex-direction:column;',
+    '  color:var(--ink,#E8E6E1);box-sizing:border-box}',
+    '.cb-root *,.en-root *,.st-root *{box-sizing:border-box}',
+    '.cb-root .mono,.en-root .mono,.st-root .mono{font-family:var(--mono-stack,"JuliaMono",',
+    '  ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace)}',
+    '.cb-root.frozen *,.en-root.frozen *,.st-root.frozen *{transition:none !important;',
+    '  animation:none !important}',
+
+    /* 1. costbars -------------------------------------------------- */
+    '.cb-root{justify-content:center;gap:2.2cqh;padding:0 1cqw}',
+    '.cb-rows{display:flex;flex-direction:column;gap:3.0cqh}',
+    '.cb-row{display:grid;grid-template-columns:27cqw 1fr;align-items:center;gap:1.4cqw;',
+    '  opacity:0;transition:opacity 320ms ease}',
+    '.cb-row.shown{opacity:1}',
+    '.cb-label{text-align:right;line-height:1.3}',
+    '.cb-ty{color:var(--muted,#8A93A6);font-size:2.1cqh;margin-right:0.7cqw}',
+    '.cb-ex{color:var(--ink,#E8E6E1);font-size:2.3cqh}',
+    '.cb-track{position:relative;height:5.4cqh}',
+    '.cb-plot{position:absolute;inset:0 16cqw 0 0}',
+    '.cb-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--blue,#6B8FE8);',
+    '  border-radius:0 4px 4px 0;transition:width 600ms cubic-bezier(.22,.61,.36,1)}',
+    '.cb-val{position:absolute;top:50%;left:0;transform:translateY(-50%);white-space:nowrap;',
+    '  padding-left:1.1cqw;color:var(--ink,#E8E6E1);font-size:2.6cqh;font-weight:600;',
+    '  font-variant-numeric:tabular-nums;transition:left 600ms cubic-bezier(.22,.61,.36,1)}',
+    '.cb-axis{grid-column:2;position:relative;height:3.2cqh;opacity:0;transition:opacity 320ms ease}',
+    '.cb-axis.shown{opacity:1}',
+    '.cb-axisplot{position:absolute;inset:0 16cqw 0 0}',
+    '.cb-tick{position:absolute;top:0;transform:translateX(-50%);color:var(--muted,#8A93A6);',
+    '  font-size:1.9cqh;opacity:0;transition:left 600ms cubic-bezier(.22,.61,.36,1),opacity 400ms ease}',
+    '.cb-tick.on{opacity:.45}',
+    '.cb-sub{color:var(--muted,#8A93A6);font-size:2.0cqh;opacity:0;transition:opacity 400ms ease;',
+    '  padding-top:0.6cqh}',
+    '.cb-sub.shown{opacity:1}',
+
+    /* 2. entangle -------------------------------------------------- */
+    '.en-root{justify-content:center;gap:1.6cqh}',
+    '.en-grid{display:grid;grid-template-columns:1fr 24cqw 1fr;gap:1.4cqw;align-items:stretch}',
+    '.en-card{background:var(--panel,#151A22);border:1px solid var(--line,#232A35);border-radius:10px;',
+    '  padding:1.6cqh 1.4cqw;display:flex;flex-direction:column;gap:1.2cqh;opacity:0;',
+    '  transform:translateY(1.2cqh);transition:opacity 400ms ease,transform 400ms ease}',
+    '.en-root.armed .en-card{opacity:1;transform:none}',
+    '.en-cardhead{display:flex;align-items:baseline;justify-content:space-between;gap:1cqw}',
+    '.en-name{font-size:2.3cqh;color:var(--muted,#8A93A6);letter-spacing:.02em}',
+    '.en-amp{font-size:2.4cqh;color:var(--ink,#E8E6E1);font-variant-numeric:tabular-nums}',
+    '.en-chips{display:flex;gap:1.0cqw}',
+    '.en-chip{flex:1;display:flex;flex-direction:column;align-items:center;gap:0.5cqh}',
+    '.en-chiplab{font-size:1.8cqh;color:var(--muted,#8A93A6)}',
+    '.en-val{width:100%;text-align:center;padding:0.8cqh 0;border-radius:8px;font-size:3.0cqh;',
+    '  font-weight:700;font-variant-numeric:tabular-nums;border:1px solid var(--line,#232A35);',
+    '  background:var(--code-bg,#10151C);color:var(--muted,#8A93A6)}',
+    '.en-val.one{color:var(--ink-strong,#FFF);border-color:var(--blue,#6B8FE8)}',
+    '.en-chip.flip .en-val{animation:en-pop 240ms cubic-bezier(.3,1.4,.5,1)}',
+    '@keyframes en-pop{0%{transform:scale(1)}45%{transform:scale(1.22);',
+    '  box-shadow:0 0 0 3px rgba(224,180,95,.28)}100%{transform:scale(1)}}',
+    '.en-anc{align-self:flex-start;font-size:1.9cqh;color:var(--muted,#8A93A6);',
+    '  border:1px solid var(--line,#232A35);border-radius:999px;padding:0.35cqh 1.0cqw}',
+    '.en-anc.flash{animation:en-flash 620ms ease}',
+    '@keyframes en-flash{0%{box-shadow:0 0 0 0 rgba(92,189,106,0)}',
+    '  40%{box-shadow:0 0 0 3px rgba(92,189,106,.35);color:var(--green,#5CBD6A)}',
+    '  100%{box-shadow:0 0 0 0 rgba(92,189,106,0)}}',
+    '.en-ket{font-size:2.4cqh;color:var(--ink-strong,#FFF);opacity:0;transition:opacity 400ms ease}',
+    '.en-ket.shown{opacity:1}',
+    '.en-mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.9cqh;',
+    '  text-align:center}',
+    '.en-k{font-size:3.4cqh;font-weight:700;color:var(--ink-strong,#FFF);',
+    '  font-variant-numeric:tabular-nums}',
+    '.en-gate{font-size:2.0cqh;color:var(--blue,#6B8FE8);min-height:2.6cqh}',
+    '.en-norm{font-size:1.9cqh;color:var(--muted,#8A93A6);font-variant-numeric:tabular-nums}',
+    '.en-verdict{text-align:center;font-size:3.0cqh;color:var(--ink-strong,#FFF);opacity:0;',
+    '  transition:opacity 400ms ease;min-height:3.8cqh}',
+    '.en-verdict.shown{opacity:1}',
+    '.en-verdict em{font-style:normal;color:var(--red,#E06C5F);font-weight:700}',
+    '.en-caption{text-align:center;font-size:2.2cqh;color:var(--muted,#8A93A6);min-height:3cqh;',
+    '  opacity:0;transition:opacity 320ms ease}',
+    '.en-caption.shown{opacity:1}',
+    '.en-foot{text-align:center;font-size:1.9cqh;color:var(--muted,#8A93A6);opacity:.85}',
+
+    /* 3. stepper --------------------------------------------------- */
+    '.st-root{gap:1.0cqh;align-items:stretch}',
+    '.st-svgwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}',
+    /* height:auto + viewBox keeps the intrinsic 1000:492 ratio even when the
+     * parent has no definite height; the cqh cap keeps it clear of the band. */
+    '.st-svgwrap svg{width:100%;height:auto;max-height:50cqh;display:block}',
+    '.st-bar{display:flex;align-items:center;gap:1.6cqw;flex-wrap:wrap}',
+    '.st-stat{font-size:2.1cqh;color:var(--muted,#8A93A6);font-variant-numeric:tabular-nums}',
+    '.st-stat b{color:var(--ink,#E8E6E1);font-weight:600}',
+    '.st-final{font-size:2.1cqh;color:var(--green,#5CBD6A);opacity:0;transition:opacity 400ms ease}',
+    '.st-final.shown{opacity:1}',
+    '.st-btn{margin-left:auto;font:inherit;font-size:2.0cqh;color:var(--ink,#E8E6E1);cursor:pointer;',
+    '  background:var(--panel,#151A22);border:1px solid var(--line,#232A35);border-radius:8px;',
+    '  padding:0.6cqh 1.2cqw;transition:border-color 200ms ease,color 200ms ease}',
+    '.st-btn:hover{border-color:var(--gold,#E0B45F);color:var(--ink-strong,#FFF)}',
+    '.st-btn.playing{border-color:var(--gold,#E0B45F);color:var(--gold,#E0B45F)}',
+    '.st-glow{transition:transform 160ms cubic-bezier(.22,.61,.36,1),opacity 200ms ease}'
+  ].join('\n');
+
+  function injectCSS() {
+    try {
+      if (document.getElementById('deck-components-css')) return;
+      var s = document.createElement('style');
+      s.id = 'deck-components-css';
+      s.textContent = CSS;
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) { /* no-op */ }
+  }
+
+  /* ================================================================== *
+   * COMPONENT 1 — costbars
+   *
+   * A log10 bar chart whose AXIS rescales on every reveal, so the previous
+   * champion visibly shrinks as the new bar sweeps in. One measure, one hue
+   * (--blue), direct value labels: no legend, no gridlines.
+   *
+   * Numbers are the verified appendix of DECK-SPEC.md (measured 2026-08-11).
+   * ================================================================== */
+
+  var CB = store();
+
+  var CB_ROWS = [
+    { ty: 'Int8',    ex: 'x*x + 3x + 1', v: 482,       exp: 3 },
+    { ty: 'Float64', ex: 'x + x',        v: 63058,     exp: 5 },
+    { ty: 'Float64', ex: 'sin(x)',       v: 11027852,  exp: 8 }
+  ];
+  var CB_TICKS = [0, 2, 4, 6, 8];
+  var CB_SUB = 'measured 2026-08-11 · 1,629,722 NOT · 7,059,276 CNOT · ' +
+               '2,338,854 Toffoli · ≤1 ULP vs Base.sin';
+
+  var costbars = {
+    mount: function (root) {
+      if (!root || CB.get(root)) return;
+      injectCSS();
+      refreshTokens();
+      root.classList.add('cb-root');
+      root.textContent = '';
+
+      var rows = el('div', 'cb-rows');
+      var st = { root: root, rows: [], ticks: [], shown: 0, exp: CB_ROWS[0].exp };
+
+      CB_ROWS.forEach(function (r) {
+        var row = el('div', 'cb-row');
+        var lab = el('div', 'cb-label');
+        lab.appendChild(el('span', 'cb-ty mono', r.ty));
+        lab.appendChild(el('span', 'cb-ex mono', r.ex));
+        var track = el('div', 'cb-track');
+        var plot = el('div', 'cb-plot');
+        var fill = el('div', 'cb-fill');
+        // The fill colour is read from the deck token so the chart can never
+        // drift from the palette even if this file is reused elsewhere.
+        fill.style.background = tok('--blue', '#6B8FE8');
+        var val = el('div', 'cb-val', fmt(r.v));
+        plot.appendChild(fill);
+        plot.appendChild(val);
+        track.appendChild(plot);
+        row.appendChild(lab);
+        row.appendChild(track);
+        rows.appendChild(row);
+        st.rows.push({ def: r, row: row, fill: fill, val: val });
+      });
+
+      var axis = el('div', 'cb-axis');
+      var aplot = el('div', 'cb-axisplot');
+      CB_TICKS.forEach(function (k) {
+        var t = el('div', 'cb-tick mono', '10' + sup(k));
+        aplot.appendChild(t);
+        st.ticks.push({ k: k, node: t });
+      });
+      axis.appendChild(aplot);
+
+      // The axis row must line up with the bar plots: it lives in the same
+      // grid column as the tracks.
+      var grid = el('div', 'cb-row');
+      grid.style.opacity = '1';
+      grid.appendChild(el('div', ''));
+      grid.appendChild(axis);
+
+      var subN = el('div', 'cb-sub', CB_SUB);
+
+      root.appendChild(rows);
+      root.appendChild(grid);
+      root.appendChild(subN);
+      st.axis = axis;
+      st.sub = subN;
+
+      CB.set(root, st);
+      if (frozen()) root.classList.add('frozen');
+      cbApply(st);
+      if (stillMode()) costbars.onStill(root);
+    },
+
+    onEnter: function (root) {
+      var st = CB.get(root);
+      if (!st) return;
+      root.classList.toggle('frozen', frozen());
+      if (stillMode()) { costbars.onStill(root); return; }
+      cbReset(st);
+    },
+
+    onLeave: function (root) {
+      var st = CB.get(root);
+      if (!st || stillMode()) return;
+      cbReset(st);
+    },
+
+    /* Consumes exactly three advances (one per bar); the honesty footer that
+     * follows is an ordinary .build owned by the slide, so the fourth advance
+     * must fall through to the engine. */
+    onStep: function (root) {
+      var st = CB.get(root);
+      if (!st) return false;
+      if (st.shown >= CB_ROWS.length) return false;
+      st.shown += 1;
+      cbReveal(st);
+      return true;
+    },
+
+    onStill: function (root) {
+      var st = CB.get(root);
+      if (!st) return;
+      root.classList.add('frozen');
+      st.shown = CB_ROWS.length;
+      cbReveal(st);
+    }
+  };
+
+  function sup(k) {
+    var S = { 0: '⁰', 2: '²', 4: '⁴', 6: '⁶', 8: '⁸' };
+    return S[k] != null ? S[k] : String(k);
+  }
+
+  function cbReset(st) {
+    st.shown = 0;
+    st.exp = CB_ROWS[0].exp;
+    st.rows.forEach(function (r) { r.row.classList.remove('shown'); });
+    st.axis.classList.remove('shown');
+    st.sub.classList.remove('shown');
+    cbApply(st);
+  }
+
+  function cbReveal(st) {
+    // The axis exponent is that of the largest revealed bar — this is the
+    // rescale that makes the earlier bars shrink.
+    st.exp = CB_ROWS[Math.max(0, st.shown - 1)].exp;
+    st.rows.forEach(function (r, i) { r.row.classList.toggle('shown', i < st.shown); });
+    st.axis.classList.toggle('shown', st.shown > 0);
+    st.sub.classList.toggle('shown', st.shown >= 3);
+    if (frozen()) cbApply(st);
+    else requestAnimationFrame(function () { cbApply(st); });
+  }
+
+  function cbApply(st) {
+    var exp = st.exp || 1;
+    st.rows.forEach(function (r, i) {
+      var f = (i < st.shown) ? clamp01(Math.log10(r.def.v) / exp) : 0;
+      r.fill.style.width = (f * 100).toFixed(3) + '%';
+      r.val.style.left = (f * 100).toFixed(3) + '%';
+    });
+    st.ticks.forEach(function (t) {
+      var on = t.k <= exp + 1e-9;
+      t.node.classList.toggle('on', on && st.shown > 0);
+      t.node.style.left = (clamp01(t.k / exp) * 100).toFixed(3) + '%';
+    });
+  }
+
+  function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+
+  /* ================================================================== *
+   * COMPONENT 2 — entangle
+   *
+   * The deck runs the actual compiled circuit. `controlled(·)` turns a
+   * reversible circuit into a permutation controlled on wire 50; a state
+   *
+   *     (|ctrl=0> + |ctrl=1>)/sqrt(2)  (x) |x=0, anc=0>
+   *
+   * is therefore ALWAYS exactly two computational branches with amplitude
+   * 1/sqrt(2) each — permutations map basis states to basis states, so no
+   * amplitude ever splits. That is why two 50-bit arrays are a *complete*
+   * statevector simulation here, not an approximation.
+   *
+   * Seven consumed advances: prepare, 4x(5 gates), ket reveal, verdict.
+   * ================================================================== */
+
+  var EN = store();
+  var EN_TOTAL_STEPS = 7;
+  var EN_CHUNK = 5;
+
+  var entangle = {
+    mount: function (root) {
+      if (!root || EN.get(root)) return;
+      injectCSS();
+      refreshTokens();
+      root.classList.add('en-root');
+      root.textContent = '';
+
+      var c = circuits() && circuits().controlled_not;
+      if (!c || !c.gates) {                       // no data → visible but inert
+        root.appendChild(el('div', 'en-foot', 'circuit data unavailable'));
+        return;
+      }
+
+      var ctrlW = c.control_wire || 50;
+      var xW = (c.input_wires && c.input_wires[1]) || 1;
+      var outW = (c.output_wires && c.output_wires[0]) || 42;
+      var anc = c.ancilla_wires || [];
+
+      var st = {
+        root: root, c: c, ctrlW: ctrlW, xW: xW, outW: outW, anc: anc,
+        step: 0, k: 0, cards: []
+      };
+
+      var grid = el('div', 'en-grid');
+      st.cards.push(enCard(st, 'branch A', false));
+      var mid = el('div', 'en-mid');
+      st.kNode = el('div', 'en-k mono', '0/' + c.gates.length);
+      st.gNode = el('div', 'en-gate mono', '');
+      // The norm is genuinely computed from the two amplitudes, not printed.
+      var amp = Math.SQRT1_2;
+      st.normNode = el('div', 'en-norm mono',
+        '‖ψ‖ = ' + Math.sqrt(amp * amp + amp * amp).toFixed(10));
+      mid.appendChild(st.kNode);
+      mid.appendChild(st.gNode);
+      mid.appendChild(st.normNode);
+      st.cards.push(enCard(st, 'branch B', true));
+
+      grid.appendChild(st.cards[0].node);
+      grid.appendChild(mid);
+      grid.appendChild(st.cards[1].node);
+
+      st.verdict = el('div', 'en-verdict');
+      st.caption = el('div', 'en-caption');
+      var foot = el('div', 'en-foot',
+        'the deck is running the compiled circuit — ' + c.gates.length +
+        ' gates on both branches, live in your browser');
+
+      root.appendChild(grid);
+      root.appendChild(st.verdict);
+      root.appendChild(st.caption);
+      root.appendChild(foot);
+
+      EN.set(root, st);
+      if (frozen()) root.classList.add('frozen');
+      enReset(st);
+      if (stillMode()) entangle.onStill(root);
+    },
+
+    onEnter: function (root) {
+      var st = EN.get(root);
+      if (!st) return;
+      root.classList.toggle('frozen', frozen());
+      if (stillMode()) { entangle.onStill(root); return; }
+      enReset(st);
+    },
+
+    onLeave: function (root) {
+      var st = EN.get(root);
+      if (!st || stillMode()) return;
+      enReset(st);
+    },
+
+    onStep: function (root) {
+      var st = EN.get(root);
+      if (!st) return false;
+      if (st.step >= EN_TOTAL_STEPS) return false;
+      st.step += 1;
+      enRender(st, false);
+      return true;
+    },
+
+    onStill: function (root) {
+      var st = EN.get(root);
+      if (!st) return;
+      root.classList.add('frozen');
+      st.step = EN_TOTAL_STEPS;
+      enRender(st, true);
+    }
+  };
+
+  function enCard(st, name, isB) {
+    var node = el('div', 'en-card');
+    var head = el('div', 'en-cardhead');
+    head.appendChild(el('div', 'en-name', name));
+    head.appendChild(el('div', 'en-amp mono', '1/√2'));
+    var chips = el('div', 'en-chips');
+    var mk = function (label) {
+      var chip = el('div', 'en-chip');
+      chip.appendChild(el('div', 'en-chiplab mono', label));
+      var v = el('div', 'en-val mono', '0');
+      chip.appendChild(v);
+      chips.appendChild(chip);
+      return { chip: chip, val: v };
+    };
+    var ctrl = mk('ctrl · w' + st.ctrlW);
+    var x = mk('x · w' + st.xW);
+    var out = mk('out · w' + st.outW);
+    var ancPill = el('div', 'en-anc mono', 'ancillae Σ=0');
+    var ket = el('div', 'en-ket mono', '');
+    node.appendChild(head);
+    node.appendChild(chips);
+    node.appendChild(ancPill);
+    node.appendChild(ket);
+    return { node: node, isB: isB, ctrl: ctrl, x: x, out: out, anc: ancPill, ket: ket, bits: null };
+  }
+
+  function enReset(st) {
+    st.step = 0;
+    st.k = 0;
+    st.root.classList.remove('armed');
+    st.verdict.classList.remove('shown');
+    st.caption.classList.remove('shown');
+    st.caption.textContent = '';
+    st.cards.forEach(function (card) {
+      card.bits = freshBits(st.c.n_wires || 50);
+      card.ket.classList.remove('shown');
+      card.ket.textContent = '';
+    });
+    st.kNode.textContent = '0/' + st.c.gates.length;
+    st.gNode.textContent = '';
+    enPaint(st, false);
+  }
+
+  /**
+   * Render the component at st.step.
+   *  step 0        nothing (cards hidden)
+   *  step 1        prepare: cards in, branch B ctrl = 1
+   *  steps 2..5    run gates in chunks of 5  → k = 5, 10, 15, 20
+   *  step 6        ket reveal + ancilla pills flash
+   *  step 7        verdict line
+   * The simulation is recomputed from scratch for the target k so that
+   * jumping (onStill) and stepping give bit-identical state.
+   */
+  function enRender(st, instant) {
+    var gates = st.c.gates;
+    var targetK = 0;
+    if (st.step >= 2) targetK = Math.min(gates.length, (st.step - 1) * EN_CHUNK);
+    if (st.step >= 6) targetK = gates.length;
+
+    st.root.classList.toggle('armed', st.step >= 1);
+
+    // Recompute both branches from the prepared state up to targetK.
+    var prev = st.cards.map(function (card) { return card.bits; });
+    st.cards.forEach(function (card) {
+      var b = freshBits(st.c.n_wires || 50);
+      if (card.isB && st.step >= 1) b[st.ctrlW] = true;   // |ctrl=1> branch
+      for (var i = 0; i < targetK; i++) applyGate(b, gates[i]);
+      card.bits = b;
+    });
+    st.k = targetK;
+
+    st.kNode.textContent = targetK + '/' + gates.length;
+    st.gNode.textContent = targetK > 0 ? gateName(gates[targetK - 1]) : '';
+
+    var animate = !instant && !frozen() && st.step >= 1;
+    enPaint(st, animate, prev);
+
+    if (st.step === 1) {
+      enCaption(st, 'H on the control — a superposition of two classical worlds');
+    } else if (st.step >= 2 && st.step <= 5) {
+      enCaption(st, 'gates ' + Math.max(1, targetK - EN_CHUNK + 1) + '–' + targetK +
+                    ' applied to both branches — permutations, so no amplitude moves');
+    } else if (st.step === 6) {
+      enCaption(st, 'every ancilla is back to zero — the branches differ only in ctrl and out');
+    } else if (st.step >= 7) {
+      enCaption(st, 'one control wire, twenty compiled gates, no hand-written quantum gate');
+    }
+
+    // Kets + ancilla flash on step 6.
+    st.cards.forEach(function (card) {
+      if (st.step >= 6) {
+        var b = card.bits;
+        card.ket.textContent = '|ctrl,x,out⟩ = |' +
+          bit(b[st.ctrlW]) + ',' + bit(b[st.xW]) + ',' + bit(b[st.outW]) + '⟩';
+        card.ket.classList.add('shown');
+        if (!instant && !frozen()) flash(card.anc, 'flash', 640);
+      } else {
+        card.ket.classList.remove('shown');
+        card.ket.textContent = '';
+      }
+    });
+
+    if (st.step >= 7) {
+      st.verdict.textContent = '';
+      var kets = st.cards.map(function (card) {
+        var b = card.bits;
+        return '|' + bit(b[st.ctrlW]) + ',' + bit(b[st.xW]) + ',' + bit(b[st.outW]) + '⟩';
+      });
+      st.verdict.appendChild(document.createTextNode(
+        '(' + kets[0] + ' + ' + kets[1] + ')/√2 — '));
+      st.verdict.appendChild(el('em', '', 'entangled'));
+      st.verdict.classList.add('shown');
+    } else {
+      st.verdict.classList.remove('shown');
+      st.verdict.textContent = '';
+    }
+  }
+
+  function bit(b) { return b ? '1' : '0'; }
+
+  function enCaption(st, text) {
+    st.caption.textContent = text;
+    st.caption.classList.add('shown');
+  }
+
+  function enPaint(st, animate, prev) {
+    st.cards.forEach(function (card, i) {
+      var b = card.bits;
+      var old = prev && prev[i];
+      enChip(card.ctrl, b[st.ctrlW], old ? old[st.ctrlW] : null, animate);
+      enChip(card.x, b[st.xW], old ? old[st.xW] : null, animate);
+      enChip(card.out, b[st.outW], old ? old[st.outW] : null, animate);
+      var s = 0;
+      for (var j = 0; j < st.anc.length; j++) if (b[st.anc[j]]) s++;
+      card.anc.textContent = 'ancillae Σ=' + s;
+    });
+  }
+
+  function enChip(chip, value, wasValue, animate) {
+    var txt = bit(value);
+    var changed = (wasValue != null) && (!!value !== !!wasValue);
+    chip.val.textContent = txt;
+    chip.val.classList.toggle('one', !!value);
+    if (animate && changed) flash(chip.chip, 'flip', 260);
+  }
+
+  /** Add a class, strip it after ms — the "fast flip" without CSS bookkeeping. */
+  function flash(node, cls, ms) {
+    try {
+      node.classList.remove(cls);
+      void node.offsetWidth;                       // restart the animation
+      node.classList.add(cls);
+      setTimeout(function () { node.classList.remove(cls); }, ms);
+    } catch (e) { /* no-op */ }
+  }
+
+  /* ================================================================== *
+   * COMPONENT 3 — stepper
+   *
+   * The 23-gate x+1 circuit, one gate per advance, on a JS-generated SVG.
+   * Verified against circuits.json: with x = 3 preset LSB-first on wires
+   * [1,2,3], executing all 23 gates leaves the output wires [14,15,16]
+   * holding 0,0,1 → decoded LSB-first that is 4, and every ancilla is back
+   * to zero. gs[14:23] == reverse(gs[1:10]) — Bennett's theorem, on screen.
+   * ================================================================== */
+
+  var ST = store();
+  var ST_X = 3;                 // input preset
+  var ST_RATE = 1000 / 6;       // "run all" autoplay: 6 gates/s
+
+  // Phase partition of the 23 gates (1-based inclusive), per the spec.
+  var ST_PHASES = [
+    { from: 1,  to: 10, label: 'compute',   color: '--blue' },
+    { from: 11, to: 13, label: 'copy',      color: '--green' },
+    { from: 14, to: 23, label: 'uncompute', color: '--purple' }
+  ];
+
+  var stepper = {
+    mount: function (root) {
+      if (!root || ST.get(root)) return;
+      injectCSS();
+      refreshTokens();
+      root.classList.add('st-root');
+      root.textContent = '';
+
+      var c = circuits() && circuits().x_plus_1;
+      if (!c || !c.gates) {
+        root.appendChild(el('div', 'st-stat', 'circuit data unavailable'));
+        return;
+      }
+
+      var st = { root: root, c: c, k: 0, done: false, timer: null };
+      st.wrap = el('div', 'st-svgwrap');
+      root.appendChild(st.wrap);
+
+      var bar = el('div', 'st-bar');
+      st.stat = el('div', 'st-stat mono');
+      st.final = el('div', 'st-final mono',
+        'out = 4  ·  every ancilla back to 0  ·  gs[14:23] == reverse(gs[1:10])');
+      st.btn = el('button', 'st-btn', '⟲ run all');
+      st.btn.type = 'button';
+      st.btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();                      // never trigger deck click-nav
+        stToggleRun(st);
+      });
+      bar.appendChild(st.stat);
+      bar.appendChild(st.final);
+      bar.appendChild(st.btn);
+      root.appendChild(bar);
+
+      stBuildSVG(st);
+      ST.set(root, st);
+      if (frozen()) root.classList.add('frozen');
+      stSet(st, 0, false);
+      if (stillMode()) stepper.onStill(root);
+    },
+
+    onEnter: function (root) {
+      var st = ST.get(root);
+      if (!st) return;
+      root.classList.toggle('frozen', frozen());
+      if (stillMode()) { stepper.onStill(root); return; }
+      stStop(st);
+      stSet(st, 0, false);
+    },
+
+    onLeave: function (root) {
+      var st = ST.get(root);
+      if (!st) return;
+      stStop(st);
+      if (!stillMode()) stSet(st, 0, false);
+    },
+
+    /* One gate per advance (23), then one final consumed step for the
+     * verdict line; after that the advance falls through to the engine. */
+    onStep: function (root) {
+      var st = ST.get(root);
+      if (!st) return false;
+      stStop(st);
+      if (st.k < st.c.gates.length) { stSet(st, st.k + 1, false); return true; }
+      if (!st.done) { stSet(st, st.k, true); return true; }
+      return false;
+    },
+
+    onStill: function (root) {
+      var st = ST.get(root);
+      if (!st) return;
+      root.classList.add('frozen');
+      stStop(st);
+      stSet(st, st.c.gates.length, true);
+    }
+  };
+
+  /* --- geometry (user units; the viewBox scales with the container) --- */
+  var SV = { W: 1000, H: 492, padL: 84, padR: 74, top: 62, rowH: 26 };
+
+  function wireY(i) { return SV.top + i * SV.rowH; }                 // i = 0-based
+  function wY(w) { return wireY(w - 1); }
+  function colX(j, n) {                                             // j = 0-based gate
+    var w = (SV.W - SV.padL - SV.padR) / n;
+    return SV.padL + w * (j + 0.5);
+  }
+  function colW(n) { return (SV.W - SV.padL - SV.padR) / n; }
+
+  function stBuildSVG(st) {
+    var c = st.c, n = c.gates.length, nw = c.n_wires;
+    var T = {
+      line: tok('--line', '#232A35'),
+      muted: tok('--muted', '#8A93A6'),
+      ink: tok('--ink', '#E8E6E1'),
+      inkS: tok('--ink-strong', '#FFFFFF'),
+      bg: tok('--bg', '#0E1116'),
+      codebg: tok('--code-bg', '#10151C'),
+      green: tok('--green', '#5CBD6A'),
+      blue: tok('--blue', '#6B8FE8'),
+      purple: tok('--purple', '#B385D6'),
+      gold: tok('--gold', '#E0B45F')
+    };
+    st.T = T;
+
+    var svg = svgEl('svg', {
+      viewBox: '0 0 ' + SV.W + ' ' + SV.H,
+      preserveAspectRatio: 'xMidYMid meet',
+      role: 'img',
+      'aria-label': '23-gate reversible increment circuit'
+    });
+
+    // --- phase bands (behind everything) ---------------------------
+    var bands = svgEl('g');
+    ST_PHASES.forEach(function (p) {
+      var x0 = colX(p.from - 1, n) - colW(n) / 2;
+      var x1 = colX(p.to - 1, n) + colW(n) / 2;
+      var col = tok(p.color, '#6B8FE8');
+      bands.appendChild(svgEl('rect', {
+        x: x0, y: SV.top - 22, width: x1 - x0, height: (nw - 1) * SV.rowH + 44,
+        rx: 8, fill: col, opacity: 0.07
+      }));
+      var lab = svgEl('text', {
+        x: (x0 + x1) / 2, y: SV.top - 32, 'text-anchor': 'middle',
+        fill: col, opacity: 0.75, 'font-size': 15, 'letter-spacing': '0.06em'
+      });
+      lab.textContent = p.label;
+      bands.appendChild(lab);
+    });
+    svg.appendChild(bands);
+
+    // --- current-column gold underglow (a translated group so the move
+    //     animates through a CSS transform transition) ------------------
+    var glow = svgEl('g', { class: 'st-glow', opacity: 0 });
+    glow.appendChild(svgEl('rect', {
+      x: -colW(n) / 2, y: SV.top - 18, width: colW(n), height: (nw - 1) * SV.rowH + 36,
+      rx: 7, fill: T.gold, opacity: 0.16
+    }));
+    glow.appendChild(svgEl('rect', {
+      x: -1, y: SV.top - 18, width: 2, height: (nw - 1) * SV.rowH + 36,
+      fill: T.gold, opacity: 0.5
+    }));
+    svg.appendChild(glow);
+    st.glow = glow;
+
+    // --- wires + labels --------------------------------------------
+    var wires = svgEl('g');
+    st.dots = [];
+    for (var w = 1; w <= nw; w++) {
+      var y = wY(w);
+      wires.appendChild(svgEl('line', {
+        x1: SV.padL - 26, y1: y, x2: SV.W - SV.padR + 4, y2: y,
+        stroke: T.line, 'stroke-width': 1.2
+      }));
+      var t = svgEl('text', {
+        x: SV.padL - 34, y: y + 4.5, 'text-anchor': 'end',
+        fill: T.muted, 'font-size': 14
+      });
+      t.textContent = stWireLabel(c, w);
+      wires.appendChild(t);
+
+      // right-edge bit dot (filled = 1, hollow = 0)
+      var d = svgEl('circle', {
+        cx: SV.W - SV.padR + 22, cy: y, r: 5.2,
+        fill: 'none', stroke: T.muted, 'stroke-width': 1.4
+      });
+      wires.appendChild(d);
+      st.dots.push(d);
+    }
+    svg.appendChild(wires);
+
+    // --- gates ------------------------------------------------------
+    var gatesG = svgEl('g');
+    st.gateNodes = [];
+    c.gates.forEach(function (g, j) {
+      var x = colX(j, n);
+      var col = g.t === 'NOT' ? T.green : (g.t === 'CNOT' ? T.blue : T.purple);
+      var grp = svgEl('g', { opacity: 0.35 });
+      var ys = [wY(g.target)];
+      if (g.t === 'CNOT') ys.push(wY(g.control));
+      if (g.t === 'TOF') { ys.push(wY(g.c1)); ys.push(wY(g.c2)); }
+      if (ys.length > 1) {
+        grp.appendChild(svgEl('line', {
+          x1: x, y1: Math.min.apply(null, ys), x2: x, y2: Math.max.apply(null, ys),
+          stroke: col, 'stroke-width': 1.6
+        }));
+      }
+      // control dots
+      if (g.t === 'CNOT') grp.appendChild(svgEl('circle', { cx: x, cy: wY(g.control), r: 4, fill: col }));
+      if (g.t === 'TOF') {
+        grp.appendChild(svgEl('circle', { cx: x, cy: wY(g.c1), r: 4, fill: col }));
+        grp.appendChild(svgEl('circle', { cx: x, cy: wY(g.c2), r: 4, fill: col }));
+      }
+      // the ⊕ target ring
+      var ty = wY(g.target), r = 7.6;
+      grp.appendChild(svgEl('circle', {
+        cx: x, cy: ty, r: r, fill: T.bg, stroke: col, 'stroke-width': 1.8
+      }));
+      grp.appendChild(svgEl('line', { x1: x - r, y1: ty, x2: x + r, y2: ty, stroke: col, 'stroke-width': 1.6 }));
+      grp.appendChild(svgEl('line', { x1: x, y1: ty - r, x2: x, y2: ty + r, stroke: col, 'stroke-width': 1.6 }));
+      gatesG.appendChild(grp);
+      st.gateNodes.push(grp);
+    });
+    svg.appendChild(gatesG);
+
+    st.wrap.appendChild(svg);
+    st.svg = svg;
+  }
+
+  function stWireLabel(c, w) {
+    var i = c.input_wires.indexOf(w);
+    if (i >= 0) return 'x' + sub(i + 1);
+    var o = c.output_wires.indexOf(w);
+    if (o >= 0) return 'out' + sub(o + 1);
+    return 'a' + sub(w);
+  }
+
+  /**
+   * Set the circuit to "k gates executed", optionally showing the verdict.
+   * The bit state is recomputed from the x = 3 preset every time, so a jump
+   * (onStill, run-all) and a walk give identical state — no incremental drift.
+   */
+  function stSet(st, k, done) {
+    var c = st.c, n = c.gates.length;
+    st.k = Math.max(0, Math.min(n, k));
+    st.done = !!done;
+
+    var b = freshBits(c.n_wires);
+    c.input_wires.forEach(function (w, i) { b[w] = !!((ST_X >> i) & 1); });   // LSB-first
+    for (var i = 0; i < st.k; i++) applyGate(b, c.gates[i]);
+
+    // executed gates go full opacity; the rest stay ghosted
+    st.gateNodes.forEach(function (g, j) { g.setAttribute('opacity', j < st.k ? '1' : '0.3'); });
+
+    // gold underglow follows the current column (the gate just executed;
+    // before the first advance it sits on the gate about to run)
+    var j = st.k > 0 ? st.k - 1 : 0;
+    st.glow.setAttribute('opacity', st.k > 0 ? '1' : '0.45');
+    st.glow.style.transform = 'translateX(' + colX(j, n).toFixed(2) + 'px)';
+
+    // right-edge bit dots
+    for (var w = 1; w <= c.n_wires; w++) {
+      var d = st.dots[w - 1];
+      if (!d) continue;
+      if (b[w]) { d.setAttribute('fill', st.T.inkS); d.setAttribute('stroke', st.T.inkS); }
+      else { d.setAttribute('fill', 'none'); d.setAttribute('stroke', st.T.muted); }
+    }
+
+    var out = decode(b, c.output_wires);
+    var anc = c.ancilla_wires.reduce(function (s, w2) { return s + (b[w2] ? 1 : 0); }, 0);
+    var outBits = c.output_wires.map(function (w2) { return b[w2] ? '1' : '0'; }).join('');
+
+    st.stat.textContent = '';
+    st.stat.appendChild(el('b', '', 'gate ' + st.k + '/' + n));
+    st.stat.appendChild(document.createTextNode(
+      '  ·  ' + (st.k > 0 ? gateName(c.gates[st.k - 1]) : 'x = ' + ST_X + ' preset') +
+      '  ·  out = ' + out + ' (' + outBits + ' LSB-first)' +
+      '  ·  ancillae Σ=' + anc));
+    st.final.classList.toggle('shown', st.done);
+    if (st.done) {
+      // Recomputed, not pinned: the verdict states what the simulation found.
+      var pal = JSON.stringify(c.gates.slice(13, 23)) ===
+                JSON.stringify(c.gates.slice(0, 10).slice().reverse());
+      st.final.textContent = 'out = ' + out + '  ·  ' +
+        (anc === 0 ? 'every ancilla back to 0' : 'ancillae Σ=' + anc + ' (!)') +
+        '  ·  gs[14:23] == reverse(gs[1:10])' + (pal ? '' : ' — FALSE (!)');
+    }
+  }
+
+  function stToggleRun(st) {
+    if (st.timer) { stStop(st); return; }
+    stSet(st, 0, false);
+    st.btn.classList.add('playing');
+    st.btn.textContent = '■ stop';
+    st.timer = setInterval(function () {
+      if (st.k < st.c.gates.length) stSet(st, st.k + 1, false);
+      else { stSet(st, st.k, true); stStop(st); }
+    }, frozen() ? 1 : ST_RATE);
+  }
+
+  function stStop(st) {
+    if (st.timer) { clearInterval(st.timer); st.timer = null; }
+    if (st.btn) { st.btn.classList.remove('playing'); st.btn.textContent = '⟲ run all'; }
+  }
+
+  /* ================================================================== *
+   * Registry — every entry point is wrapped so a component fault can
+   * never take the deck down mid-talk.
+   * ================================================================== */
+
+  function guard(name, obj) {
+    var out = {};
+    ['mount', 'onEnter', 'onLeave', 'onStep', 'onStill'].forEach(function (m) {
+      out[m] = function (a, b) {
+        try { return obj[m] ? obj[m](a, b) : (m === 'onStep' ? false : undefined); }
+        catch (e) {
+          try { console.warn('[DeckComponents:' + name + '.' + m + ']', e); } catch (_) {}
+          return m === 'onStep' ? false : undefined;
+        }
+      };
+    });
+    return out;
+  }
+
+  window.DeckComponents = {
+    costbars: guard('costbars', costbars),
+    entangle: guard('entangle', entangle),
+    stepper: guard('stepper', stepper)
+  };
+})();
+
+</script>
+
+<script>
+/* ==========================================================================
+   Given an Oracle for f — deck engine
+   Vanilla JS, no external requests, runs from file://.
+   Defensive by construction: a missing component, a missing <template>, a
+   backup slide that does not exist, a browser without requestFullscreen —
+   none of these may ever throw. A deck that dies on stage is a deck that
+   lost the talk.
+   ========================================================================== */
+(function () {
+  'use strict';
+
+  /* ---- tiny helpers ---------------------------------------------------- */
+  var $ = function (sel, root) { return (root || document).querySelector(sel); };
+  var $$ = function (sel, root) {
+    return Array.prototype.slice.call((root || document).querySelectorAll(sel));
+  };
+  var warn = function () {
+    try { console.warn.apply(console, arguments); } catch (e) {}
+  };
+
+  /* ---- flags ----------------------------------------------------------- */
+  var STILL = /[?&]still\b/.test(location.href);
+  var REDUCED = (function () {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+    catch (e) { return false; }
+  }());
+
+  /* ---- the six levers -------------------------------------------------- */
+  /* Lit when the deck has reached the introducing slide (and, for ④, its
+     second build). Order in the rail is ①..⑥; the mapping is not monotone
+     in slide index, which is exactly why the engine computes it. */
+  var LEVERS = [
+    { n: 1, slide: 's4',  build: 0 },
+    { n: 2, slide: 's5',  build: 0 },
+    { n: 3, slide: 's6',  build: 0 },
+    { n: 4, slide: 's4',  build: 2 },
+    { n: 5, slide: 's12', build: 0 },
+    { n: 6, slide: 's15', build: 0 }
+  ];
+
+  /* ---- timer checkpoints ----------------------------------------------- */
+  var CHECKPOINTS = [
+    { slide: 's3',  t: 2 * 60 },
+    { slide: 's10', t: 8 * 60 + 30 },
+    { slide: 's11', t: 10 * 60 },
+    { slide: 's16', t: 14 * 60 }
+  ];
+
+  /* ---- DOM ------------------------------------------------------------- */
+  var stage, rail, band, bandState, bandOut, counter, timerEl, notesEl, helpEl,
+      progressEl;
+  var slides = [], linear = [], order = [], byId = {};
+
+  /* ---- state ----------------------------------------------------------- */
+  var idx = 0;              // index into `order` — the last LINEAR slide
+  var currentId = null;     // may be a backup id
+  var onBackup = false;
+  var t0 = null;            // timer origin; null = not started
+  var timerShown = false;
+  var notesShown = false;
+  var helpShown = false;
+  var shadowOn = false;
+  var shadowRAF = 0;
+  var railFlashed = {};
+  var everLit = {};
+
+  /* ======================================================================
+     components
+     ====================================================================== */
+  function registry() { return window.DeckComponents || {}; }
+
+  function compsIn(el) { return el ? $$('[data-component]', el) : []; }
+
+  function callComp(el, fn, arg) {
+    var name = el.getAttribute('data-component');
+    var c = registry()[name];
+    if (!c || typeof c[fn] !== 'function') return undefined;
+    try {
+      return arg === undefined ? c[fn](el) : c[fn](el, arg);
+    } catch (e) {
+      warn('[deck] component "' + name + '".' + fn + ' threw:', e);
+      return undefined;
+    }
+  }
+
+  function mountAll() {
+    $$('[data-component]').forEach(function (el) {
+      el._k = 0;
+      callComp(el, 'mount');
+    });
+  }
+
+  /* ======================================================================
+     chrome
+     ====================================================================== */
+  function shownBuilds(el) {
+    return $$('.build', el).filter(function (b) {
+      return b.classList.contains('shown');
+    });
+  }
+
+  function linearIndexOf(id) { return order.indexOf(id); }
+
+  function updateRail() {
+    if (!rail) return;
+    var here = idx;                       // last linear slide reached
+    var stepsHere = shownBuilds(byId[order[here]] || document.createElement('div')).length;
+    LEVERS.forEach(function (lv) {
+      var badge = rail.querySelector('.badge[data-lever="' + lv.n + '"]');
+      if (!badge) return;
+      var j = linearIndexOf(lv.slide);
+      var lit;
+      if (j < 0) lit = false;             // slide missing — never lights, never throws
+      else if (here > j) lit = true;
+      else if (here < j) lit = false;
+      else lit = stepsHere >= lv.build;
+      if (lit && !badge.classList.contains('lit')) {
+        badge.classList.add('lit');
+        if (!everLit[lv.n] && !REDUCED && !STILL) {
+          everLit[lv.n] = true;
+          badge.classList.add('glow');
+          window.setTimeout(function () { badge.classList.remove('glow'); }, 700);
+        }
+        everLit[lv.n] = true;
+      } else if (!lit) {
+        badge.classList.remove('lit', 'glow');
+      }
+    });
+  }
+
+  /* s3's first build asks the whole rail to flash once — the "watch for six
+     levers" beat. Slides may also opt in per-build with data-rail-flash. */
+  function maybeRailFlash(el, build) {
+    if (!rail || REDUCED || STILL) return;
+    var wants = (el.id === 's3' && shownBuilds(el).length === 1) ||
+                (build && build.hasAttribute && build.hasAttribute('data-rail-flash'));
+    if (!wants || railFlashed[el.id]) return;
+    railFlashed[el.id] = true;
+    rail.classList.remove('flash');
+    void rail.offsetWidth;                // restart the animation
+    rail.classList.add('flash');
+    window.setTimeout(function () { rail.classList.remove('flash'); }, 1000);
+  }
+
+  function updateBand(el) {
+    if (!band) return;
+    var state = (el && el.getAttribute('data-band')) || 'off';
+    if (state !== 'live' && state !== 'shadow' && state !== 'off') state = 'off';
+    band.setAttribute('data-state', state);
+    if (!bandState) return;
+    bandState.textContent =
+      state === 'live' ? '● LIVE' :
+      state === 'shadow' ? 'shadow output — press D' : '';
+  }
+
+  function updateCounter() {
+    if (!counter) return;
+    counter.textContent = onBackup
+      ? (currentId || 'backup')
+      : ((idx + 1) + '/' + Math.max(order.length, 1));
+  }
+
+  function updateProgress() {
+    if (!progressEl) return;
+    var frac = order.length ? (idx + 1) / order.length : 0;
+    progressEl.style.width = (frac * 100).toFixed(2) + '%';
+  }
+
+  function updateNotes(el) {
+    if (!notesEl) return;
+    notesEl.textContent = (el && el.getAttribute('data-notes')) || '';
+  }
+
+  function updateChrome() {
+    var el = byId[currentId];
+    updateRail();
+    updateBand(el);
+    updateCounter();
+    updateProgress();
+    updateNotes(el);
+    updateTimer();
+  }
+
+  /* ======================================================================
+     code auto-fit — "text must never overflow" is a hard constraint, and
+     the slide author cannot know the rendered advance width of JuliaMono vs
+     the fallback. Shrink only, never grow past the CSS size.
+     ====================================================================== */
+  function fitCode(el) {
+    if (!el) return;
+    $$('pre', el).forEach(function (p) {
+      p.style.fontSize = '';
+      if (!p.clientWidth) return;
+      var fs = parseFloat(window.getComputedStyle(p).fontSize) || 0;
+      if (!fs) return;
+      var guard = 0;
+      while (p.scrollWidth > p.clientWidth + 1 && fs > 8 && guard++ < 60) {
+        fs -= 0.5;
+        p.style.fontSize = fs + 'px';
+      }
+    });
+  }
+
+  function markLongCode() {
+    $$('pre').forEach(function (p) {
+      var lines = (p.textContent || '').replace(/\s+$/, '').split('\n').length;
+      if (lines > 10) p.classList.add('long');
+    });
+  }
+
+  /* ======================================================================
+     shadow terminal
+     ====================================================================== */
+  function clearShadow() {
+    if (shadowRAF) { cancelAnimationFrame(shadowRAF); shadowRAF = 0; }
+    if (bandOut) bandOut.textContent = '';
+    shadowOn = false;
+  }
+
+  function templateText(el) {
+    var tpl = el ? el.querySelector('template.shadow-term') : null;
+    if (!tpl) return null;
+    var txt = (tpl.content && tpl.content.textContent != null)
+      ? tpl.content.textContent : tpl.textContent;
+    if (txt == null) return null;
+    var lines = txt.replace(/^\n+/, '').replace(/\s+$/, '').split('\n');
+    // strip the common indent the HTML author had to type
+    var pad = Infinity;
+    lines.forEach(function (l) {
+      if (!l.trim()) return;
+      var m = l.match(/^[ \t]*/);
+      pad = Math.min(pad, m ? m[0].length : 0);
+    });
+    if (!isFinite(pad)) pad = 0;
+    return lines.map(function (l) { return l.slice(pad); });
+  }
+
+  function showShadow() {
+    if (!bandOut) return;
+    var lines = templateText(byId[currentId]);
+    if (!lines || !lines.length) {
+      warn('[deck] no <template class="shadow-term"> on', currentId);
+      return;                              // never throw, never blank the band
+    }
+    bandOut.textContent = '';
+    var model = lines.map(function (text) {
+      var m = text.match(/^(\s*julia>\s?)([\s\S]*)$/);
+      var head = m ? m[1] : '';
+      var rest = m ? m[2] : text;
+      var line = document.createElement('div');
+      line.className = 'term-line';
+      var hs = document.createElement('span');
+      hs.className = 'term-prompt';
+      var ts = document.createElement('span');
+      ts.className = 'term-text';
+      line.appendChild(hs);
+      line.appendChild(ts);
+      bandOut.appendChild(line);
+      return { head: head, rest: rest, hs: hs, ts: ts };
+    });
+    var total = model.reduce(function (a, m) { return a + m.head.length + m.rest.length; }, 0);
+
+    function paint(n) {
+      var left = n;
+      model.forEach(function (m) {
+        var h = Math.max(0, Math.min(m.head.length, left)); left -= h;
+        var r = Math.max(0, Math.min(m.rest.length, left)); left -= r;
+        m.hs.textContent = m.head.slice(0, h);
+        m.ts.textContent = m.rest.slice(0, r);
+      });
+    }
+
+    shadowOn = true;
+    if (REDUCED || STILL) { paint(total); return; }
+    var n = 0;
+    (function tick() {
+      n += 24;                              // ~24 chars per frame
+      paint(n);
+      if (n < total) shadowRAF = requestAnimationFrame(tick);
+      else shadowRAF = 0;
+    }());
+  }
+
+  function toggleShadow() {
+    if (shadowOn) clearShadow(); else showShadow();
+  }
+
+  /* ======================================================================
+     timer HUD
+     ====================================================================== */
+  function elapsed() { return t0 === null ? 0 : Math.floor((Date.now() - t0) / 1000); }
+
+  function startTimer() { if (t0 === null && !STILL) t0 = Date.now(); }
+
+  function lateness() {
+    if (t0 === null) return 0;
+    var e = elapsed(), worst = 0;
+    CHECKPOINTS.forEach(function (cp) {
+      var j = linearIndexOf(cp.slide);
+      if (j < 0) return;
+      if (idx >= j) return;                 // checkpoint made
+      if (e > cp.t) worst = Math.max(worst, e - cp.t);
+    });
+    return worst;
+  }
+
+  function updateTimer() {
+    if (!timerEl) return;
+    var e = elapsed();
+    var mm = Math.floor(e / 60), ss = e % 60;
+    timerEl.textContent = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+    var late = lateness();
+    timerEl.setAttribute('data-late', late > 30 ? 'hard' : (late > 0 ? 'soft' : 'none'));
+  }
+
+  function toggleTimer() {
+    if (STILL) return;                      // timers off for screenshots
+    timerShown = !timerShown;
+    if (timerEl) timerEl.hidden = !timerShown;
+    updateTimer();
+  }
+
+  function resetTimer() {
+    t0 = null;
+    updateTimer();
+  }
+
+  /* ======================================================================
+     navigation
+     ====================================================================== */
+  function setHash(id) {
+    if (!id) return;
+    var want = '#' + id;
+    if (location.hash === want) return;
+    try {
+      history.replaceState(null, '', want);
+    } catch (e) {
+      try { location.hash = id; } catch (e2) {}   // file:// in some browsers
+    }
+  }
+
+  function restartSMIL(el) {
+    $$('svg.smil', el).forEach(function (svg) {
+      try { svg.setCurrentTime(0); } catch (e) {}
+    });
+    if (el && el.matches && el.matches('svg.smil')) {
+      try { el.setCurrentTime(0); } catch (e) {}
+    }
+  }
+
+  /**
+   * Enter a slide by id.
+   * opts.build: 'none' (default — fresh) | 'all' (arriving backwards / still)
+   * opts.force: re-enter even if it is already current
+   */
+  function enter(id, opts) {
+    opts = opts || {};
+    var el = byId[id];
+    if (!el) { warn('[deck] no slide "' + id + '"'); return; }
+    if (id === currentId && !opts.force) { updateChrome(); return; }
+
+    var prev = byId[currentId];
+    if (prev && prev !== el) {
+      compsIn(prev).forEach(function (c) { callComp(c, 'onLeave'); });
+      prev.classList.remove('current');
+    }
+
+    clearShadow();
+
+    currentId = id;
+    onBackup = el.classList.contains('backup');
+    if (!onBackup) {
+      var j = linearIndexOf(id);
+      if (j >= 0) idx = j;
+    }
+    el.classList.add('current');
+
+    var all = STILL || opts.build === 'all';
+    $$('.build', el).forEach(function (b) {
+      if (all) b.classList.add('shown'); else b.classList.remove('shown');
+    });
+
+    compsIn(el).forEach(function (c) {
+      c._k = 0;
+      callComp(c, 'onEnter');
+      if (all) {
+        callComp(c, 'onStill');
+        c._k = Number.MAX_SAFE_INTEGER;    // already at its end state
+      }
+    });
+
+    restartSMIL(el);
+    fitCode(el);
+    updateChrome();
+    setHash(id);
+
+    Deck.enterHooks.forEach(function (fn) {
+      try { fn(el, id, idx); } catch (e) { warn('[deck] enterHook threw:', e); }
+    });
+  }
+
+  function go(i) {
+    if (!order.length) return;
+    i = Math.max(0, Math.min(order.length - 1, i | 0));
+    enter(order[i]);
+  }
+
+  function advance() {
+    startTimer();
+    var el = byId[currentId];
+    if (!el) return;
+
+    // 1. a component on this slide may CONSUME the advance.
+    //    k is "consumed steps so far + 1", so it only increases when the
+    //    component says true. A component that has finished will therefore
+    //    see the SAME rejected k again on every later advance — returning
+    //    false for it must stay idempotent.
+    var cs = compsIn(el);
+    for (var i = 0; i < cs.length; i++) {
+      var c = cs[i];
+      var k = (c._k || 0) + 1;
+      if (callComp(c, 'onStep', k) === true) {
+        c._k = k;
+        updateChrome();
+        return;
+      }
+    }
+
+    // 2. otherwise reveal the next build
+    var builds = $$('.build', el);
+    for (var b = 0; b < builds.length; b++) {
+      if (!builds[b].classList.contains('shown')) {
+        builds[b].classList.add('shown');
+        maybeRailFlash(el, builds[b]);
+        fitCode(el);
+        updateChrome();
+        return;
+      }
+    }
+
+    // 3. otherwise move on. From a backup we stay put — an accidental space
+    //    during Q&A must not yank the speaker out of the slide they are on
+    //    (B is the documented way back).
+    if (onBackup) return;
+    if (idx < order.length - 1) enter(order[idx + 1]);
+  }
+
+  function reverse() {
+    var el = byId[currentId];
+    if (!el) return;
+
+    // builds unwind first — they were revealed last
+    var shown = shownBuilds(el);
+    if (shown.length) {
+      shown[shown.length - 1].classList.remove('shown');
+      updateChrome();
+      return;
+    }
+
+    // then components rewind to their start (no onBack in the contract)
+    var live = compsIn(el).filter(function (c) { return (c._k || 0) > 0; });
+    if (live.length) {
+      live.forEach(function (c) { c._k = 0; callComp(c, 'onEnter'); });
+      updateChrome();
+      return;
+    }
+
+    if (onBackup) { enter(order[idx], { build: 'all', force: true }); return; }
+    if (idx > 0) enter(order[idx - 1], { build: 'all' });
+  }
+
+  function gotoBackup(id) {
+    if (byId[id]) enter(id);
+    else warn('[deck] backup "' + id + '" is not in this build');
+  }
+
+  function backToLinear() {
+    if (!onBackup) return;
+    enter(order[idx] || order[0], { build: 'all', force: true });
+  }
+
+  /* ======================================================================
+     overlays
+     ====================================================================== */
+  function toggleHelp(force) {
+    helpShown = (force === undefined) ? !helpShown : !!force;
+    if (helpEl) helpEl.hidden = !helpShown;
+  }
+
+  function toggleNotes() {
+    notesShown = !notesShown;
+    if (notesEl) notesEl.hidden = !notesShown;
+    updateNotes(byId[currentId]);
+  }
+
+  function toggleFullscreen() {
+    try {
+      var d = document;
+      var full = d.fullscreenElement || d.webkitFullscreenElement;
+      if (full) {
+        (d.exitFullscreen || d.webkitExitFullscreen || function () {}).call(d);
+      } else {
+        var e = d.documentElement;
+        (e.requestFullscreen || e.webkitRequestFullscreen || function () {}).call(e);
+      }
+    } catch (e) { warn('[deck] fullscreen unavailable:', e); }
+  }
+
+  /* ======================================================================
+     input
+     ====================================================================== */
+  function onKey(e) {
+    if (e.defaultPrevented) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+    var k = e.key;
+
+    if (k === 'Escape') {
+      if (helpShown) { toggleHelp(false); e.preventDefault(); }
+      return;
+    }
+    if (k === '?') { toggleHelp(); e.preventDefault(); return; }
+    if (helpShown) {                       // any other key closes the card
+      toggleHelp(false); e.preventDefault(); return;
+    }
+
+    switch (k) {
+      case 'ArrowRight': case ' ': case 'Spacebar': case 'PageDown':
+        advance(); e.preventDefault(); return;
+      case 'ArrowLeft': case 'PageUp':
+        reverse(); e.preventDefault(); return;
+      case 'Home':
+        enter(order[0]); e.preventDefault(); return;
+      case 'End':
+        enter(order[order.length - 1], { build: 'all' }); e.preventDefault(); return;
+      case 'f': case 'F':
+        toggleFullscreen(); e.preventDefault(); return;
+      case 'd': case 'D':
+        toggleShadow(); e.preventDefault(); return;
+      case 't':
+        toggleTimer(); e.preventDefault(); return;
+      case 'T':
+        resetTimer(); e.preventDefault(); return;
+      case 'n': case 'N':
+        toggleNotes(); e.preventDefault(); return;
+      case '0':
+        gotoBackup('fallback'); e.preventDefault(); return;
+      case 's': case 'S':
+        gotoBackup('stepper'); e.preventDefault(); return;
+      case 'b': case 'B':
+        backToLinear(); e.preventDefault(); return;
+      default:
+        return;                            // number keys map nowhere else
+    }
+  }
+
+  function onClick(e) {
+    if (helpShown) { toggleHelp(false); return; }
+    var t = e.target;
+    if (t && t.closest && t.closest('button, a, input, textarea, select, [data-nav="off"]')) return;
+    var r = stage.getBoundingClientRect();
+    if (!r.width) return;
+    var x = (e.clientX - r.left) / r.width;
+    if (x > 2 / 3) advance();
+    else if (x < 1 / 3) reverse();
+  }
+
+  function onHashChange() {
+    var id = (location.hash || '').replace(/^#/, '');
+    if (!id || id === currentId) return;
+    if (byId[id]) enter(id);
+  }
+
+  /* ======================================================================
+     boot
+     ====================================================================== */
+  function init() {
+    stage = $('#stage');
+    rail = $('#rail');
+    band = $('#band');
+    bandState = $('#band-state');
+    bandOut = $('#band-out');
+    counter = $('#counter');
+    timerEl = $('#timer');
+    notesEl = $('#notes');
+    helpEl = $('#help');
+    progressEl = $('#progress');
+
+    slides = $$('section.slide');
+    linear = slides.filter(function (s) { return !s.classList.contains('backup'); });
+    order = linear.map(function (s, i) {
+      if (!s.id) s.id = 'slide-' + i;      // an unnamed slide is still routable
+      return s.id;
+    });
+    slides.forEach(function (s, i) {
+      if (!s.id) s.id = 'slide-x-' + i;
+      byId[s.id] = s;
+    });
+
+    if (!slides.length) { warn('[deck] no slides in this build'); return; }
+    if (!order.length) { order = [slides[0].id]; }   // all-backup build: survive
+
+    if (STILL) {
+      document.body.classList.add('still');
+      $$('.build').forEach(function (b) { b.classList.add('shown'); });
+    }
+
+    markLongCode();
+    mountAll();
+
+    Deck.order = order;
+
+    var hashId = (location.hash || '').replace(/^#/, '');
+    enter(byId[hashId] ? hashId : order[0], { force: true });
+
+    document.addEventListener('keydown', onKey);
+    if (stage) stage.addEventListener('click', onClick);
+    window.addEventListener('hashchange', onHashChange);
+    window.addEventListener('resize', function () { fitCode(byId[currentId]); });
+
+    if (!STILL) window.setInterval(updateTimer, 250);
+  }
+
+  /* ---- public API ------------------------------------------------------ */
+  var Deck = {
+    order: [],
+    enterHooks: [],
+    go: go,
+    goto: function (id) { enter(id); },
+    next: advance,
+    prev: reverse,
+    still: STILL,
+    reduced: REDUCED
+  };
+  Object.defineProperty(Deck, 'idx', { get: function () { return idx; } });
+  Object.defineProperty(Deck, 'current', { get: function () { return currentId; } });
+  window.Deck = Deck;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+}());
+
+</script>
+</body>
+</html>

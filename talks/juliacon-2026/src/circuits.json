@@ -1,0 +1,62 @@
+{
+"x_plus_1": {
+  "n_wires": 16,
+  "input_wires": [1, 2, 3],
+  "output_wires": [14, 15, 16],
+  "ancilla_wires": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  "gates": [
+    {"t":"CNOT","control":1,"target":8},
+    {"t":"NOT","target":8},
+    {"t":"CNOT","control":1,"target":12},
+    {"t":"CNOT","control":2,"target":9},
+    {"t":"TOF","c1":9,"c2":12,"target":13},
+    {"t":"CNOT","control":12,"target":9},
+    {"t":"CNOT","control":3,"target":10},
+    {"t":"CNOT","control":13,"target":10},
+    {"t":"NOT","target":5},
+    {"t":"NOT","target":4},
+    {"t":"CNOT","control":8,"target":14},
+    {"t":"CNOT","control":9,"target":15},
+    {"t":"CNOT","control":10,"target":16},
+    {"t":"NOT","target":4},
+    {"t":"NOT","target":5},
+    {"t":"CNOT","control":13,"target":10},
+    {"t":"CNOT","control":3,"target":10},
+    {"t":"CNOT","control":12,"target":9},
+    {"t":"TOF","c1":9,"c2":12,"target":13},
+    {"t":"CNOT","control":2,"target":9},
+    {"t":"CNOT","control":1,"target":12},
+    {"t":"NOT","target":8},
+    {"t":"CNOT","control":1,"target":8}
+  ]
+},
+"controlled_not": {
+  "control_wire": 50,
+  "n_wires": 50,
+  "input_wires": [50, 1, 2, 3, 4, 5, 6, 7, 8],
+  "output_wires": [42, 43, 44, 45, 46, 47, 48, 49],
+  "ancilla_wires": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41],
+  "gates": [
+    {"t":"TOF","c1":50,"c2":1,"target":18},
+    {"t":"TOF","c1":50,"c2":18,"target":34},
+    {"t":"CNOT","control":50,"target":34},
+    {"t":"CNOT","control":50,"target":9},
+    {"t":"CNOT","control":50,"target":10},
+    {"t":"CNOT","control":50,"target":26},
+    {"t":"TOF","c1":50,"c2":34,"target":42},
+    {"t":"TOF","c1":50,"c2":35,"target":43},
+    {"t":"TOF","c1":50,"c2":36,"target":44},
+    {"t":"TOF","c1":50,"c2":37,"target":45},
+    {"t":"TOF","c1":50,"c2":38,"target":46},
+    {"t":"TOF","c1":50,"c2":39,"target":47},
+    {"t":"TOF","c1":50,"c2":40,"target":48},
+    {"t":"TOF","c1":50,"c2":41,"target":49},
+    {"t":"CNOT","control":50,"target":26},
+    {"t":"CNOT","control":50,"target":10},
+    {"t":"CNOT","control":50,"target":9},
+    {"t":"CNOT","control":50,"target":34},
+    {"t":"TOF","c1":50,"c2":18,"target":34},
+    {"t":"TOF","c1":50,"c2":1,"target":18}
+  ]
+}
+}

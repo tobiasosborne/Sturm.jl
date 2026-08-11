@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Given an Oracle for f</title>
+<style>
+/* ==========================================================================
+   Given an Oracle for f — JuliaCon 2026
+   Single-file stage deck. Vanilla CSS, no external requests.
+   Single fixed dark theme: every surface is painted explicitly from tokens.
+   ========================================================================== */
+
+/* ---- reset ------------------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+h1,h2,h3,h4,p,ul,ol,li,figure,blockquote,pre,table{margin:0;padding:0}
+ul,ol{list-style:none}
+button{font:inherit;color:inherit;background:none;border:none}
+img,svg{max-width:100%}
+
+/* ---- design tokens ----------------------------------------------------- */
+:root{
+  --bg:#0E1116;          /* stage ground — blue-biased near-black */
+  --panel:#151A22;       /* raised panels */
+  --code-bg:#10151C;     /* code blocks */
+  --band:#0A0D11;        /* terminal band (darkest) */
+  --ink:#E8E6E1;         /* warm off-white body text */
+  --ink-strong:#FFFFFF;
+  --muted:#8A93A6;       /* blue-gray muted */
+  --line:#232A35;        /* hairlines */
+  /* Julia brand, lifted for legibility on the dark ground: */
+  --purple:#B385D6;  --green:#5CBD6A;  --red:#E06C5F;  --blue:#6B8FE8;
+  /* raw brand (only inside light figure cards): */
+  --raw-purple:#9558B2; --raw-green:#389826; --raw-red:#CB3C33; --raw-blue:#4063D8;
+  --gold:#E0B45F;        /* the "Given" highlight + timer amber */
+  /* two non-stage grounds: the letterbox surround, and the paper of the
+     light figure cards (the SVGs were authored on #fbfbfe and stay that way) */
+  --backdrop:#000000;
+  --card:#FBFBFE;
+  /* the only rgba() literals in this file are these four scrims/shadows —
+     each is a token color carrying an alpha, not a new colour:
+     rgba(14,17,22,a)=--bg · rgba(10,13,17,a)=--band ·
+     rgba(0,0,0,a)=--backdrop · rgba(224,180,95,.12)=--gold at 12% (<mark>) */
+
+  /* type */
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"JuliaMono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono","DejaVu Sans",monospace;
+  --serif:Georgia,"Times New Roman",serif;
+
+  /* scale — container-query units against the 1280x720 stage */
+  --f-title:4.2cqh;
+  --f-lead:3.4cqh;
+  --f-body:3.0cqh;
+  --f-small:2.3cqh;
+  --f-code:2.5cqh;
+  --f-display:4.6cqh;
+}
+
+/* ---- deck / stage ------------------------------------------------------ */
+body{
+  background:var(--backdrop);
+  color:var(--ink);
+  font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+#deck{
+  position:fixed; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--backdrop);
+}
+#stage{
+  position:relative;
+  width:min(100vw,177.78vh);
+  height:min(56.25vw,100vh);
+  container-type:size;
+  background:var(--bg);
+  color:var(--ink);
+  overflow:hidden;
+}
+
+/* progress hairline across the very top of the stage */
+#progress{
+  position:absolute; top:0; left:0; z-index:40;
+  height:2px; width:0;
+  background:var(--purple);
+  transition:width 320ms ease;
+}
+
+/* ---- slides ------------------------------------------------------------ */
+.slide{
+  position:absolute; inset:0;
+  display:none;
+  flex-direction:column;
+  /* right padding clears the badge rail; bottom clears the 26cqh band */
+  padding:6cqh 11cqw 29cqh 6cqw;
+  overflow:hidden;
+  font-size:var(--f-body);
+  line-height:1.5;
+}
+.slide.current{display:flex}
+.slide.wide{padding-right:6cqw}  /* opt out of the rail gutter (title, figures) */
+.slide.backup{}                  /* backups differ only in the linear order */
+
+.frametitle{
+  font-size:var(--f-title);
+  font-weight:700;
+  letter-spacing:-0.015em;
+  text-wrap:balance;
+  color:var(--ink-strong);
+  margin-bottom:2.2cqh;
+  flex:0 0 auto;
+}
+.frametitle .rule{
+  display:block;
+  height:2px; width:100%;
+  margin-top:1.1cqh;
+  background:linear-gradient(90deg,var(--purple),transparent 62%);
+}
+.slide > .body,.slide .body{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:1.8cqh;
+  overflow:hidden;
+}
+
+/* builds */
+.build{
+  opacity:0;
+  transform:translateY(1.2cqh);
+  transition:opacity 400ms ease,transform 400ms ease;
+  pointer-events:none;
+}
+.build.shown{opacity:1;transform:none;pointer-events:auto}
+
+/* ---- typography utilities --------------------------------------------- */
+p,li{text-wrap:pretty}
+.lead{font-size:var(--f-lead);line-height:1.45}
+.small,.note,.caption,.annot{font-size:var(--f-small);line-height:1.5}
+.tiny{font-size:1.9cqh;line-height:1.5}
+.display{
+  font-size:var(--f-display);font-weight:700;letter-spacing:-0.015em;
+  text-wrap:balance;color:var(--ink-strong);line-height:1.2;
+}
+.display-lg{
+  font-size:7cqh;font-weight:700;letter-spacing:-0.02em;
+  text-wrap:balance;color:var(--ink-strong);line-height:1.1;
+}
+.eyebrow{
+  font-size:2.2cqh;letter-spacing:0.18em;text-transform:uppercase;
+  color:var(--muted);font-weight:600;
+}
+.muted{color:var(--muted)}
+.strong,.ink-strong{color:var(--ink-strong)}
+.gold{color:var(--gold)}
+.green{color:var(--green)}
+.red{color:var(--red)}
+.blue{color:var(--blue)}
+.purple{color:var(--purple)}
+.center{text-align:center}
+.middle{justify-content:center}
+.mono{font-family:var(--mono);font-variant-ligatures:none}
+.nums{font-variant-numeric:tabular-nums}
+b,strong{font-weight:700;color:var(--ink-strong)}
+em,i{font-style:italic}
+a{color:var(--blue);text-decoration:none;border-bottom:1px solid var(--line)}
+
+/* the one serif voice in the deck: the oracle equation + physics quotes */
+.serif,.eq,.quote,.paper{font-family:var(--serif);font-style:italic}
+.eq{font-size:6cqh;line-height:1.25;color:var(--ink-strong);text-align:center}
+.eq sub,.eq sup{font-size:.55em}
+.quote{font-size:2.8cqh;color:var(--ink)}
+
+ul.bullets{display:flex;flex-direction:column;gap:1.1cqh}
+ul.bullets > li{position:relative;padding-left:2.4cqw}
+ul.bullets > li::before{
+  content:"";position:absolute;left:0;top:.62em;
+  width:.9cqh;height:.9cqh;border-radius:50%;background:var(--purple);
+}
+
+/* two-column bodies */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:3cqw;min-height:0;align-items:start}
+.cols-55-45{display:grid;grid-template-columns:55fr 45fr;gap:2.6cqw;min-height:0;align-items:center}
+.col{min-width:0;min-height:0;display:flex;flex-direction:column;gap:1.6cqh}
+
+/* raised panels */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:2cqh 1.8cqw;
+}
+.panel > .panel-title{
+  font-size:var(--f-small);font-weight:700;color:var(--ink-strong);
+  margin-bottom:.9cqh;letter-spacing:.01em;
+}
+
+/* footers / bylines */
+.footer,.slide-footer{
+  margin-top:auto;font-size:2.0cqh;color:var(--muted);
+}
+
+/* right-margin annotations (s12) */
+.annots{display:flex;flex-direction:column;gap:.8cqh;color:var(--muted);font-size:var(--f-small)}
+.annots > li::before{content:"↳ ";color:var(--line)}
+
+/* the four Julia-dot ornament */
+.dots{display:flex;gap:1.1cqw;justify-content:center}
+.dots > i{display:block;width:1.6cqh;height:1.6cqh;border-radius:50%}
+.dots > i:nth-child(1){background:var(--raw-purple)}
+.dots > i:nth-child(2){background:var(--raw-red)}
+.dots > i:nth-child(3){background:var(--raw-green)}
+.dots > i:nth-child(4){background:var(--raw-blue)}
+
+/* tables (benchmark rows, vm tape) */
+table{border-collapse:collapse;width:100%;font-size:var(--f-small)}
+th,td{
+  text-align:left;padding:.7cqh 1cqw;border-bottom:1px solid var(--line);
+  vertical-align:top;
+}
+th{color:var(--muted);font-weight:600;letter-spacing:.02em}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- code -------------------------------------------------------------- */
+pre,code,kbd,samp{font-family:var(--mono);font-variant-ligatures:none}
+pre{
+  background:var(--code-bg);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:2.2cqh 1.8cqw;
+  font-size:var(--f-code);
+  line-height:1.5;
+  color:var(--ink);
+  white-space:pre;
+  overflow:hidden;
+  tab-size:2;
+}
+pre.long{font-size:2.1cqh}       /* >10 lines — set by the engine */
+pre.repl{font-size:3.6cqh;line-height:1.45}
+:not(pre) > code{
+  font-size:.92em;
+  background:var(--code-bg);
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:.06em .32em;
+}
+/* MINIMAL two-tone highlighting — never rainbow. Aliases are deliberate:
+   whatever the slide author reaches for, it lands on the same two hues. */
+pre .c,pre .cm,pre .comment{color:var(--muted)}
+pre .s,pre .st,pre .string{color:var(--green)}
+pre .k,pre .kw,pre .keyword{color:var(--purple)}
+pre .m,pre .muted{color:var(--muted)}
+pre .p,pre .prompt{color:var(--green)}
+pre .r,pre .err{color:var(--red)}
+pre .g,pre .ok{color:var(--green)}
+mark{
+  background:rgba(224,180,95,.12);   /* --gold at 12% */
+  color:inherit;
+  border-radius:3px;
+  padding:.05em 0;
+}
+
+/* ---- figure cards (the light "paper" figures) -------------------------- */
+figure.figure-card,.figure-card{
+  background:var(--card);
+  border-radius:12px;
+  padding:1.2cqh;
+  margin:0;
+  box-shadow:0 1.2cqh 3.4cqh rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;
+  min-height:0;max-width:100%;
+}
+.figure-card > svg,.figure-card > img,.figure-card svg,.figure-card img{
+  display:block;width:100%;height:auto;max-height:100%;
+}
+.figure-card figcaption{
+  color:var(--muted);font-size:var(--f-small);
+}
+figcaption{color:var(--muted);font-size:var(--f-small);margin-top:.9cqh}
+
+/* ---- component mounts -------------------------------------------------- */
+.component{
+  flex:1 1 auto;min-height:0;min-width:0;width:100%;
+  display:block;position:relative;
+}
+.component button,.deck-btn{
+  font-family:var(--sans);font-size:var(--f-small);
+  color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;
+  padding:.6cqh 1.1cqw;cursor:pointer;
+  transition:border-color 200ms ease,color 200ms ease;
+}
+.component button:hover,.deck-btn:hover{border-color:var(--purple);color:var(--ink-strong)}
+
+/* ---- badge rail -------------------------------------------------------- */
+#rail{
+  position:absolute;
+  right:1.6cqw; top:7cqh; bottom:29cqh;
+  z-index:30;
+  width:7.4cqw;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1.4cqh;
+  pointer-events:none;
+}
+.badge{display:flex;flex-direction:column;align-items:center;gap:.35cqh;width:100%}
+.badge .chip{
+  width:5.2cqh;height:5.2cqh;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:2.6cqh;font-weight:700;line-height:1;
+  border:1px solid var(--line);
+  color:var(--muted);
+  background:transparent;
+  transition:background-color 300ms ease,color 300ms ease,border-color 300ms ease;
+}
+.badge .chip-label{
+  font-size:1.7cqh;line-height:1.15;text-align:center;
+  color:var(--muted);
+  transition:color 300ms ease;
+  overflow-wrap:anywhere;
+}
+.badge[data-lever="1"]{--lit:var(--purple)}
+.badge[data-lever="2"]{--lit:var(--blue)}
+.badge[data-lever="3"]{--lit:var(--green)}
+.badge[data-lever="4"]{--lit:var(--purple)}
+.badge[data-lever="5"]{--lit:var(--gold)}
+.badge[data-lever="6"]{--lit:var(--red)}
+.badge.lit .chip{
+  background:var(--lit);
+  border-color:var(--lit);
+  color:var(--ink-strong);
+}
+.badge.lit .chip-label{color:var(--ink)}
+.badge.glow .chip{animation:badge-glow 600ms ease-out 1}
+@keyframes badge-glow{
+  0%{box-shadow:0 0 0 0 var(--lit)}
+  60%{box-shadow:0 0 2.4cqh .5cqh var(--lit)}
+  100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}
+}
+#rail.flash .chip{animation:rail-flash 900ms ease-out 1}
+@keyframes rail-flash{
+  0%{border-color:var(--line)}
+  35%{border-color:var(--lit);box-shadow:0 0 1.6cqh 0 var(--lit)}
+  100%{border-color:var(--line);box-shadow:0 0 0 0 rgba(0,0,0,0)}
+}
+
+/* ---- terminal band ----------------------------------------------------- */
+#band{
+  position:absolute;left:0;right:0;bottom:0;z-index:35;
+  height:26cqh;
+  background:var(--band);
+  border-top:1px solid var(--line);
+  overflow:hidden;
+}
+#band .band-dots{
+  position:absolute;top:1.6cqh;left:1.6cqw;
+  display:flex;gap:.8cqw;
+}
+#band .band-dots > i{
+  display:block;width:1.3cqh;height:1.3cqh;border-radius:50%;
+  background:var(--line);
+}
+#band-state{
+  position:absolute;top:1.6cqh;right:1.6cqw;
+  font-size:1.7cqh;letter-spacing:.04em;color:var(--muted);
+  font-family:var(--mono);
+}
+#band[data-state="live"] #band-state{color:var(--green);animation:live-pulse 2.6s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+#band .band-label{
+  position:absolute;bottom:1.2cqh;right:1.6cqw;
+  font-size:1.6cqh;color:var(--muted);
+}
+#band-out{
+  position:absolute;left:1.6cqw;right:1.6cqw;top:4.4cqh;bottom:3.4cqh;
+  display:flex;flex-direction:column;justify-content:flex-end;
+  font-family:var(--mono);font-size:1.9cqh;line-height:1.45;
+  color:var(--ink);
+  white-space:pre-wrap;overflow:hidden;
+}
+#band-out .term-line{min-height:1.45em}
+#band-out .term-prompt{color:var(--green)}
+
+/* ---- slide counter ----------------------------------------------------- */
+#counter{
+  position:absolute;right:2cqw;bottom:26.8cqh;z-index:30;
+  font-size:1.8cqh;color:var(--muted);
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---- timer HUD --------------------------------------------------------- */
+#timer{
+  position:absolute;left:2cqw;top:1.8cqh;z-index:45;
+  font-size:1.9cqh;color:var(--muted);
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+  letter-spacing:.04em;
+}
+#timer[data-late="soft"]{color:var(--gold)}
+#timer[data-late="hard"]{color:var(--red)}
+#timer[hidden]{display:none}
+
+/* ---- speaker notes overlay --------------------------------------------- */
+#notes{
+  position:absolute;left:2cqw;bottom:27cqh;z-index:45;
+  max-width:62cqw;
+  font-size:2.0cqh;line-height:1.4;color:var(--muted);
+  background:rgba(10,13,17,.86);
+  border:1px solid var(--line);border-radius:8px;
+  padding:1cqh 1.2cqw;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
+  line-clamp:3;overflow:hidden;
+}
+#notes[hidden]{display:none}
+
+/* ---- help overlay ------------------------------------------------------ */
+#help{
+  position:absolute;inset:0;z-index:60;
+  background:rgba(14,17,22,.94);
+  display:flex;align-items:center;justify-content:center;
+}
+#help[hidden]{display:none}
+#help .help-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:3cqh 3cqw;max-width:70cqw;
+  box-shadow:0 2cqh 5cqh rgba(0,0,0,.6);
+}
+#help h3{font-size:3cqh;font-weight:700;color:var(--ink-strong);margin-bottom:1.6cqh}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:.7cqh 1.6cqw;font-size:2.2cqh}
+#help dt{font-family:var(--mono);color:var(--gold);white-space:nowrap}
+#help dd{color:var(--ink);margin:0}
+#help .help-foot{margin-top:1.8cqh;font-size:1.9cqh;color:var(--muted)}
+kbd{
+  font-family:var(--mono);font-size:.95em;
+  border:1px solid var(--line);border-radius:5px;padding:.05em .35em;
+  background:var(--code-bg);
+}
+
+/* ---- focus ------------------------------------------------------------- */
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
+
+/* ---- ?still (screenshot mode) ------------------------------------------ */
+body.still .build{opacity:1;transform:none;pointer-events:auto}
+body.still *,body.still *::before,body.still *::after{
+  transition-duration:0ms !important;
+  animation:none !important;
+}
+
+/* ---- reduced motion ---------------------------------------------------- */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    transition-duration:0ms !important;
+    animation-duration:0ms !important;
+    animation-iteration-count:1 !important;
+  }
+  .build{transform:none}
+}
+
+/* ---- print ------------------------------------------------------------- */
+@media print{
+  @page{size:1280px 720px;margin:0}
+  html,body{height:auto;overflow:visible;background:var(--bg)}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #deck{position:static;display:block;background:var(--bg)}
+  #stage{
+    position:static;width:auto;height:auto;container-type:normal;overflow:visible;
+  }
+  #progress,#help,#notes,#timer,#counter{display:none !important}
+  #rail,#band{display:none !important}
+  .slide{
+    display:flex !important;
+    position:relative !important;inset:auto !important;
+    width:1280px;height:720px;
+    container-type:size;
+    background:var(--bg);
+    padding:6cqh 6cqw 6cqh 6cqw;
+    break-after:page;page-break-after:always;
+    overflow:hidden;
+  }
+  .slide:last-of-type{break-after:auto;page-break-after:auto}
+  .build{opacity:1 !important;transform:none !important}
+  svg.smil [opacity], svg.smil * { opacity:1 !important }
+}
+</style>
+</head>
+<body>
+<div id="deck">
+  <div id="stage">
+
+    <div id="progress" aria-hidden="true"></div>
+
+{{SLIDES}}
+
+    <nav id="rail" aria-label="six levers">
+      <div class="badge" data-lever="1"><div class="chip">①</div><div class="chip-label">reflection</div></div>
+      <div class="badge" data-lever="2"><div class="chip">②</div><div class="chip-label">lowering table</div></div>
+      <div class="badge" data-lever="3"><div class="chip">③</div><div class="chip-label">semantics</div></div>
+      <div class="badge" data-lever="4"><div class="chip">④</div><div class="chip-label">reflection stack</div></div>
+      <div class="badge" data-lever="5"><div class="chip">⑤</div><div class="chip-label">types=physics</div></div>
+      <div class="badge" data-lever="6"><div class="chip">⑥</div><div class="chip-label">dispatch refuses</div></div>
+    </nav>
+
+    <div id="band" data-state="off">
+      <div class="band-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div id="band-state"></div>
+      <div id="band-out"></div>
+      <div class="band-label">live terminal</div>
+    </div>
+
+    <div id="counter">1/1</div>
+    <div id="timer" hidden data-late="none">00:00</div>
+    <div id="notes" hidden></div>
+
+    <div id="help" hidden>
+      <div class="help-card">
+        <h3>Deck keys</h3>
+        <dl>
+          <dt>→ / Space / PgDn</dt><dd>next build, then next slide</dd>
+          <dt>← / PgUp</dt><dd>back one build / slide</dd>
+          <dt>Home / End</dt><dd>first / last slide</dd>
+          <dt>D</dt><dd>shadow terminal into the band (again clears)</dd>
+          <dt>T / Shift+T</dt><dd>timer HUD / reset the clock</dd>
+          <dt>N</dt><dd>speaker notes</dd>
+          <dt>F</dt><dd>fullscreen</dd>
+          <dt>0</dt><dd>backup: recorded demo (#fallback)</dd>
+          <dt>S</dt><dd>backup: 23-gate stepper (#stepper)</dd>
+          <dt>B</dt><dd>back to the deck from a backup</dd>
+          <dt>?  /  Esc</dt><dd>this card / close</dd>
+        </dl>
+        <div class="help-foot">Click the right or left third of the stage to move. <code>?still</code> in the URL builds every slide for screenshots.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script id="circuits" type="application/json">
+{{CIRCUITS_JSON}}
+</script>
+
+<script>
+{{COMPONENTS_JS}}
+</script>
+
+<script>
+{{ENGINE_JS}}
+</script>
+</body>
+</html>

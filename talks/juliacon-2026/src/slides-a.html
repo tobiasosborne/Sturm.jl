@@ -1,0 +1,235 @@
+<!-- slides-a.html — slides s0–s8 (agent SLIDES-A). Fragment only: no html/head/body. -->
+
+<section class="slide" id="s0" data-title="Given an Oracle for f"
+         data-band="off"
+         data-notes="Terminal already warm, docked bottom. Say nothing about it.">
+  <h2 class="frametitle" style="font-size:7cqh;line-height:1.12">
+    <span class="small muted" style="display:block;font-size:2.6cqh;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:1.2cqh">JuliaCon 2026</span>
+    <span class="gold">Given</span> an Oracle for <span class="serif" style="font-style:italic">f</span><span class="rule"></span>
+  </h2>
+  <div class="body">
+    <div class="center" style="margin:1.6cqh 0 2.6cqh;display:flex;gap:1.1cqh;justify-content:flex-start">
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#9558B2"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#389826"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#CB3C33"></span>
+      <span style="display:inline-block;width:1.7cqh;height:1.7cqh;border-radius:50%;background:#4063D8"></span>
+    </div>
+    <div class="stack">
+      <p class="lead mono">Sturm.jl · Bennett.jl · BennettVM.jl</p>
+      <p class="muted">a quantum language · a reversible compiler · a reversible VM</p>
+    </div>
+    <p class="small muted" style="margin-top:4.4cqh">
+      Tobias J. Osborne — Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
+    </p>
+  </div>
+</section>
+
+<section class="slide" id="s1" data-title="The word"
+         data-band="off"
+         data-notes="Every quantum algorithm starts here. You don't need the equation — only the word under it. Given. That word is where quantum software dies. f is ordinary code — x²+3x+1, SHA-256, your loss function — and every framework answers it with a circuit-drawing API and good luck.">
+  <h2 class="frametitle">The word<span class="rule"></span></h2>
+  <div class="body center">
+    <p class="serif" style="font-style:italic;font-size:6cqh;margin-top:6cqh;letter-spacing:0.01em">
+      <span>O</span><sub style="font-size:0.6em">f</sub>
+      <span>&nbsp;|x⟩|y⟩&nbsp;=&nbsp;|x⟩|y&nbsp;⊕&nbsp;f(x)⟩</span>
+    </p>
+    <div class="build">
+      <p class="serif" style="font-style:italic;font-size:3.4cqh;margin-top:4.6cqh">
+        “<span class="gold">Given</span> an oracle for <span style="font-style:italic">f</span> …”
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted small" style="margin-top:3.2cqh;letter-spacing:0.06em">
+        Grover · Shor · Deutsch–Jozsa · phase estimation · QSVT
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s2" data-title="The answer, immediately"
+         data-band="live"
+         data-notes="TYPE IT LIVE (↑+Enter). ~0.2 s warm — measured. 'That's an ordinary Julia function; that's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library.' The Int8(3) is Julia promotion, not ceremony.">
+  <h2 class="frametitle">The answer, immediately<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+
+c = reversible_compile(f, Int8)
+</code></pre>
+    <div class="build">
+      <p class="mono muted small" style="margin-top:2.4cqh">
+        ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae
+      </p>
+    </div>
+    <div class="build">
+      <p style="font-size:4.6cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:3.4cqh">
+        Every Julia function is already a quantum gate.
+      </p>
+      <p class="muted serif" style="font-style:italic;font-size:3cqh;margin-top:1cqh">
+        you just have to run it backwards.
+      </p>
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+f (generic function with 1 method)
+
+julia&gt; c = reversible_compile(f, Int8)
+ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168)
+  depth 89 · Toffoli-depth 36 · 249 ancillae
+  </template>
+</section>
+
+<section class="slide" id="s3" data-title="Three packages, one arrow"
+         data-band="off"
+         data-notes="Bennett gets the next seven minutes. Sturm is the language it feeds. BennettVM gets forty-five seconds and earns them.">
+  <h2 class="frametitle">Three packages, one arrow<span class="rule"></span></h2>
+  <div class="body">
+    <figure class="figure-card" style="width:100%">{{SVG:pipeline}}</figure>
+    <p class="mono" style="font-size:2.6cqh;margin-top:1.8cqh">
+      f(x) → Bennett.jl → NOT/CNOT/Toffoli → controlled(·) → Sturm.jl: oracle(f, x)
+    </p>
+    <p class="mono muted small" style="margin-top:0.6cqh">
+      ↳ target = :reversible_vm → BennettVM.jl
+    </p>
+    <div class="build">
+      <p style="font-size:3.2cqh;margin-top:2.2cqh">
+        Julia is uniquely placed to be a quantum programming language — I won't argue it
+        abstractly. Watch for six levers.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s4" data-title="① The compiler is a library"
+         data-band="off"
+         data-notes="Lever ① — this is the slide the whole talk stands on. The build-2 aside is the FIRST thing to cut if behind.">
+  <h2 class="frametitle">① The compiler is a library<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>ir_string = sprint(io -&gt; code_llvm(io, f, arg_types;
+                       debuginfo = :none, optimize, dump_module = true))
+mod = parse(LLVM.Module, ir_string)
+</code></pre>
+    <p style="font-size:3cqh;margin-top:2cqh">
+      A runtime function value in — the compiler's IR out. In-process.
+      While <span class="mono">f</span> is still callable.
+    </p>
+    <div class="build">
+      <p class="muted" style="margin-top:2cqh">
+        C++: write a clang plugin. Python: there is no IR. Julia: two lines, and it works
+        for anything that reaches LLVM.
+      </p>
+    </div>
+    <div class="build">
+      <p class="small" style="margin-top:2cqh;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.6cqh 2cqh">
+        Julia 1.12 outlines slow paths — some closures have no <span class="mono">.instance</span>
+        to compile. Fix: rebuild <span class="mono">InteractiveUtils._dump_function</span> from
+        <span class="mono">Base._which</span> + <span class="mono">specialize_method</span> +
+        <span class="mono">typeinf_code</span>. The reflection stack is just more Julia you can call.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s5" data-title="② Dispatch is the lowering table"
+         data-band="off"
+         data-notes="In a C++ compiler this is a 400-case switch.">
+  <h2 class="frametitle">② Dispatch is the lowering table<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>_lower_inst!(ctx, inst::IRBinOp,  …) = lower_binop!(…)
+_lower_inst!(ctx, inst::IRICmp,   …) = lower_icmp!(…)
+_lower_inst!(ctx, inst::IRSelect, …) = lower_select!(…)
+_lower_inst!(ctx, inst::IRPhi,    …) = lower_phi!(…)
+<span class="muted"># … 13 instruction types, 13 methods …</span>
+_lower_inst!(ctx, inst::IRInst, …) =
+    error("no lowering for $(typeof(inst))")
+</code></pre>
+    <div class="build">
+      <p style="margin-top:2.4cqh">
+        No switch. No visitor. Adding an instruction = adding a method — from any package.
+        The catch-all's only job is to be loud.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s6" data-title="③ The entire simulator"
+         data-band="off"
+         data-notes="When someone asks what the gate set is, I don't have a spec document. I have this file.">
+  <h2 class="frametitle">③ The entire simulator<span class="rule"></span></h2>
+  <div class="body">
+<pre style="font-size:2.6cqh;overflow-x:auto"><code>@inline apply!(b, g::NOTGate)     = (b[g.target] ⊻= true;                          nothing)
+@inline apply!(b, g::CNOTGate)    = (b[g.target] ⊻= b[g.control];                  nothing)
+@inline apply!(b, g::ToffoliGate) = (b[g.target] ⊻= b[g.control1] &amp; b[g.control2]; nothing)
+</code></pre>
+    <div class="build">
+      <p style="font-size:3.2cqh;margin-top:3cqh">
+        This is not an excerpt. This is the simulator.
+      </p>
+      <p class="muted" style="margin-top:1.2cqh">
+        union-splitting on three concrete gate types — a 28k-gate circuit simulates with
+        &lt;200 KiB allocated.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s7" data-title="The theorem is a for-loop"
+         data-band="live"
+         data-notes="OPEN IN SILENCE — let the animation run ~5s before speaking. Cost law: 2× gates + one ancilla per output bit. Then the live equality. Backup stepper on key S if Q&amp;A wants gate-by-gate.">
+  <h2 class="frametitle">The theorem is a for-loop<span class="rule"></span></h2>
+  <div class="body">
+    <div style="display:flex;gap:2.4cqw;align-items:flex-start">
+      <figure class="figure-card" style="flex:0 0 55%;margin:0">{{SVG:bennett}}</figure>
+      <div style="flex:1 1 45%;min-width:0">
+<pre style="font-size:2.2cqh;overflow-x:auto"><code>append!(all_gates, lr.gates)             <span class="muted"># compute</span>
+_emit_copy_gates!(all_gates,             <span class="muted"># copy the answer out</span>
+                  lr.output_wires, copy_wires)
+for i in length(lr.gates):-1:1           <span class="muted"># uncompute</span>
+    push!(all_gates, lr.gates[i])
+end
+</code></pre>
+        <div class="build">
+          <p style="font-size:3.4cqh;margin-top:2cqh">
+            Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a
+            negative step.
+          </p>
+        </div>
+        <div class="build">
+          <p class="mono green" style="margin-top:1.8cqh">
+            julia&gt; gs[14:23] == reverse(gs[1:10])<br>true
+          </p>
+          <p class="muted small" style="margin-top:0.6cqh">
+            — and it's a doctest: CI fails if the theorem does.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; c1 = reversible_compile(x -&gt; x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)
+ReversibleCircuit: 23 gates (NOT=6, CNOT=15, Toffoli=2) · 16 wires · 10 ancillae · depth 9
+
+julia&gt; gs = c1.gates; gs[14:23] == reverse(gs[1:10])
+true
+  </template>
+</section>
+
+<section class="slide" id="s8" data-title="What arithmetic costs"
+         data-band="off"
+         data-notes="sin costs 5,000× x+x and is still ≤1 ULP. 11,027,852 gates — measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
+  <h2 class="frametitle">What arithmetic costs<span class="rule"></span></h2>
+  <div class="body">
+    <div class="component" data-component="costbars"></div>
+    <div class="build">
+      <p class="small" style="margin-top:1.6cqh;font-size:2.4cqh">
+        QCLA 32-bit multiply — Toffoli-depth 56 vs 180 schoolbook ·
+        QROM T-count exactly 4(L−1), width-independent (matches Babbush–Gidney) ·
+        shadow-memory store 24 CNOT vs a 7,122-gate MUX
+      </p>
+      <p class="gold small" style="margin-top:1cqh;font-size:2.4cqh">
+        SHA-256 round: 1,632 Toffoli vs hand-optimized 683 — ~2.4× worse.
+        It's in our own benchmark table.
+      </p>
+    </div>
+  </div>
+</section>
