@@ -50,30 +50,28 @@ here needs time to fix.
    ```
    produces `talk.html`. Open it two ways:
    - Normal: `file:///home/tobiasosborne/Projects/Sturm.jl/talks/juliacon-2026/talk.html`
-     — click through all 17 slides (s0–s16) once with →, confirm every
-     build step advances, the badge rail lights on schedule, and both
-     figures render without console errors (open devtools, check for
-     red): the s3 pipeline diagram (static SVG) and the s7 Bennett
-     construction (the only SMIL-animated figure in the deck — confirm
-     its animation actually runs, and restarts when you re-enter s7).
+     — click through all 16 slides (s0–s15) once with →, confirm every
+     build step advances and the s9 Bennett construction (the only
+     SMIL-animated figure in the deck) renders without console errors,
+     actually animates, and restarts when you re-enter s9.
    - **`?still` smoke test**: append the query string,
-     `talk.html?still#s8` (and repeat for a few other slide hashes,
-     especially s8/s11/s12 which carry components) — every `.build`
+     `talk.html?still#s11` (and repeat for a few other slide hashes,
+     especially s11/s12/#stepper which carry components) — every `.build`
      should already be `.shown`, `costbars`/`entangle`/`stepper` should
      jump straight to final state, and there should be zero visible
      transition/flash. This is the screenshot-safety check; it also
      catches components that silently fail to mount.
-   - Also visit each backup by hash once: `#fallback`, `#pebbling`,
-     `#vmtape`, `#numbers-full`, `#stepper` — confirm they render and
-     that `#fallback`'s embedded recording plays/displays.
+   - Also visit each backup by hash once: `#fallback`, `#teleport`,
+     `#pebbling`, `#vmtape`, `#numbers-full`, `#stepper` — confirm they
+     render and that `#fallback`'s embedded recording plays/displays.
 
 4. **Terminal setup.**
-   - **Glyph check**: open the deck at `#s12` and confirm the `⊻` operator
-     renders as a proper wedge-with-bar, not a boxed/underlined fallback —
-     the deck's mono stack falls back through JuliaMono → DejaVu; on a
-     freshly imaged venue machine install JuliaMono or any font with
-     U+22BB before trusting the teleport slide. Same check in the terminal:
-     type `⊻` at the REPL once.
+   - **Glyph check**: open the deck at `#s1` (and `#teleport`) and confirm
+     the `⊻` operator renders as a proper wedge-with-bar, not a
+     boxed/underlined fallback — the deck's mono stack falls back through
+     JuliaMono → DejaVu; on a freshly imaged venue machine install
+     JuliaMono or any font with U+22BB before trusting those slides. Same
+     check in the terminal: type `⊻` at the REPL once.
    - **Font size ≥ 24 pt**, monospace. Stage lighting washes out small
      text far worse than a laptop screen suggests — err large (28–32 pt
      is safer than 24 if the venue allows it).
@@ -186,9 +184,9 @@ min) that a surprise (e.g. a stale `demoenv`) doesn't become a crisis.
    Reverse-stage order still buys recency (each beat's line is the most
    recent match for its own prefix) but it does **not** buy a fixed
    ↑-count: running a recalled line appends it to history, so any count
-   you memorise drifts by one after every beat, and the optional s12 beat
-   shifts everything after it. **Recall by prefix, not by count** — see
-   §c. Rehearse the prefixes backstage until they are reflex.
+   you memorise drifts by one after every beat, and the optional Q&A
+   teleport beat shifts everything after it. **Recall by prefix, not by
+   count** — see §c. Rehearse the prefixes backstage until they are reflex.
 
 4. **Ctrl-L** to clear the visible screen. (History is untouched — only
    the visible scrollback is cleared. Do this last, right before opening
@@ -220,18 +218,18 @@ one rather than pressing ↑ twice and hoping.
 
 | Slide | Recall (type → ↑) | Command(s) | Expected output | Timing | Say while it runs |
 |---|---|---|---|---|---|
-| **s2** — "The answer, immediately" | `f(x` then `c = ` | `f(x::Int8) = x*x + Int8(3)*x + Int8(1)` then `c = reversible_compile(f, Int8)` | (silent) then `ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae` | ~0.2 s warm | "That's an ordinary Julia function. That's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library. The `Int8(3)` is Julia promotion, not ceremony." |
-| **s7** — "The theorem is a for-loop" | `c1` then `gs` | `c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)` then `gs = c1.gates; gs[14:23] == reverse(gs[1:10])` | `… 23 gates (NOT=6, CNOT=15, Toffoli=2) …` then `true` | ~0.2 s + ~60 ms | OPEN IN SILENCE first — let the SMIL construction animation run ~5 s before speaking at all. Then: "Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a negative step. And it's a doctest: CI fails if the theorem does." |
-| **s11** — "I never wrote a quantum gate" | `cc`, `simulate(cc, t`, `simulate(cc, f` | `cc = controlled(reversible_compile(x -> !x, Bool))` then `simulate(cc, true, false)` then `simulate(cc, false, false)` | (silent), `true`, `false` | ~0.3 s total | Terminal first: the three recalled lines, proving `cc` behaves as a controlled-NOT. THEN drive the on-slide `entangle` component (→/Space, 7 consumed advances — the deck's own live two-branch statevector, running the SAME 20-gate compiled circuit in the browser): "the deck is running the compiled circuit right now." One more advance reveals the headline. Pause three full seconds after saying "I never wrote a quantum gate." This is the signature moment — do not rush it. 10:00 hard checkpoint lands here. |
-| **s13** — "The loop closes: oracle(f, x)" | `Stu` then Ctrl+R `dj_b` | `Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end` then `Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end` | `true`, `false` | ~2.1 s each, warm | "Here's the whole talk in five lines. `f` is the same ordinary-function idea we compiled at 0:35. One query each." If Orkan misbehaves here: press D, keep walking — do not debug live. |
+| **s9** — "Bennett, 1973" | `c1` then `gs` | `c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)` then `gs = c1.gates; gs[14:23] == reverse(gs[1:10])` | `… 23 gates (NOT=6, CNOT=15, Toffoli=2) …` then `true` | ~0.2 s + ~60 ms | OPEN IN SILENCE first — let the SMIL construction animation run one loop (~5 s) before speaking at all. Walk the three steps in plain words. Then the live equality: "the uncompute half really is the compute half, backwards — and that's checked in CI." |
+| **s10** — "You don't have to rewrite your code" | `f(x` then `c = ` | `f(x::Int8) = x*x + Int8(3)*x + Int8(1)` then `c = reversible_compile(f, Int8)` | (silent) then `ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae` | ~0.2 s warm | "That's an ordinary Julia function — no macro, no special type, you can still call it. And that's the same function as a reversible circuit." Keep the register plain; the slide title is the claim and the terminal is the evidence. |
+| **s12** — "…and it becomes quantum" | `cc`, `simulate(cc, t`, `simulate(cc, f` | `cc = controlled(reversible_compile(x -> !x, Bool))` then `simulate(cc, true, false)` then `simulate(cc, false, false)` | (silent), `true`, `false` | ~0.3 s total | Terminal first: the three recalled lines show `cc` behaving as a controlled-NOT. THEN drive the on-slide `entangle` component (→/Space, 7 consumed advances — a live two-branch statevector running the SAME 20-gate compiled circuit in the browser). Explain as it runs: "two classical worlds, one superposed control — the browser is applying the compiled gates to both branches right now." |
+| **s13** — "The loop closes: oracle(f, x)" | `Stu` then Ctrl+R `dj_b` | `Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end` then `Sturm.eager(18) do _; deutsch_jozsa(dj_bal, Val(2)); end` | `true`, `false` | ~2.1 s each, warm | "One query each — and `f` is the same kind of ordinary function we compiled two slides ago." If Orkan misbehaves here: press D, keep walking — do not debug live. |
 
-**Conditional 5th beat — s12, "Teleportation, zero gates"** (band:
-shadow, not one of the four LIVE slides — normally shown via `D`).
-If, and only if, you are AHEAD of the clock at s12: run it live instead.
-Retype `count(_ -> teleport_ok(), 1:200)` as a tenth history line (it
-was warmed in §b.2; recall it with prefix `cou`) → expect `200`,
-~0.25 s. Otherwise leave this one as shadow-only; press D and narrate
-over the pre-baked transcript.
+**Conditional Q&A beat — `#teleport`** (backup slide, band: shadow —
+normally shown via `D` if it comes up in questions). If someone asks
+"what does a bigger Sturm program look like?", jump to `#teleport` and,
+if the session is healthy, run `count(_ -> teleport_ok(), 1:200)` live
+(warmed in §b.2; recall with prefix `cou`) → expect `200`, ~0.25 s.
+Otherwise press D and narrate over the pre-baked transcript. `B` returns
+to the deck.
 
 ---
 
@@ -243,7 +241,7 @@ Do not retype it, do not read the stack trace aloud, do not diagnose on
 stage. You have exactly one move: press **D**.
 
 - **Key D — shadow output, per live slide.** Every live-band slide
-  (s2, s7, s11, s13) and s12 carries a `<template class="shadow-term">`
+  (s9, s10, s12, s13) and `#teleport` carries a `<template class="shadow-term">`
   with the exact pre-baked, verified transcript for that beat. Pressing
   D types it into the terminal band with a typewriter effect (D again
   clears it). It is not a "simulation" caveat to mention out loud — it
@@ -259,7 +257,7 @@ stage. You have exactly one move: press **D**.
 - **Known behavior — reverse navigation resets components.** Stepping
   **Left** back over an interactive component (`costbars`, `entangle`,
   `stepper`) resets that component's consumed steps in ONE keypress —
-  it does not un-step gate by gate. So a single ← on s8/s11/#stepper
+  it does not un-step gate by gate. So a single ← on s11/s12/#stepper
   puts the component back to its start; to show it again you simply
   advance again (→/Space) through its steps. Related: the stepper's
   on-slide **⟲ run all** button advances the component's internal state
@@ -284,19 +282,28 @@ when >30 s behind:
 
 | Checkpoint | Slide | Budget |
 |---|---|---|
-| 1 | s3 | by 2:00 |
-| 2 | s10 | by 8:30 |
-| 3 | s11 | by 10:00 |
-| 4 | s16 | by 14:00 |
+| 1 | s6 (end of part 1) | by 5:00 |
+| 2 | s9 (Bennett animation) | by 8:00 |
+| 3 | s13 (oracle beat) | by 11:30 |
+| 4 | s15 (close) | by 14:00 |
 
 **Shed list, in drop order** (cut the first item first; only move to the
 next if still behind after cutting the previous one):
 
-1. **s4 build-2**, the Julia-1.12-reflection-stack aside (`InteractiveUtils._dump_function` / `Base._which` / `specialize_method`). Explicitly marked in the spec as the first thing to cut — small, ~10 s.
-2. **s9's Carmack hostile-review aside** (the `Pkg.test()` 4m06-vs-90s war story) — drop the aside, keep the false-path-sensitization story itself (50 s budget either way).
-3. **s12 in full** (OPTIONAL-A, ~40 s) — skip the whole slide (teleportation-in-zero-gates) if behind; only ever ADD the live 200-shot variant (§c conditional beat) if you are instead ahead.
-4. **s14 panel (b)**, the QECC-as-HOF `ctrl(Protect(enc))` MethodError panel (~25 s) — bridge straight from panel (a) ("the marginals lied") to s15 with: "error correction is a higher-order function on channels — and here's what happens when you try to control one."
-5. **s16, down to two lines.** Absolute last resort: if time is genuinely short, say only "That word 'given' has been doing the work for forty years. In Julia, it's a function call." and let the slide (unchanged code panel, all six badges lit) carry the rest in silence.
+1. **The "Why Julia:" build on s2–s5** can each be delivered in one
+   breath instead of a beat (~10 s each). Never cut the s6 one — it IS
+   that slide's point.
+2. **s7 build-2**, the arrow line + its caption (~10 s) — the map is
+   nice, not necessary; the equation and the "in words" line carry the
+   slide.
+3. **s12's entangle narration** — drive the component in quick advances
+   with one sentence over it instead of narrating every chunk (~30 s
+   saved). Keep the terminal beat.
+4. **s14's final build** (the "also open" line, ~10 s) — the four panels
+   carry the slide.
+5. **s15, down to two lines.** Absolute last resort: say only "If you
+   know Julia, you already know most of what's here. That was the whole
+   point. Thank you." and let the slide carry the rest in silence.
 
 ---
 
@@ -309,6 +316,7 @@ number keys nowhere and only `0`/`S` are assigned:
 | Key / hash | Backup slide | One-line answer |
 |---|---|---|
 | **S** → `#stepper` | "Q&A: 23 gates, one at a time" | The `stepper` component walks all 23 gates of the increment circuit one at a time (arrow-driven, or `⟲ run all` at 6 gates/s), with compute/copy/uncompute phase bands and a live ancilla-state readout — "here's gate 1 through 23, and the ancillae really do come back to zero." |
+| `#teleport` | "Q&A: a bigger Sturm program" | Teleportation in nine lines of ordinary-looking Julia — every construct from part 1, plus the conditional live 200-shot probe (§c). |
 | `#pebbling` | "Q&A: the space–time dial" | Bennett strategies trade time for space via Knill's pebbling recursion, `F(n,s) = min_m F(m,s)+F(m,s−1)+F(n−m,s−1)`, finite iff `n ≤ 2^(s−1)` — six pluggable `BennettStrategy` subtypes let you dial where you sit on that curve. |
 | `#vmtape` | (BennettVM history tape) | BennettVM's `unrun!` walks back through a three-layer tape — injective steps log nothing, min-cut deltas borrow Enzyme's idea, checkpoint+replay borrows `rr`'s — so a long forward-run loop doesn't have to store every intermediate step to reverse exactly. |
 | `#numbers-full` | (full benchmark table) | The full table, warts included: the QCLA/QROM/shadow-memory wins, the honest SHA-256 loss (1,632 vs 683 Toffoli, ~2.4×), the persistent-map surprise (naive linear scan beats a purpose-built structure 2,400× at depth 128), and the precompile-workload TTFX win (20.7 s → 0.99 s). |

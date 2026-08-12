@@ -25,29 +25,18 @@
     catch (e) { return false; }
   }());
 
-  /* ---- the six levers -------------------------------------------------- */
-  /* Lit when the deck has reached the introducing slide (and, for ④, its
-     second build). Order in the rail is ①..⑥; the mapping is not monotone
-     in slide index, which is exactly why the engine computes it. */
-  var LEVERS = [
-    { n: 1, slide: 's4',  build: 0 },
-    { n: 2, slide: 's5',  build: 0 },
-    { n: 3, slide: 's6',  build: 0 },
-    { n: 4, slide: 's4',  build: 2 },
-    { n: 5, slide: 's12', build: 0 },
-    { n: 6, slide: 's15', build: 0 }
-  ];
-
   /* ---- timer checkpoints ----------------------------------------------- */
+  /* s6 closes part 1 (the why); s9 is the Bennett animation; s13 the oracle
+     beat; s15 the close. */
   var CHECKPOINTS = [
-    { slide: 's3',  t: 2 * 60 },
-    { slide: 's10', t: 8 * 60 + 30 },
-    { slide: 's11', t: 10 * 60 },
-    { slide: 's16', t: 14 * 60 }
+    { slide: 's6',  t: 5 * 60 },
+    { slide: 's9',  t: 8 * 60 },
+    { slide: 's13', t: 11 * 60 + 30 },
+    { slide: 's15', t: 14 * 60 }
   ];
 
   /* ---- DOM ------------------------------------------------------------- */
-  var stage, rail, band, bandState, bandOut, counter, timerEl, notesEl, helpEl,
+  var stage, band, bandState, bandOut, counter, timerEl, notesEl, helpEl,
       progressEl;
   var slides = [], linear = [], order = [], byId = {};
 
@@ -61,8 +50,6 @@
   var helpShown = false;
   var shadowOn = false;
   var shadowRAF = 0;
-  var railFlashed = {};
-  var everLit = {};
 
   /* ======================================================================
      components
@@ -101,47 +88,6 @@
 
   function linearIndexOf(id) { return order.indexOf(id); }
 
-  function updateRail() {
-    if (!rail) return;
-    var here = idx;                       // last linear slide reached
-    var stepsHere = shownBuilds(byId[order[here]] || document.createElement('div')).length;
-    LEVERS.forEach(function (lv) {
-      var badge = rail.querySelector('.badge[data-lever="' + lv.n + '"]');
-      if (!badge) return;
-      var j = linearIndexOf(lv.slide);
-      var lit;
-      if (j < 0) lit = false;             // slide missing — never lights, never throws
-      else if (here > j) lit = true;
-      else if (here < j) lit = false;
-      else lit = stepsHere >= lv.build;
-      if (lit && !badge.classList.contains('lit')) {
-        badge.classList.add('lit');
-        if (!everLit[lv.n] && !REDUCED && !STILL) {
-          everLit[lv.n] = true;
-          badge.classList.add('glow');
-          window.setTimeout(function () { badge.classList.remove('glow'); }, 700);
-        }
-        everLit[lv.n] = true;
-      } else if (!lit) {
-        badge.classList.remove('lit', 'glow');
-      }
-    });
-  }
-
-  /* s3's first build asks the whole rail to flash once — the "watch for six
-     levers" beat. Slides may also opt in per-build with data-rail-flash. */
-  function maybeRailFlash(el, build) {
-    if (!rail || REDUCED || STILL) return;
-    var wants = (el.id === 's3' && shownBuilds(el).length === 1) ||
-                (build && build.hasAttribute && build.hasAttribute('data-rail-flash'));
-    if (!wants || railFlashed[el.id]) return;
-    railFlashed[el.id] = true;
-    rail.classList.remove('flash');
-    void rail.offsetWidth;                // restart the animation
-    rail.classList.add('flash');
-    window.setTimeout(function () { rail.classList.remove('flash'); }, 1000);
-  }
-
   function updateBand(el) {
     if (!band) return;
     var state = (el && el.getAttribute('data-band')) || 'off';
@@ -173,7 +119,6 @@
 
   function updateChrome() {
     var el = byId[currentId];
-    updateRail();
     updateBand(el);
     updateCounter();
     updateProgress();
@@ -475,7 +420,6 @@
     for (var b = 0; b < builds.length; b++) {
       if (!builds[b].classList.contains('shown')) {
         builds[b].classList.add('shown');
-        maybeRailFlash(el, builds[b]);
         fitCode(el);
         updateChrome();
         return;
@@ -622,7 +566,6 @@
      ====================================================================== */
   function init() {
     stage = $('#stage');
-    rail = $('#rail');
     band = $('#band');
     bandState = $('#band-state');
     bandOut = $('#band-out');

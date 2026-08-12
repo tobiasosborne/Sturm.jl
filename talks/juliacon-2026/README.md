@@ -33,9 +33,10 @@ closes) · `D` toggle shadow-terminal transcript in the terminal band ·
 `#stepper` 23-gate-walkthrough backup · `B` return to the last linear
 slide from any backup · number keys map nowhere else · clicking the
 right/left third of the stage advances/reverses. URL hash addresses
-slides directly (`#s4`) and backups (`#fallback`, `#pebbling`,
-`#vmtape`, `#numbers-full`, `#stepper`). Append `?still` to force every
-build step and component to its final state (screenshot/print mode).
+slides directly (`#s4`) and backups (`#fallback`, `#teleport`,
+`#pebbling`, `#vmtape`, `#numbers-full`, `#stepper`). Append `?still` to
+force every build step and component to its final state
+(screenshot/print mode).
 
 Full stage procedure, live-command table, and fallback drill:
 **`DEMO-RUNBOOK.md`**.
@@ -48,10 +49,11 @@ python3 src/build.py
 ```
 
 Splices `frame.html` + `slides-a.html` + `slides-b.html` + `engine.js` +
-`components.js` + `circuits.json`, and inlines three SVG assets (plus
-one base64-embedded recording) from the sibling `Bennett.jl` checkout's
-`docs/src/assets/`, into `talk.html`. Requires no packages beyond the
-Python standard library.
+`components.js` + `circuits.json`, and inlines the SMIL-animated
+Bennett-construction SVG (plus one base64-embedded recording) from the
+sibling `Bennett.jl` checkout's `docs/src/assets/`, into `talk.html`
+(two further SVG markers exist but are currently unused — build.py
+prints a note). Requires no packages beyond the Python standard library.
 
 ## Running the warm-up
 

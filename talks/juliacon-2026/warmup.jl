@@ -140,13 +140,13 @@ flush(stdout)
 # These are the SAME names/definitions the live commands will (re)use on
 # stage — transcribed verbatim from Sturm-PRD-v2.md §7.4 (deutsch_jozsa),
 # test/test_m4_views.jl:25-34 (teleport), and DECK-SPEC.md (f, dj_const,
-# dj_bal). `f` gets RETYPED live at s2/s16 (harmless method redefinition);
+# dj_bal). `f` gets RETYPED live at s10/s15 (harmless method redefinition);
 # dj_const/dj_bal/deutsch_jozsa/teleport/teleport_ok are defined ONCE here
-# and never retyped — the live s13/s12 commands just call them by name.
+# and never retyped — the live s13 and Q&A #teleport commands just call them by name.
 
 stage("define f, dj_const, dj_bal, deutsch_jozsa, teleport, teleport_ok") do
     @eval begin
-        # s2 / s16 — "every Julia function is already a quantum gate"
+        # s10 / s15 — "every Julia function is already a quantum gate"
         f(x::Int8) = x*x + Int8(3)*x + Int8(1)
 
         # s13 — Deutsch–Jozsa predicates. GENERIC (no ::Int8/::UInt8 on the
@@ -167,7 +167,7 @@ stage("define f, dj_const, dj_bal, deutsch_jozsa, teleport, teleport_ok") do
             return Int(dual(x)) == 0 # Fourier-sample x; all-zero ⇔ constant
         end
 
-        # s12 — verbatim test/test_m4_views.jl:25-34 (PRD §7.1).
+        # Q&A #teleport — verbatim test/test_m4_views.jl:25-34 (PRD §7.1).
         function teleport(ψ::QBool)
             b = QBool(0.5)                # a fair quantum coin
             c = false ⊻ b                 # Bell pair
@@ -179,7 +179,7 @@ stage("define f, dj_const, dj_bal, deutsch_jozsa, teleport, teleport_ok") do
             return c
         end
 
-        # s12 shadow/optional-live beat: |+⟩ probe, X-basis (dual) readout —
+        # Q&A #teleport shadow/optional-live beat: |+⟩ probe, X-basis (dual) readout —
         # the wm28-class probe (test_m4_views.jl:209): expect == false, always.
         teleport_ok() = Sturm.eager(4) do _
             Bool(dual(teleport(QBool(0.5)))) == false
@@ -197,12 +197,12 @@ flush(stdout)
 # machinery, LLVM.jl, and Orkan's ccall boundary are all hot before the
 # presenter ever types the real thing.
 
-_warmc = stage("warm: reversible_compile(f, Int8)  [pays s2's live command]") do
+_warmc = stage("warm: reversible_compile(f, Int8)  [pays s10's live command]") do
     Bennett.reversible_compile(f, Int8)
 end
 
 stage("warm: simulate(_warmc, Int8(5)) == 41  [FIRST simulate — ~2.8s JIT]") do
-    # f(5) = 25 + 15 + 1 = 41 — the number printed on s16 / DECK-SPEC §numbers.
+    # f(5) = 25 + 15 + 1 = 41 — the number pinned in DECK-SPEC §numbers.
     expect(Int(Bennett.simulate(_warmc, Int8(5))), 41,
            "simulate(c, Int8(5)) — f(5) must be 41")
 end
@@ -212,7 +212,7 @@ stage("warm: verify_reversibility(_warmc) == true") do
            "verify_reversibility(c) — compiled circuit must be reversible")
 end
 
-_warmc1 = stage("warm: reversible_compile(x+1, UInt8; bit_width=3, ...)  [pays s7]") do
+_warmc1 = stage("warm: reversible_compile(x+1, UInt8; bit_width=3, ...)  [pays s9]") do
     Bennett.reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple,
                                 fold_constants=true)
 end
@@ -220,10 +220,10 @@ end
 stage("warm: gs[14:23] == reverse(gs[1:10])  [mirror equality]") do
     gs = _warmc1.gates
     expect(gs[14:23] == reverse(gs[1:10]), true,
-           "s7 mirror equality — uncompute must be the compute half reversed")
+           "s9 mirror equality — uncompute must be the compute half reversed")
 end
 
-_warmcc = stage("warm: controlled(reversible_compile(!x, Bool))  [pays s11]") do
+_warmcc = stage("warm: controlled(reversible_compile(!x, Bool))  [pays s12]") do
     Bennett.controlled(Bennett.reversible_compile(x -> !x, Bool))
 end
 
@@ -259,7 +259,7 @@ stage("warm: deutsch_jozsa(dj_bal, Val(2))  [now warm, pays s13's 2nd line]") do
     expect(got, false, "deutsch_jozsa(dj_bal, Val(2)) — balanced ⇒ false")
 end
 
-stage("warm: teleport 200-shot probe == 200  [optional s12 live beat]") do
+stage("warm: teleport 200-shot probe == 200  [optional Q&A #teleport live beat]") do
     expect(count(_ -> teleport_ok(), 1:200), 200,
            "200-shot teleport probe — every shot must read false in the dual view")
 end
@@ -288,7 +288,7 @@ cc = _warmcc
 #
 # What it does NOT buy you is a fixed ↑-count: executing a recalled command
 # APPENDS it to history, so every count drifts by one after every beat, and
-# the optional s12 beat shifts everything after it. Fixed counts are a trap.
+# the optional teleport beat shifts everything after it. Fixed counts are a trap.
 # Recall by PREFIX instead (type 2–3 chars, then ↑ — Julia's prefix history
 # search), with Ctrl+R incremental search as the backup. The printed table
 # below gives the exact prefix per beat; DEMO-RUNBOOK.md §(b)/§(c) repeat it.
@@ -310,10 +310,10 @@ for line in [
     "simulate(cc, false, false)",
     "simulate(cc, true, false)",
     "cc = controlled(reversible_compile(x -> !x, Bool))",
-    "gs = c1.gates; gs[14:23] == reverse(gs[1:10])",
-    "c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)",
     "c = reversible_compile(f, Int8)",
     "f(x::Int8) = x*x + Int8(3)*x + Int8(1)",
+    "gs = c1.gates; gs[14:23] == reverse(gs[1:10])",
+    "c1 = reversible_compile(x -> x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)",
 ]
     println("    ", line)
 end
@@ -323,23 +323,23 @@ println("-"^72)
 println("RECALL ON STAGE — BY PREFIX, NEVER BY A FIXED ↑-COUNT.")
 println("-"^72)
 println("Running a recalled line APPENDS it to history, so any ↑-count you")
-println("memorised drifts by one after every beat (and the optional s12 beat")
+println("memorised drifts by one after every beat (and the optional teleport beat")
 println("shifts the rest). Instead: type the prefix, press ↑, READ the line")
 println("on screen, press Enter.")
 println()
 println("    beat   type this       then ↑ recalls")
 println("    -----  --------------  --------------------------------------")
 for (beat, prefix, what) in [
-    ("s2  a", "f(x",            "f(x::Int8) = x*x + Int8(3)*x + Int8(1)"),
-    ("s2  b", "c = ",           "c = reversible_compile(f, Int8)"),
-    ("s7  a", "c1",             "c1 = reversible_compile(x -> x + UInt8(1), ...)"),
-    ("s7  b", "gs",             "gs = c1.gates; gs[14:23] == reverse(gs[1:10])"),
-    ("s11 a", "cc",             "cc = controlled(reversible_compile(x -> !x, Bool))"),
-    ("s11 b", "simulate(cc, t", "simulate(cc, true, false)"),
-    ("s11 c", "simulate(cc, f", "simulate(cc, false, false)"),
+    ("s9  a", "c1",             "c1 = reversible_compile(x -> x + UInt8(1), ...)"),
+    ("s9  b", "gs",             "gs = c1.gates; gs[14:23] == reverse(gs[1:10])"),
+    ("s10 a", "f(x",            "f(x::Int8) = x*x + Int8(3)*x + Int8(1)"),
+    ("s10 b", "c = ",           "c = reversible_compile(f, Int8)"),
+    ("s12 a", "cc",             "cc = controlled(reversible_compile(x -> !x, Bool))"),
+    ("s12 b", "simulate(cc, t", "simulate(cc, true, false)"),
+    ("s12 c", "simulate(cc, f", "simulate(cc, false, false)"),
     ("s13 a", "Stu",            "... deutsch_jozsa(dj_const, Val(2)) ..."),
     ("s13 b", "Ctrl+R, dj_b",   "... deutsch_jozsa(dj_bal, Val(2)) ..."),
-    ("s12  ", "cou",            "count(_ -> teleport_ok(), 1:200)   [optional]"),
+    ("Q&A  ", "cou",            "count(_ -> teleport_ok(), 1:200)   [#teleport, optional]"),
 ]
     println("    ", rpad(beat, 7), rpad(prefix, 16), what)
 end

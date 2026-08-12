@@ -1,8 +1,11 @@
-<!-- slides-a.html — slides s0–s8 (agent SLIDES-A). Fragment only: no html/head/body. -->
+<!-- slides-a.html — slides s0–s7. Fragment only: no html/head/body.
+     Part 1 of the talk: the why. One Sturm design decision per slide,
+     each paired with the Julia feature that carried it. Every snippet is
+     real code from the repos' committed tests (paths in the spec). -->
 
 <section class="slide" id="s0" data-title="Given an Oracle for f"
          data-band="off"
-         data-notes="Terminal already warm, docked bottom. Say nothing about it.">
+         data-notes="Terminal is warm and docked. Don't mention it. The demo comes in the second half — the first half is the why.">
   <h2 class="frametitle" style="font-size:7cqh;line-height:1.12">
     <span class="small muted" style="display:block;font-size:2.6cqh;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:1.2cqh">JuliaCon 2026</span>
     <span class="gold">Given</span> an Oracle for <span class="serif" style="font-style:italic">f</span><span class="rule"></span>
@@ -16,7 +19,7 @@
     </div>
     <div class="stack">
       <p class="lead mono">Sturm.jl · Bennett.jl · BennettVM.jl</p>
-      <p class="muted">a quantum language · a reversible compiler · a reversible VM</p>
+      <p class="muted">a quantum language · a reversible compiler · a reversible interpreter</p>
     </div>
     <p class="small muted" style="margin-top:4.4cqh">
       Tobias J. Osborne — Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
@@ -24,211 +27,192 @@
   </div>
 </section>
 
-<section class="slide" id="s1" data-title="The word"
+<section class="slide" id="s1" data-title="What I wanted"
          data-band="off"
-         data-notes="Every quantum algorithm starts here. You don't need the equation — only the word under it. Given. That word is where quantum software dies. f is ordinary code — x²+3x+1, SHA-256, your loss function — and every framework answers it with a circuit-drawing API and good luck.">
-  <h2 class="frametitle">The word<span class="rule"></span></h2>
-  <div class="body center">
-    <p class="serif" style="font-style:italic;font-size:6cqh;margin-top:6cqh;letter-spacing:0.01em">
+         data-notes="No framework names, no dunking — the left side is every mainstream toolkit, including our own first attempt. The point is a feeling: diagrams vs programs.">
+  <h2 class="frametitle">What I wanted<span class="rule"></span></h2>
+  <div class="body">
+    <p class="lead">To write quantum programs in the language I already write.</p>
+    <div class="cols" style="margin-top:1.2cqh">
+      <div class="col">
+        <p class="small muted">how most quantum software looks:</p>
+<pre><code>circuit.h(0)
+circuit.cx(0, 1)
+circuit.measure([0, 1])</code></pre>
+        <p class="small muted">you assemble a diagram, gate by gate</p>
+      </div>
+      <div class="col">
+        <p class="small muted">what I was hoping for:</p>
+<pre><code>q = QBool(0.5)      <span class="c"># a fair quantum coin</span>
+r = false ⊻ q       <span class="c"># a second bit, correlated</span>
+Bool(q), Bool(r)    <span class="c"># measured — they always agree</span></code></pre>
+        <p class="small muted">a program: values, operators, scope</p>
+      </div>
+    </div>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Sturm.jl is a handful of design decisions about how quantum programs should read.
+        The first part of this talk walks through them, one at a time —
+        each with the Julia feature that made it work.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s2" data-title="Quantum data is a value"
+         data-band="off"
+         data-notes="Decision 1. QInt is deliberately NOT an Integer subtype — a comparison returns a quantum bool, so pretending would lie. 'Without pretending to be one' is the honest phrase.">
+  <h2 class="frametitle">Quantum data is a value, not a wire<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>x = QInt{4}(3)     <span class="c"># a 4-bit quantum integer</span>
+add!(x, 2)         <span class="c"># |3⟩ → |5⟩, in place</span>
+superpose!(x)      <span class="c"># all sixteen values at once</span>
+s = x + 2          <span class="c"># ordinary arithmetic — a fresh register comes back</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        The width lives in the type, so every operation is specialized at compile
+        time. Comparisons work too — <span class="mono">x &lt; y</span> just returns a
+        <em>quantum</em> bool, because that's what it is.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: user-defined types are first-class citizens. A quantum integer
+        can behave like a number — without pretending to be one.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s3" data-title="Measurement is a conversion"
+         data-band="off"
+         data-notes="Decision 2. The law Bool(QBool(b)) == b is a named test in the suite. Measurement really does consume the state; the types just stopped pretending otherwise.">
+  <h2 class="frametitle">Crossing the boundary is a type conversion<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>q = QBool(0.7)     <span class="c"># classical → quantum: prepare</span>
+b = Bool(q)        <span class="c"># quantum → classical: measure</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Measurement <strong>consumes</strong>. Use <span class="mono">q</span> after
+        this and you get an error — not a silently wrong answer.
+      </p>
+      <p class="muted small" style="margin-top:1cqh">
+        And the round trip is a law with a test:
+        <span class="mono">Bool(QBool(b)) == b</span>, for both values of
+        <span class="mono">b</span>, every CI run.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: constructors already <em>are</em> the conversion idiom.
+        The most consequential operation in quantum mechanics needed no new syntax.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s4" data-title="Scope is physical"
+         data-band="off"
+         data-notes="Decision 3. Discarding a qubit is a real physical operation (the environment keeps its half). GC 'eventually' would be a physics bug. The do-block IS a try/finally.">
+  <h2 class="frametitle">Scope is physical<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>eager(4) do ctx
+    q = QBool(0.5)      <span class="c"># a local qubit</span>
+    r = false ⊻ q       <span class="c"># quantum scratch</span>
+    Bool(q)             <span class="c"># this value leaves the block</span>
+end                     <span class="c"># ← r is discarded exactly here</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Discarding a qubit is a physical operation — the environment keeps its half
+        of any correlation. So it has to happen at a definite moment, not whenever
+        a garbage collector gets around to it.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: a <span class="mono">do</span>-block is a genuine
+        <span class="mono">try</span>/<span class="mono">finally</span>. Scope exit
+        is deterministic — so we could afford to make it mean something.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s5" data-title="Control flow can be quantum"
+         data-band="off"
+         data-notes="Decision 4. when() is a plain function taking a closure — no macro. The measurement-inside error is a real test (test_m5_when.jl). Both branches continue in superposition.">
+  <h2 class="frametitle">Control flow can be quantum<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>when(c) do          <span class="c"># `if` — but c is a qubit</span>
+    add!(x, 3)      <span class="c"># happens in the branch where c is 1</span>
+end                 <span class="c"># both branches carry on, in superposition</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Inside the block the rules tighten: measuring in there is physically
+        meaningless, so trying it raises an error — at the exact call, with a
+        message that says why.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: <span class="mono">do</span>-block syntax lets a brand-new control
+        construct read as if it had always been in the language. <span class="mono">when</span>
+        is a plain function taking a closure — not a macro.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s6" data-title="What physics forbids, dispatch forbids"
+         data-band="off"
+         data-notes="Decision 5. Protect wraps a channel in error correction; two independent no-go theorems say you can't condition that on a qubit. We didn't write a checker — we didn't write the method. ~5:00 checkpoint at the end of this slide.">
+  <h2 class="frametitle">What physics forbids, dispatch forbids<span class="rule"></span></h2>
+  <div class="body">
+<pre style="margin-top:1.2cqh"><code style="font-size:3.0cqh;line-height:1.5"><span class="p">julia&gt;</span> ctrl(Protect(enc))
+<span class="r">ERROR: MethodError: no method matching ctrl(::Protect{…})</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2.2cqh">
+        There is a theorem that you cannot take an error-corrected process and
+        condition it on a qubit. In most systems that lives in the documentation.
+        Here it's a method that doesn't exist.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: we didn't write a checker or a linter. We just didn't write the
+        method — and the error message points at the exact call.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s7" data-title="Given an oracle for f"
+         data-band="off"
+         data-notes="Part 2 opens. Translate the equation in plain words before anything else. 'Given' hides forty years of work — say it kindly, not triumphantly.">
+  <h2 class="frametitle">“<span class="gold">Given</span> an oracle for <span class="serif" style="font-style:italic">f</span> …”<span class="rule"></span></h2>
+  <div class="body">
+    <p class="serif center" style="font-style:italic;font-size:4.6cqh;margin-top:1.2cqh;letter-spacing:0.01em">
       <span>O</span><sub style="font-size:0.6em">f</sub>
       <span>&nbsp;|x⟩|y⟩&nbsp;=&nbsp;|x⟩|y&nbsp;⊕&nbsp;f(x)⟩</span>
     </p>
-    <div class="build">
-      <p class="serif" style="font-style:italic;font-size:3.4cqh;margin-top:4.6cqh">
-        “<span class="gold">Given</span> an oracle for <span style="font-style:italic">f</span> …”
-      </p>
-    </div>
-    <div class="build">
-      <p class="muted small" style="margin-top:3.2cqh;letter-spacing:0.06em">
-        Grover · Shor · Deutsch–Jozsa · phase estimation · QSVT
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s2" data-title="The answer, immediately"
-         data-band="live"
-         data-notes="TYPE IT LIVE (↑+Enter). ~0.2 s warm — measured. 'That's an ordinary Julia function; that's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library.' The Int8(3) is Julia promotion, not ceremony.">
-  <h2 class="frametitle">The answer, immediately<span class="rule"></span></h2>
-  <div class="body">
-<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
-
-c = reversible_compile(f, Int8)
-</code></pre>
-    <div class="build">
-      <p class="mono muted small" style="margin-top:2.4cqh">
-        ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae
-      </p>
-    </div>
-    <div class="build">
-      <p style="font-size:4.6cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:3.4cqh">
-        Every Julia function is already a quantum gate.
-      </p>
-      <p class="muted serif" style="font-style:italic;font-size:3cqh;margin-top:1cqh">
-        you just have to run it backwards.
-      </p>
-    </div>
-  </div>
-  <template class="shadow-term">
-julia&gt; f(x::Int8) = x*x + Int8(3)*x + Int8(1)
-f (generic function with 1 method)
-
-julia&gt; c = reversible_compile(f, Int8)
-ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168)
-  depth 89 · Toffoli-depth 36 · 249 ancillae
-  </template>
-</section>
-
-<section class="slide" id="s3" data-title="Three packages, one arrow"
-         data-band="off"
-         data-notes="Bennett gets the next seven minutes. Sturm is the language it feeds. BennettVM gets forty-five seconds and earns them.">
-  <h2 class="frametitle">Three packages, one arrow<span class="rule"></span></h2>
-  <div class="body">
-    <figure class="figure-card" style="width:100%">{{SVG:pipeline}}</figure>
-    <p class="mono" style="font-size:2.6cqh;margin-top:1.8cqh">
-      f(x) → Bennett.jl → NOT/CNOT/Toffoli → controlled(·) → Sturm.jl: oracle(f, x)
-    </p>
-    <p class="mono muted small" style="margin-top:0.6cqh">
-      ↳ target = :reversible_vm → BennettVM.jl
+    <p class="center" style="margin-top:1cqh">
+      In words: a machine that takes <span class="mono">x</span> and <span class="mono">y</span>
+      and returns <span class="mono">x</span> and <span class="mono">y ⊻ f(x)</span>.
+      Your function, installed as a gate.
     </p>
     <div class="build">
-      <p style="font-size:3.2cqh;margin-top:2.2cqh">
-        Julia is uniquely placed to be a quantum programming language — I won't argue it
-        abstractly. Watch for six levers.
+      <p class="muted center small" style="margin-top:1.4cqh;letter-spacing:0.05em">
+        Grover · Shor · Deutsch–Jozsa · phase estimation — every one of them starts
+        from this sentence. The papers never say where the oracle comes from.
       </p>
     </div>
-  </div>
-</section>
-
-<section class="slide" id="s4" data-title="① The compiler is a library"
-         data-band="off"
-         data-notes="Lever ① — this is the slide the whole talk stands on. The build-2 aside is the FIRST thing to cut if behind.">
-  <h2 class="frametitle">① The compiler is a library<span class="rule"></span></h2>
-  <div class="body">
-<pre><code>ir_string = sprint(io -&gt; code_llvm(io, f, arg_types;
-                       debuginfo = :none, optimize, dump_module = true))
-mod = parse(LLVM.Module, ir_string)
-</code></pre>
-    <p style="font-size:3cqh;margin-top:2cqh">
-      A runtime function value in — the compiler's IR out. In-process.
-      While <span class="mono">f</span> is still callable.
-    </p>
-    <div class="build">
-      <p class="muted" style="margin-top:2cqh">
-        C++: write a clang plugin. Python: there is no IR. Julia: two lines, and it works
-        for anything that reaches LLVM.
+    <div class="build" style="margin-top:2.6cqh">
+      <p class="mono center" style="font-size:2.5cqh">
+        your ordinary <span class="gold">f</span>&nbsp; →&nbsp; Bennett.jl&nbsp; →&nbsp;
+        reversible gates&nbsp; →&nbsp; controlled&nbsp; →&nbsp; <span class="gold">oracle(f, x)</span>
       </p>
-    </div>
-    <div class="build">
-      <p class="small" style="margin-top:2cqh;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.6cqh 2cqh">
-        Julia 1.12 outlines slow paths — some closures have no <span class="mono">.instance</span>
-        to compile. Fix: rebuild <span class="mono">InteractiveUtils._dump_function</span> from
-        <span class="mono">Base._which</span> + <span class="mono">specialize_method</span> +
-        <span class="mono">typeinf_code</span>. The reflection stack is just more Julia you can call.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s5" data-title="② Dispatch is the lowering table"
-         data-band="off"
-         data-notes="In a C++ compiler this is a 400-case switch.">
-  <h2 class="frametitle">② Dispatch is the lowering table<span class="rule"></span></h2>
-  <div class="body">
-<pre><code>_lower_inst!(ctx, inst::IRBinOp,  …) = lower_binop!(…)
-_lower_inst!(ctx, inst::IRICmp,   …) = lower_icmp!(…)
-_lower_inst!(ctx, inst::IRSelect, …) = lower_select!(…)
-_lower_inst!(ctx, inst::IRPhi,    …) = lower_phi!(…)
-<span class="muted"># … 13 instruction types, 13 methods …</span>
-_lower_inst!(ctx, inst::IRInst, …) =
-    error("no lowering for $(typeof(inst))")
-</code></pre>
-    <div class="build">
-      <p style="margin-top:2.4cqh">
-        No switch. No visitor. Adding an instruction = adding a method — from any package.
-        The catch-all's only job is to be loud.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s6" data-title="③ The entire simulator"
-         data-band="off"
-         data-notes="When someone asks what the gate set is, I don't have a spec document. I have this file.">
-  <h2 class="frametitle">③ The entire simulator<span class="rule"></span></h2>
-  <div class="body">
-<pre style="font-size:2.6cqh;overflow-x:auto"><code>@inline apply!(b, g::NOTGate)     = (b[g.target] ⊻= true;                          nothing)
-@inline apply!(b, g::CNOTGate)    = (b[g.target] ⊻= b[g.control];                  nothing)
-@inline apply!(b, g::ToffoliGate) = (b[g.target] ⊻= b[g.control1] &amp; b[g.control2]; nothing)
-</code></pre>
-    <div class="build">
-      <p style="font-size:3.2cqh;margin-top:3cqh">
-        This is not an excerpt. This is the simulator.
-      </p>
-      <p class="muted" style="margin-top:1.2cqh">
-        union-splitting on three concrete gate types — a 28k-gate circuit simulates with
-        &lt;200 KiB allocated.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s7" data-title="The theorem is a for-loop"
-         data-band="live"
-         data-notes="OPEN IN SILENCE — let the animation run ~5s before speaking. Cost law: 2× gates + one ancilla per output bit. Then the live equality. Backup stepper on key S if Q&amp;A wants gate-by-gate.">
-  <h2 class="frametitle">The theorem is a for-loop<span class="rule"></span></h2>
-  <div class="body">
-    <div style="display:flex;gap:2.4cqw;align-items:flex-start">
-      <figure class="figure-card" style="flex:0 0 55%;margin:0">{{SVG:bennett}}</figure>
-      <div style="flex:1 1 45%;min-width:0">
-<pre style="font-size:2.2cqh;overflow-x:auto"><code>append!(all_gates, lr.gates)             <span class="muted"># compute</span>
-_emit_copy_gates!(all_gates,             <span class="muted"># copy the answer out</span>
-                  lr.output_wires, copy_wires)
-for i in length(lr.gates):-1:1           <span class="muted"># uncompute</span>
-    push!(all_gates, lr.gates[i])
-end
-</code></pre>
-        <div class="build">
-          <p style="font-size:3.4cqh;margin-top:2cqh">
-            Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a
-            negative step.
-          </p>
-        </div>
-        <div class="build">
-          <p class="mono green" style="margin-top:1.8cqh">
-            julia&gt; gs[14:23] == reverse(gs[1:10])<br>true
-          </p>
-          <p class="muted small" style="margin-top:0.6cqh">
-            — and it's a doctest: CI fails if the theorem does.
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-  <template class="shadow-term">
-julia&gt; c1 = reversible_compile(x -&gt; x + UInt8(1), UInt8; bit_width=3, add=:ripple, fold_constants=true)
-ReversibleCircuit: 23 gates (NOT=6, CNOT=15, Toffoli=2) · 16 wires · 10 ancillae · depth 9
-
-julia&gt; gs = c1.gates; gs[14:23] == reverse(gs[1:10])
-true
-  </template>
-</section>
-
-<section class="slide" id="s8" data-title="What arithmetic costs"
-         data-band="off"
-         data-notes="sin costs ~175× the Float64 addition (11,027,852 vs 63,058 gates) and ≈23,000× the 482-gate Int8 polynomial — and is still ≤1 ULP. Measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
-  <h2 class="frametitle">What arithmetic costs<span class="rule"></span></h2>
-  <div class="body">
-    <div class="component" data-component="costbars"></div>
-    <div class="build">
-      <p class="small" style="margin-top:1.6cqh;font-size:2.4cqh">
-        QCLA 32-bit multiply — Toffoli-depth 56 vs 180 schoolbook ·
-        QROM T-count exactly 4(L−1), width-independent (matches Babbush–Gidney) ·
-        shadow-memory store 24 CNOT vs a 7,122-gate MUX
-      </p>
-      <p class="gold small" style="margin-top:1cqh;font-size:2.4cqh">
-        SHA-256 round: 1,632 Toffoli vs hand-optimized 683 — ~2.4× worse.
-        It's in our own benchmark table.
+      <p class="small muted center" style="margin-top:1cqh">
+        the rest of this talk walks this arrow, left to right
       </p>
     </div>
   </div>

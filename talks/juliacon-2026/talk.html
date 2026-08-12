@@ -93,14 +93,14 @@ body{
   position:absolute; inset:0;
   display:none;
   flex-direction:column;
-  /* right padding clears the badge rail; bottom clears the 26cqh band */
-  padding:6cqh 11cqw 29cqh 6cqw;
+  /* bottom padding clears the 26cqh terminal band */
+  padding:6cqh 6cqw 29cqh 6cqw;
   overflow:hidden;
   font-size:var(--f-body);
   line-height:1.5;
 }
 .slide.current{display:flex}
-.slide.wide{padding-right:6cqw}  /* opt out of the rail gutter (title, figures) */
+.slide.wide{padding-right:6cqw}  /* kept for compatibility; same as default now */
 .slide.backup{}                  /* backups differ only in the linear order */
 
 .frametitle{
@@ -306,57 +306,6 @@ figcaption{color:var(--muted);font-size:var(--f-small);margin-top:.9cqh}
 }
 .component button:hover,.deck-btn:hover{border-color:var(--purple);color:var(--ink-strong)}
 
-/* ---- badge rail -------------------------------------------------------- */
-#rail{
-  position:absolute;
-  right:1.6cqw; top:7cqh; bottom:29cqh;
-  z-index:30;
-  width:7.4cqw;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:1.4cqh;
-  pointer-events:none;
-}
-.badge{display:flex;flex-direction:column;align-items:center;gap:.35cqh;width:100%}
-.badge .chip{
-  width:5.2cqh;height:5.2cqh;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:2.6cqh;font-weight:700;line-height:1;
-  border:1px solid var(--line);
-  color:var(--muted);
-  background:transparent;
-  transition:background-color 300ms ease,color 300ms ease,border-color 300ms ease;
-}
-.badge .chip-label{
-  font-size:1.7cqh;line-height:1.15;text-align:center;
-  color:var(--muted);
-  transition:color 300ms ease;
-  overflow-wrap:anywhere;
-}
-.badge[data-lever="1"]{--lit:var(--purple)}
-.badge[data-lever="2"]{--lit:var(--blue)}
-.badge[data-lever="3"]{--lit:var(--green)}
-.badge[data-lever="4"]{--lit:var(--purple)}
-.badge[data-lever="5"]{--lit:var(--gold)}
-.badge[data-lever="6"]{--lit:var(--red)}
-.badge.lit .chip{
-  background:var(--lit);
-  border-color:var(--lit);
-  color:var(--ink-strong);
-}
-.badge.lit .chip-label{color:var(--ink)}
-.badge.glow .chip{animation:badge-glow 600ms ease-out 1}
-@keyframes badge-glow{
-  0%{box-shadow:0 0 0 0 var(--lit)}
-  60%{box-shadow:0 0 2.4cqh .5cqh var(--lit)}
-  100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}
-}
-#rail.flash .chip{animation:rail-flash 900ms ease-out 1}
-@keyframes rail-flash{
-  0%{border-color:var(--line)}
-  35%{border-color:var(--lit);box-shadow:0 0 1.6cqh 0 var(--lit)}
-  100%{border-color:var(--line);box-shadow:0 0 0 0 rgba(0,0,0,0)}
-}
-
 /* ---- terminal band ----------------------------------------------------- */
 #band{
   position:absolute;left:0;right:0;bottom:0;z-index:35;
@@ -478,7 +427,7 @@ body.still *,body.still *::before,body.still *::after{
     position:static;width:auto;height:auto;container-type:normal;overflow:visible;
   }
   #progress,#help,#notes,#timer,#counter{display:none !important}
-  #rail,#band{display:none !important}
+  #band{display:none !important}
   .slide{
     display:flex !important;
     position:relative !important;inset:auto !important;
@@ -501,11 +450,14 @@ body.still *,body.still *::before,body.still *::after{
 
     <div id="progress" aria-hidden="true"></div>
 
-<!-- slides-a.html — slides s0–s8 (agent SLIDES-A). Fragment only: no html/head/body. -->
+<!-- slides-a.html — slides s0–s7. Fragment only: no html/head/body.
+     Part 1 of the talk: the why. One Sturm design decision per slide,
+     each paired with the Julia feature that carried it. Every snippet is
+     real code from the repos' committed tests (paths in the spec). -->
 
 <section class="slide" id="s0" data-title="Given an Oracle for f"
          data-band="off"
-         data-notes="Terminal already warm, docked bottom. Say nothing about it.">
+         data-notes="Terminal is warm and docked. Don't mention it. The demo comes in the second half — the first half is the why.">
   <h2 class="frametitle" style="font-size:7cqh;line-height:1.12">
     <span class="small muted" style="display:block;font-size:2.6cqh;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:1.2cqh">JuliaCon 2026</span>
     <span class="gold">Given</span> an Oracle for <span class="serif" style="font-style:italic">f</span><span class="rule"></span>
@@ -519,7 +471,7 @@ body.still *,body.still *::before,body.still *::after{
     </div>
     <div class="stack">
       <p class="lead mono">Sturm.jl · Bennett.jl · BennettVM.jl</p>
-      <p class="muted">a quantum language · a reversible compiler · a reversible VM</p>
+      <p class="muted">a quantum language · a reversible compiler · a reversible interpreter</p>
     </div>
     <p class="small muted" style="margin-top:4.4cqh">
       Tobias J. Osborne — Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
@@ -527,220 +479,240 @@ body.still *,body.still *::before,body.still *::after{
   </div>
 </section>
 
-<section class="slide" id="s1" data-title="The word"
+<section class="slide" id="s1" data-title="What I wanted"
          data-band="off"
-         data-notes="Every quantum algorithm starts here. You don't need the equation — only the word under it. Given. That word is where quantum software dies. f is ordinary code — x²+3x+1, SHA-256, your loss function — and every framework answers it with a circuit-drawing API and good luck.">
-  <h2 class="frametitle">The word<span class="rule"></span></h2>
-  <div class="body center">
-    <p class="serif" style="font-style:italic;font-size:6cqh;margin-top:6cqh;letter-spacing:0.01em">
+         data-notes="No framework names, no dunking — the left side is every mainstream toolkit, including our own first attempt. The point is a feeling: diagrams vs programs.">
+  <h2 class="frametitle">What I wanted<span class="rule"></span></h2>
+  <div class="body">
+    <p class="lead">To write quantum programs in the language I already write.</p>
+    <div class="cols" style="margin-top:1.2cqh">
+      <div class="col">
+        <p class="small muted">how most quantum software looks:</p>
+<pre><code>circuit.h(0)
+circuit.cx(0, 1)
+circuit.measure([0, 1])</code></pre>
+        <p class="small muted">you assemble a diagram, gate by gate</p>
+      </div>
+      <div class="col">
+        <p class="small muted">what I was hoping for:</p>
+<pre><code>q = QBool(0.5)      <span class="c"># a fair quantum coin</span>
+r = false ⊻ q       <span class="c"># a second bit, correlated</span>
+Bool(q), Bool(r)    <span class="c"># measured — they always agree</span></code></pre>
+        <p class="small muted">a program: values, operators, scope</p>
+      </div>
+    </div>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Sturm.jl is a handful of design decisions about how quantum programs should read.
+        The first part of this talk walks through them, one at a time —
+        each with the Julia feature that made it work.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s2" data-title="Quantum data is a value"
+         data-band="off"
+         data-notes="Decision 1. QInt is deliberately NOT an Integer subtype — a comparison returns a quantum bool, so pretending would lie. 'Without pretending to be one' is the honest phrase.">
+  <h2 class="frametitle">Quantum data is a value, not a wire<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>x = QInt{4}(3)     <span class="c"># a 4-bit quantum integer</span>
+add!(x, 2)         <span class="c"># |3⟩ → |5⟩, in place</span>
+superpose!(x)      <span class="c"># all sixteen values at once</span>
+s = x + 2          <span class="c"># ordinary arithmetic — a fresh register comes back</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        The width lives in the type, so every operation is specialized at compile
+        time. Comparisons work too — <span class="mono">x &lt; y</span> just returns a
+        <em>quantum</em> bool, because that's what it is.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: user-defined types are first-class citizens. A quantum integer
+        can behave like a number — without pretending to be one.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s3" data-title="Measurement is a conversion"
+         data-band="off"
+         data-notes="Decision 2. The law Bool(QBool(b)) == b is a named test in the suite. Measurement really does consume the state; the types just stopped pretending otherwise.">
+  <h2 class="frametitle">Crossing the boundary is a type conversion<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>q = QBool(0.7)     <span class="c"># classical → quantum: prepare</span>
+b = Bool(q)        <span class="c"># quantum → classical: measure</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Measurement <strong>consumes</strong>. Use <span class="mono">q</span> after
+        this and you get an error — not a silently wrong answer.
+      </p>
+      <p class="muted small" style="margin-top:1cqh">
+        And the round trip is a law with a test:
+        <span class="mono">Bool(QBool(b)) == b</span>, for both values of
+        <span class="mono">b</span>, every CI run.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: constructors already <em>are</em> the conversion idiom.
+        The most consequential operation in quantum mechanics needed no new syntax.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s4" data-title="Scope is physical"
+         data-band="off"
+         data-notes="Decision 3. Discarding a qubit is a real physical operation (the environment keeps its half). GC 'eventually' would be a physics bug. The do-block IS a try/finally.">
+  <h2 class="frametitle">Scope is physical<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>eager(4) do ctx
+    q = QBool(0.5)      <span class="c"># a local qubit</span>
+    r = false ⊻ q       <span class="c"># quantum scratch</span>
+    Bool(q)             <span class="c"># this value leaves the block</span>
+end                     <span class="c"># ← r is discarded exactly here</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Discarding a qubit is a physical operation — the environment keeps its half
+        of any correlation. So it has to happen at a definite moment, not whenever
+        a garbage collector gets around to it.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: a <span class="mono">do</span>-block is a genuine
+        <span class="mono">try</span>/<span class="mono">finally</span>. Scope exit
+        is deterministic — so we could afford to make it mean something.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s5" data-title="Control flow can be quantum"
+         data-band="off"
+         data-notes="Decision 4. when() is a plain function taking a closure — no macro. The measurement-inside error is a real test (test_m5_when.jl). Both branches continue in superposition.">
+  <h2 class="frametitle">Control flow can be quantum<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>when(c) do          <span class="c"># `if` — but c is a qubit</span>
+    add!(x, 3)      <span class="c"># happens in the branch where c is 1</span>
+end                 <span class="c"># both branches carry on, in superposition</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        Inside the block the rules tighten: measuring in there is physically
+        meaningless, so trying it raises an error — at the exact call, with a
+        message that says why.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: <span class="mono">do</span>-block syntax lets a brand-new control
+        construct read as if it had always been in the language. <span class="mono">when</span>
+        is a plain function taking a closure — not a macro.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s6" data-title="What physics forbids, dispatch forbids"
+         data-band="off"
+         data-notes="Decision 5. Protect wraps a channel in error correction; two independent no-go theorems say you can't condition that on a qubit. We didn't write a checker — we didn't write the method. ~5:00 checkpoint at the end of this slide.">
+  <h2 class="frametitle">What physics forbids, dispatch forbids<span class="rule"></span></h2>
+  <div class="body">
+<pre style="margin-top:1.2cqh"><code style="font-size:3.0cqh;line-height:1.5"><span class="p">julia&gt;</span> ctrl(Protect(enc))
+<span class="r">ERROR: MethodError: no method matching ctrl(::Protect{…})</span></code></pre>
+    <div class="build">
+      <p style="margin-top:2.2cqh">
+        There is a theorem that you cannot take an error-corrected process and
+        condition it on a qubit. In most systems that lives in the documentation.
+        Here it's a method that doesn't exist.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.6cqh">
+        Why Julia: we didn't write a checker or a linter. We just didn't write the
+        method — and the error message points at the exact call.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s7" data-title="Given an oracle for f"
+         data-band="off"
+         data-notes="Part 2 opens. Translate the equation in plain words before anything else. 'Given' hides forty years of work — say it kindly, not triumphantly.">
+  <h2 class="frametitle">“<span class="gold">Given</span> an oracle for <span class="serif" style="font-style:italic">f</span> …”<span class="rule"></span></h2>
+  <div class="body">
+    <p class="serif center" style="font-style:italic;font-size:4.6cqh;margin-top:1.2cqh;letter-spacing:0.01em">
       <span>O</span><sub style="font-size:0.6em">f</sub>
       <span>&nbsp;|x⟩|y⟩&nbsp;=&nbsp;|x⟩|y&nbsp;⊕&nbsp;f(x)⟩</span>
     </p>
-    <div class="build">
-      <p class="serif" style="font-style:italic;font-size:3.4cqh;margin-top:4.6cqh">
-        “<span class="gold">Given</span> an oracle for <span style="font-style:italic">f</span> …”
-      </p>
-    </div>
-    <div class="build">
-      <p class="muted small" style="margin-top:3.2cqh;letter-spacing:0.06em">
-        Grover · Shor · Deutsch–Jozsa · phase estimation · QSVT
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s2" data-title="The answer, immediately"
-         data-band="live"
-         data-notes="TYPE IT LIVE (↑+Enter). ~0.2 s warm — measured. 'That's an ordinary Julia function; that's its LLVM IR turned into Toffolis. Nothing on this screen is a quantum library.' The Int8(3) is Julia promotion, not ceremony.">
-  <h2 class="frametitle">The answer, immediately<span class="rule"></span></h2>
-  <div class="body">
-<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
-
-c = reversible_compile(f, Int8)
-</code></pre>
-    <div class="build">
-      <p class="mono muted small" style="margin-top:2.4cqh">
-        ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae
-      </p>
-    </div>
-    <div class="build">
-      <p style="font-size:4.6cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:3.4cqh">
-        Every Julia function is already a quantum gate.
-      </p>
-      <p class="muted serif" style="font-style:italic;font-size:3cqh;margin-top:1cqh">
-        you just have to run it backwards.
-      </p>
-    </div>
-  </div>
-  <template class="shadow-term">
-julia&gt; f(x::Int8) = x*x + Int8(3)*x + Int8(1)
-f (generic function with 1 method)
-
-julia&gt; c = reversible_compile(f, Int8)
-ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168)
-  depth 89 · Toffoli-depth 36 · 249 ancillae
-  </template>
-</section>
-
-<section class="slide" id="s3" data-title="Three packages, one arrow"
-         data-band="off"
-         data-notes="Bennett gets the next seven minutes. Sturm is the language it feeds. BennettVM gets forty-five seconds and earns them.">
-  <h2 class="frametitle">Three packages, one arrow<span class="rule"></span></h2>
-  <div class="body">
-    <figure class="figure-card" style="width:100%"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-  <defs>
-    <marker id="pipe-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
-    </marker>
-  </defs>
-
-  <rect x="2" y="2" width="956" height="246" rx="14" fill="#fbfbfe" stroke="#e6e8eb" stroke-width="1"/>
-  <text x="480" y="34" text-anchor="middle" font-size="13" fill="#57606a">Plain Julia in &#8594; reversible circuit out</text>
-
-  <!-- main pipeline row -->
-  <!-- N1: source -->
-  <rect x="20" y="62" width="150" height="58" rx="10" fill="#efe7f7" stroke="#9558B2" stroke-width="1.6"/>
-  <text x="95" y="88" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">f(x::Int8)</text>
-  <text x="95" y="106" text-anchor="middle" font-size="10.5" fill="#6e7781">Julia &#183; C &#183; Rust</text>
-
-  <!-- N2: LLVM IR -->
-  <rect x="215" y="62" width="135" height="58" rx="10" fill="#fdeaea" stroke="#f24f4f" stroke-width="1.6"/>
-  <text x="282" y="96" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">LLVM IR</text>
-
-  <!-- N3: ParsedIR -->
-  <rect x="405" y="62" width="135" height="58" rx="10" fill="#e9effb" stroke="#7aa2f7" stroke-width="1.6"/>
-  <text x="472" y="96" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">ParsedIR</text>
-
-  <!-- N4: gates -->
-  <rect x="595" y="62" width="150" height="58" rx="10" fill="#e7f6ec" stroke="#2ea043" stroke-width="1.6"/>
-  <text x="670" y="88" text-anchor="middle" font-size="14" font-weight="600" fill="#1f2328">gates</text>
-  <text x="670" y="106" text-anchor="middle" font-size="10.5" fill="#6e7781">NOT &#183; CNOT &#183; Toffoli</text>
-
-  <!-- N5: circuit -->
-  <rect x="800" y="62" width="142" height="58" rx="10" fill="#dff3e6" stroke="#2ea043" stroke-width="2"/>
-  <text x="871" y="88" text-anchor="middle" font-size="14" font-weight="700" fill="#1f2328">Reversible</text>
-  <text x="871" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="#1f2328">Circuit</text>
-
-  <!-- arrows + stage captions -->
-  <line x1="170" y1="91" x2="213" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
-  <text x="191" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">code_llvm</text>
-
-  <line x1="350" y1="91" x2="403" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
-  <text x="376" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">extract</text>
-
-  <line x1="540" y1="91" x2="593" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
-  <text x="566" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">lower</text>
-
-  <line x1="745" y1="91" x2="798" y2="91" stroke="#57606a" stroke-width="1.6" marker-end="url(#pipe-arrow)"/>
-  <text x="771" y="82" text-anchor="middle" font-size="9" font-style="italic" fill="#6e7781">bennett</text>
-
-  <!-- VM fork from ParsedIR -->
-  <line x1="472" y1="120" x2="472" y2="184" stroke="#e8920c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#pipe-arrow)"/>
-  <text x="484" y="152" font-size="9" font-style="italic" fill="#b06a00">target = :reversible_vm</text>
-
-  <rect x="360" y="184" width="300" height="50" rx="10" fill="#fff3e0" stroke="#e8920c" stroke-width="1.6"/>
-  <text x="510" y="206" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1f2328">BennettVM &#8594; VMProgram</text>
-  <text x="510" y="223" text-anchor="middle" font-size="10.5" fill="#6e7781">reversible interpreter &#183; run! / unrun!</text>
-
-  <!-- outputs of circuit -->
-  <text x="871" y="150" text-anchor="middle" font-size="9.5" fill="#6e7781">simulate &#183; verify_reversibility</text>
-  <text x="871" y="164" text-anchor="middle" font-size="9.5" fill="#6e7781">gate_count &#183; toffoli_depth</text>
-  <text x="871" y="178" text-anchor="middle" font-size="9.5" fill="#6e7781">controlled</text>
-  <line x1="871" y1="120" x2="871" y2="138" stroke="#57606a" stroke-width="1.2" marker-end="url(#pipe-arrow)"/>
-</svg>
-</figure>
-    <p class="mono" style="font-size:2.6cqh;margin-top:1.8cqh">
-      f(x) → Bennett.jl → NOT/CNOT/Toffoli → controlled(·) → Sturm.jl: oracle(f, x)
-    </p>
-    <p class="mono muted small" style="margin-top:0.6cqh">
-      ↳ target = :reversible_vm → BennettVM.jl
+    <p class="center" style="margin-top:1cqh">
+      In words: a machine that takes <span class="mono">x</span> and <span class="mono">y</span>
+      and returns <span class="mono">x</span> and <span class="mono">y ⊻ f(x)</span>.
+      Your function, installed as a gate.
     </p>
     <div class="build">
-      <p style="font-size:3.2cqh;margin-top:2.2cqh">
-        Julia is uniquely placed to be a quantum programming language — I won't argue it
-        abstractly. Watch for six levers.
+      <p class="muted center small" style="margin-top:1.4cqh;letter-spacing:0.05em">
+        Grover · Shor · Deutsch–Jozsa · phase estimation — every one of them starts
+        from this sentence. The papers never say where the oracle comes from.
+      </p>
+    </div>
+    <div class="build" style="margin-top:2.6cqh">
+      <p class="mono center" style="font-size:2.5cqh">
+        your ordinary <span class="gold">f</span>&nbsp; →&nbsp; Bennett.jl&nbsp; →&nbsp;
+        reversible gates&nbsp; →&nbsp; controlled&nbsp; →&nbsp; <span class="gold">oracle(f, x)</span>
+      </p>
+      <p class="small muted center" style="margin-top:1cqh">
+        the rest of this talk walks this arrow, left to right
       </p>
     </div>
   </div>
 </section>
 
-<section class="slide" id="s4" data-title="① The compiler is a library"
-         data-band="off"
-         data-notes="Lever ① — this is the slide the whole talk stands on. The build-2 aside is the FIRST thing to cut if behind.">
-  <h2 class="frametitle">① The compiler is a library<span class="rule"></span></h2>
+<!-- slides-b.html — sections s8…s15 + the backups.
+     Fragment only: section elements, nothing else. frame.html owns the document.
+     Part 2 (Bennett: the result, then "you don't have to rewrite your code")
+     and part 3 (what's left). All numbers verified 2026-08-11 (spec appendix). -->
+
+<section class="slide" id="s8" data-title="A quantum computer can't forget" data-band="off"
+         data-notes="The tension slide, ~45 s. AND destroys its inputs; quantum mechanics only runs what can be undone. Land on 'that sounds like a rewrite' — s9 relieves it.">
+  <h2 class="frametitle">A quantum computer can't forget<span class="rule"></span></h2>
   <div class="body">
-<pre><code>ir_string = sprint(io -&gt; code_llvm(io, f, arg_types;
-                       debuginfo = :none, optimize, dump_module = true))
-mod = parse(LLVM.Module, ir_string)
-</code></pre>
-    <p style="font-size:3cqh;margin-top:2cqh">
-      A runtime function value in — the compiler's IR out. In-process.
-      While <span class="mono">f</span> is still callable.
-    </p>
+    <div class="cols" style="align-items:center">
+      <div class="col">
+<pre style="flex:0 0 auto"><code>a  b      a &amp; b
+<mark>0  0  →   0</mark>
+<mark>0  1  →   0</mark>
+<mark>1  0  →   0</mark>
+1  1  →   1</code></pre>
+      </div>
+      <div class="col">
+        <p>
+          Three different pasts, one output. Given the <span class="mono">0</span>,
+          the inputs are gone — <span class="mono">&amp;</span> deletes information,
+          and ordinary code does this on almost every line.
+        </p>
+      </div>
+    </div>
     <div class="build">
-      <p class="muted" style="margin-top:2cqh">
-        C++: write a clang plugin. Python: there is no IR. Julia: two lines, and it works
-        for anything that reaches LLVM.
+      <p style="margin-top:2cqh">
+        Quantum mechanics only runs operations you can <em>undo</em>. Every gate a
+        quantum computer performs is reversible — no exceptions.
       </p>
     </div>
     <div class="build">
-      <p class="small" style="margin-top:2cqh;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.6cqh 2cqh">
-        Julia 1.12 outlines slow paths — some closures have no <span class="mono">.instance</span>
-        to compile. Fix: rebuild <span class="mono">InteractiveUtils._dump_function</span> from
-        <span class="mono">Base._which</span> + <span class="mono">specialize_method</span> +
-        <span class="mono">typeinf_code</span>. The reflection stack is just more Julia you can call.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s5" data-title="② Dispatch is the lowering table"
-         data-band="off"
-         data-notes="In a C++ compiler this is a 400-case switch.">
-  <h2 class="frametitle">② Dispatch is the lowering table<span class="rule"></span></h2>
-  <div class="body">
-<pre><code>_lower_inst!(ctx, inst::IRBinOp,  …) = lower_binop!(…)
-_lower_inst!(ctx, inst::IRICmp,   …) = lower_icmp!(…)
-_lower_inst!(ctx, inst::IRSelect, …) = lower_select!(…)
-_lower_inst!(ctx, inst::IRPhi,    …) = lower_phi!(…)
-<span class="muted"># … 13 instruction types, 13 methods …</span>
-_lower_inst!(ctx, inst::IRInst, …) =
-    error("no lowering for $(typeof(inst))")
-</code></pre>
-    <div class="build">
-      <p style="margin-top:2.4cqh">
-        No switch. No visitor. Adding an instruction = adding a method — from any package.
-        The catch-all's only job is to be loud.
+      <p class="muted" style="margin-top:1.4cqh">
+        So your function can't run as-is. It has to become reversible first —
+        and that sounds like it means rewriting everything.
       </p>
     </div>
   </div>
 </section>
 
-<section class="slide" id="s6" data-title="③ The entire simulator"
-         data-band="off"
-         data-notes="When someone asks what the gate set is, I don't have a spec document. I have this file.">
-  <h2 class="frametitle">③ The entire simulator<span class="rule"></span></h2>
-  <div class="body">
-<pre style="font-size:2.6cqh;overflow-x:auto"><code>@inline apply!(b, g::NOTGate)     = (b[g.target] ⊻= true;                          nothing)
-@inline apply!(b, g::CNOTGate)    = (b[g.target] ⊻= b[g.control];                  nothing)
-@inline apply!(b, g::ToffoliGate) = (b[g.target] ⊻= b[g.control1] &amp; b[g.control2]; nothing)
-</code></pre>
-    <div class="build">
-      <p style="font-size:3.2cqh;margin-top:3cqh">
-        This is not an excerpt. This is the simulator.
-      </p>
-      <p class="muted" style="margin-top:1.2cqh">
-        union-splitting on three concrete gate types — a 28k-gate circuit simulates with
-        &lt;200 KiB allocated.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section class="slide" id="s7" data-title="The theorem is a for-loop"
-         data-band="live"
-         data-notes="OPEN IN SILENCE — let the animation run ~5s before speaking. Cost law: 2× gates + one ancilla per output bit. Then the live equality. Backup stepper on key S if Q&amp;A wants gate-by-gate.">
-  <h2 class="frametitle">The theorem is a for-loop<span class="rule"></span></h2>
+<section class="slide" id="s9" data-title="Bennett, 1973" data-band="live"
+         data-notes="OPEN IN SILENCE — let the animation run one loop (~5 s) before speaking. Then the three steps, slowly. Cost: 2× the gates plus scratch. The live equality closes it. ~8:00 checkpoint. Backup stepper on S for Q&amp;A.">
+  <h2 class="frametitle">Bennett, 1973: keep it, copy it, undo it<span class="rule"></span></h2>
   <div class="body">
     <div style="display:flex;gap:2.4cqw;align-items:flex-start">
       <figure class="figure-card" style="flex:0 0 55%;margin:0"><svg class="smil" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 912 534" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
@@ -1017,26 +989,25 @@ _lower_inst!(ctx, inst::IRInst, …) =
   <text x="456" y="518" text-anchor="middle" font-size="13" fill="#1f2328" opacity="0">inputs intact &#183; answer = 4 &#183; every ancilla back to 0 &#8212; verify_reversibility(c) == true<animate attributeName="opacity" dur="16.849999999999998s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0.0;0.822;0.8243;0.9852;0.9875;1.0"/></text>
 </svg>
 </figure>
-      <div style="flex:1 1 45%;min-width:0">
-<pre style="font-size:2.2cqh;overflow-x:auto"><code>append!(all_gates, lr.gates)             <span class="muted"># compute</span>
-_emit_copy_gates!(all_gates,             <span class="muted"># copy the answer out</span>
-                  lr.output_wires, copy_wires)
-for i in length(lr.gates):-1:1           <span class="muted"># uncompute</span>
-    push!(all_gates, lr.gates[i])
-end
-</code></pre>
+      <div style="flex:1 1 45%;min-width:0;display:flex;flex-direction:column;gap:0.9cqh">
+        <ol style="display:flex;flex-direction:column;gap:0.8cqh;font-size:2.2cqh">
+          <li><span class="blue mono">compute</span> — keep every intermediate result instead of overwriting</li>
+          <li><span class="green mono">copy</span> — copy the answer onto fresh bits (copying is reversible)</li>
+          <li><span class="purple mono">uncompute</span> — run step 1 backwards; every scratch bit returns to zero</li>
+        </ol>
         <div class="build">
-          <p style="font-size:3.4cqh;margin-top:2cqh">
-            Every gate is its own inverse — Bennett's 1973 theorem is a for-loop with a
-            negative step.
+          <p class="small" style="margin-top:0.6cqh">
+            Cost: about twice the gates, plus scratch. Not a rewrite —
+            a <em>transformation</em>. In Bennett.jl, step 3 is a for-loop
+            with a negative step.
           </p>
         </div>
         <div class="build">
-          <p class="mono green" style="margin-top:1.8cqh">
+          <p class="mono green" style="margin-top:0.4cqh;font-size:2.2cqh">
             julia&gt; gs[14:23] == reverse(gs[1:10])<br>true
           </p>
-          <p class="muted small" style="margin-top:0.6cqh">
-            — and it's a doctest: CI fails if the theorem does.
+          <p class="muted tiny" style="margin-top:0.3cqh">
+            the uncompute half really is the compute half, backwards — checked in CI
           </p>
         </div>
       </div>
@@ -1051,84 +1022,75 @@ true
   </template>
 </section>
 
-<section class="slide" id="s8" data-title="What arithmetic costs"
-         data-band="off"
-         data-notes="sin costs ~175× the Float64 addition (11,027,852 vs 63,058 gates) and ≈23,000× the 482-gate Int8 polynomial — and is still ≤1 ULP. Measured this week, 38.8 s compile. Then the honesty row: 'a benchmark table you can't lose in is a marketing document.'">
-  <h2 class="frametitle">What arithmetic costs<span class="rule"></span></h2>
+<section class="slide" id="s10" data-title="You don't have to rewrite your code" data-band="live"
+         data-notes="TYPE IT LIVE (↑+Enter), ~0.2 s warm. Point at f: no macro, no special type, still callable. The reflection line is the quiet Julia payoff — don't oversell it.">
+  <h2 class="frametitle">You don't have to rewrite your code<span class="rule"></span></h2>
+  <div class="body">
+<pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+
+c = reversible_compile(f, Int8)</code></pre>
+    <div class="build">
+      <p class="mono muted small" style="margin-top:1.6cqh">
+        ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168) · depth 89 · 249 ancillae
+      </p>
+    </div>
+    <div class="build">
+      <p style="margin-top:2cqh">
+        No macros. No special types. <span class="mono">f</span> is unchanged — you
+        can still call it. The compiler reads the same LLVM IR Julia was already
+        going to run, and lowers it gate by gate.
+      </p>
+    </div>
+    <div class="build">
+      <p class="muted" style="margin-top:1.4cqh">
+        Why Julia: <span class="mono">code_llvm</span> hands any package the
+        compiler's view of any function, in-process, in two lines. In most languages
+        that step alone is a research project.
+      </p>
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; f(x::Int8) = x*x + Int8(3)*x + Int8(1)
+f (generic function with 1 method)
+
+julia&gt; c = reversible_compile(f, Int8)
+ReversibleCircuit: 482 gates (NOT=14, CNOT=300, Toffoli=168)
+  depth 89 · Toffoli-depth 36 · 249 ancillae
+  </template>
+</section>
+
+<section class="slide" id="s11" data-title="Even code you didn't write" data-band="off"
+         data-notes="Three advances reveal the bars; the axis rescales each time. The sin is Base.sin, unchanged, ≤1 ULP, 38.8 s compile — measured. Then the honesty build: we lose to hand-tuned SHA-256 by ~2.4× and say so.">
+  <h2 class="frametitle">Even code you didn't write<span class="rule"></span></h2>
   <div class="body">
     <div class="component" data-component="costbars"></div>
     <div class="build">
-      <p class="small" style="margin-top:1.6cqh;font-size:2.4cqh">
-        QCLA 32-bit multiply — Toffoli-depth 56 vs 180 schoolbook ·
-        QROM T-count exactly 4(L−1), width-independent (matches Babbush–Gidney) ·
-        shadow-memory store 24 CNOT vs a 7,122-gate MUX
+      <p class="small" style="margin-top:1.4cqh">
+        That <span class="mono">sin</span> is <span class="mono">Base.sin</span> —
+        Julia's own library function, compiled unchanged, within 1 ULP of the original.
       </p>
-      <p class="gold small" style="margin-top:1cqh;font-size:2.4cqh">
-        SHA-256 round: 1,632 Toffoli vs hand-optimized 683 — ~2.4× worse.
-        It's in our own benchmark table.
+      <p class="small muted" style="margin-top:0.8cqh">
+        Honesty: hand-crafted circuits still win. Our SHA-256 round costs 1,632
+        Toffolis against a hand-optimized 683 — about 2.4× worse, and that row stays
+        in our own benchmark table. The point isn't beating the experts.
+        It's not <em>needing</em> to be one.
       </p>
     </div>
   </div>
 </section>
 
-<!-- slides-b.html — agent SLIDES-B — sections s9…s16 + the five backups.
-     Fragment only: section elements, nothing else. frame.html owns the document. -->
-
-<section class="slide" id="s9" data-title="0.5 + 0.5 == 0.0" data-band="off"
-         data-notes="War story, 50 s budget. Sheddable line: the hostile-review aside (Carmack persona caught Pkg.test() at 4m06 vs a claimed ~90 s).">
-  <h2 class="frametitle"><span class="mono">0.5 + 0.5 == 0.0</span><span class="rule"></span></h2>
+<section class="slide" id="s12" data-title="…and it becomes quantum" data-band="live"
+         data-notes="The component consumes 7 advances: prepare, 4 gate chunks, kets, verdict. The browser really is running the compiled 20-gate circuit on both branches. Live beat: the three simulate/show_ket lines.">
+  <h2 class="frametitle">…and it becomes quantum<span class="rule"></span></h2>
   <div class="body">
-
-    <div class="center mono" style="font-size:5.5cqh;line-height:1.2;margin:4.5cqh 0 1cqh;">0.5 + 0.5 <span class="red">==</span> 0.0</div>
-
-    <div class="build stack" style="display:flex;flex-direction:column;gap:0.7cqh;margin-top:5cqh;">
-      <div>The datapath is branchless — every path computes, always.</div>
-      <div>A subtraction-path condition wire fired on the addition path.</div>
-      <div>VLSI has a name for this: <strong>false-path sensitization</strong> (Bergamaschi, 1992).</div>
-    </div>
-
-    <div class="build muted" style="margin-top:2.6cqh;max-width:78cqw;">No published system converts a multi-way φ-node from an arbitrary CFG into a correct reversible MUX tree. That part is uncharted.</div>
-
-  </div>
-</section>
-
-<section class="slide" id="s10" data-title="A loop wants an interpreter" data-band="off"
-         data-notes="BennettVM's one beat, 45 s. Backup #vmtape if Q&amp;A.">
-  <h2 class="frametitle">A loop wants an interpreter<span class="rule"></span></h2>
-  <!-- Tight body: the six children + the pre's own box need every cqh here.
-       The default 1.8cqh body gap clipped the pre's bottom padding. -->
-  <div class="body" style="gap:1.0cqh;">
-
-    <div>Collatz as a circuit (<span class="mono">max_loop_iterations = 20</span>):</div>
-    <div class="mono" style="font-size:3.4cqh;margin:0.6cqh 0 0.2cqh;"><strong>14,074 gates · 2,320 Toffoli · 8,868 ancillae</strong></div>
-    <div class="muted small" style="margin-bottom:1.0cqh;">bounded, MUX-frozen, convergence-guarded. It works. It&rsquo;s also the wrong shape.</div>
-
-<pre style="flex:0 0 auto;padding:1.6cqh 1.8cqw;"><code>vm = reversible_compile(collatz_steps, Int64; target = :reversible_vm)
-run!(rs, vm);  unrun!(rs, vm)
-rs.current == rs.initial     <span class="muted"># true — bit-for-bit</span>
-isempty(rs.history)          <span class="muted"># true — the tape is drained</span></code></pre>
-
-    <div class="build" style="margin-top:1.2cqh;">&ldquo;every ancilla returns to zero&rdquo; becomes <span class="mono">isempty(history)</span> — same theorem, different data structure.</div>
-
-    <div class="build muted small" style="margin-top:0.6cqh;">three-layer tape: injective steps log nothing · min-cut deltas (Enzyme&rsquo;s idea) · checkpoint+replay (rr&rsquo;s idea)</div>
-
-  </div>
-</section>
-
-<section class="slide" id="s11" data-title="I never wrote a quantum gate" data-band="live"
-         data-notes="THE SIGNATURE MOMENT. Live: three ↑+Enter lines. Then the deck's own sim: 'the deck is running the compiled circuit right now.' THREE-SECOND PAUSE after the headline. 10:00 hard checkpoint lands here.">
-  <h2 class="frametitle">I never wrote a quantum gate<span class="rule"></span></h2>
-  <div class="body">
-
-<div style="display:flex;align-items:baseline;gap:2cqw;flex-wrap:nowrap;">
+    <div style="display:flex;align-items:baseline;gap:2cqw;flex-wrap:nowrap;">
       <pre style="margin:0;padding:0.9cqh 1.4cqw;flex:0 0 auto;"><code style="font-size:2.0cqh;">cc = controlled(reversible_compile(x -&gt; !x, Bool))</code></pre>
-      <div class="muted" style="font-size:1.9cqh;white-space:nowrap;">NOT→CNOT · CNOT→Toffoli · Toffoli→3 Toffoli+ancilla</div>
+      <div class="muted" style="font-size:1.9cqh;white-space:nowrap;">controlled: NOT→CNOT · CNOT→Toffoli · Toffoli→3 Toffoli+ancilla</div>
     </div>
-
     <div class="component" data-component="entangle" style="margin:0.8cqh 0 0;"></div>
-
-    <div class="build center" style="font-size:3.8cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:0.6cqh;">I never wrote a quantum gate.</div>
-
+    <div class="build center" style="font-size:3.2cqh;margin-top:0.6cqh;">
+      One function call — <span class="mono">controlled(·)</span> — is the entire quantum lift.
+    </div>
   </div>
   <template class="shadow-term">
 julia&gt; simulate(cc, true, false)
@@ -1140,59 +1102,27 @@ julia&gt; show_ket(apply_as_permutation(cc, plus_control()))
   </template>
 </section>
 
-<section class="slide" id="s12" data-title="Teleportation, zero gates" data-band="shadow"
-         data-notes="OPTIONAL-A: sheddable in full (40 s). If kept and ahead of clock, run the 200-shot live beat — measured 0.25 s.">
-  <h2 class="frametitle">Teleportation, zero gates<span class="rule"></span></h2>
-  <div class="body" style="gap:0.8cqh;">
-
-    <div style="display:grid;grid-template-columns:56cqw 1fr;gap:1.6cqw;align-items:start;">
-
-<pre style="margin:0;flex:0 0 auto;"><code style="font-size:2.15cqh;">function teleport(ψ::QBool)
-    b = QBool(0.5)
-    c = false ⊻ b
-    b ⊻= ψ
-    m_phase = Bool(dual(ψ))
-    m_value = Bool(b)
-    m_value &amp;&amp; not!(c)
-    m_phase &amp;&amp; not!(dual(c))
-    return c
-end</code></pre>
-
-      <div style="display:grid;grid-template-rows:repeat(10,3.25cqh);font-size:2.0cqh;padding-top:2.0cqh;line-height:1.45;">
-        <div class="muted" style="grid-row:2;">← fair quantum coin</div>
-        <div class="muted" style="grid-row:3;">← Bell pair</div>
-        <div class="muted" style="grid-row:5;">← conjugate-basis readout — <span class="gold">CONSUMES ψ</span></div>
-        <div class="muted" style="grid-row:7 / span 2;">← ordinary conditionals — one in the dual view</div>
-      </div>
-
-    </div>
-
-    <div class="build serif center" style="font-style:italic;font-size:2.8cqh;margin-top:1.0cqh;">&ldquo;If your program reads like a circuit diagram, it is wrong.&rdquo;</div>
-
-    <div class="build muted small center" style="margin-top:0.5cqh;"><span class="mono">⊻=</span> mutates — against Julia precedent (#249, #3217) and correct here: no-cloning means no caller could expect a value.</div>
-
-  </div>
-  <template class="shadow-term">
-julia&gt; count(_ -&gt; teleport_ok(), 1:200)
-200
-# |+⟩ probe, X-basis readout: 200/200 deterministic — 0.25 s
-  </template>
-</section>
-
 <section class="slide" id="s13" data-title="The loop closes: oracle(f, x)" data-band="live"
-         data-notes="Here's the whole talk in five lines. f is the SAME ordinary function idea we compiled at 0:35. Live: two calls, ~2.1 s each, measured. If Orkan misbehaved in the green room: press D, keep walking.">
+         data-notes="Two live calls, ~2 s each. f here is the same kind of ordinary function we compiled three slides ago. ~11:30 checkpoint. If the machine misbehaves: press D, keep walking. Weakdep plumbing is Q&amp;A material, not slide material.">
   <h2 class="frametitle">The loop closes: <span class="mono">oracle(f, x)</span><span class="rule"></span></h2>
   <div class="body">
-
 <pre><code>function deutsch_jozsa(f, ::Val{N}) where {N}
     x = QInt{N}(0); superpose!(x)
     b = minus()
-<mark>    b ⊻= oracle(f, x)          <span class="muted"># ordinary Julia f, compiled by Bennett</span></mark>
-    return Int(dual(x)) == 0   <span class="muted"># one query</span>
+<mark>    b ⊻= oracle(f, x)          <span class="c"># ordinary Julia f, compiled by Bennett</span></mark>
+    return Int(dual(x)) == 0   <span class="c"># one query</span>
 end</code></pre>
-
-    <div class="build muted" style="margin-top:2.6cqh;max-width:82cqw;"><span class="mono">oracle(f, x)</span> crosses a weakdep extension — the only file in Sturm that names a Bennett type; <span class="mono">using Sturm</span> never pays LLVM&rsquo;s precompile. Both package seams are the same trick: a <span class="mono">Ref{Any}(nothing)</span> filled by the downstream package&rsquo;s <span class="mono">__init__</span>.</div>
-
+    <div class="build">
+      <p style="margin-top:2.2cqh">
+        Deutsch–Jozsa asks: is <span class="mono">f</span> constant, or balanced?
+        Classically you may have to call it again and again. This asks once.
+      </p>
+      <p class="muted" style="margin-top:1cqh">
+        And everything from the first half is on this screen: a quantum integer, a
+        do-nothing-special Julia function, one <span class="mono">⊻=</span> — and the
+        oracle the papers assumed we'd been given.
+      </p>
+    </div>
   </div>
   <template class="shadow-term">
 julia&gt; Sturm.eager(18) do _; deutsch_jozsa(dj_const, Val(2)); end
@@ -1203,64 +1133,65 @@ false
   </template>
 </section>
 
-<section class="slide" id="s14" data-title="Two lessons" data-band="off"
-         data-notes="50 s. Panel (b) is sheddable (25 s) — bridge straight to s15 with 'error correction is a higher-order function on channels — and here's what happens when you try to control one.'">
-  <h2 class="frametitle">Two lessons<span class="rule"></span></h2>
+<section class="slide" id="s14" data-title="What's left" data-band="off"
+         data-notes="Deliberately plain, no theatrics — this slide is where the talk earns trust. Don't rush it. The loop boundary is physics as far as we can tell, and that is interesting, not embarrassing.">
+  <h2 class="frametitle">What's left<span class="rule"></span></h2>
   <div class="body">
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2.4cqw;align-items:start;">
-
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
-        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">The marginals lied</div>
-        <div class="small">Our first teleport moved the value and dropped the phase. Its test passed — output statistics looked fine. The fixed one reads <strong>1024/1024</strong> on a probe where the broken one reads <strong>≈512</strong>.</div>
-        <div class="small gold" style="margin-top:1.2cqh;">Test the whole channel, not what leaks out of it.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2cqw 2cqw;align-items:stretch">
+      <div class="panel">
+        <div class="panel-title">Cost</div>
+        <div class="small">Hand-tuned circuits beat us — SHA-256 by ~2.4×. Closing
+        that gap is compiler work, and it has only begun.</div>
       </div>
-
-      <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:2.2cqh;">
-        <div style="font-size:3.2cqh;font-weight:700;letter-spacing:-0.015em;margin-bottom:1.2cqh;">Error correction is a function</div>
-<pre style="margin:0 0 1.2cqh;"><code style="font-size:2.1cqh;">Protect(enc)(physical_iid(enc, bit_flip(p)))
-<span class="muted"># channel in → channel out</span></code></pre>
-        <div class="small">pinned two-sided: helps below <span class="mono">p = ½</span>, hurts above — a sign-flipped decoder passes any one-sided test.</div>
+      <div class="panel">
+        <div class="panel-title">Loops without a bound</div>
+        <div class="small">A <span class="mono">while</span> with no static bound can't
+        be a fixed circuit. BennettVM.jl runs those reversibly — Collatz forward and
+        backward, bit for bit — but that kind of reversibility can't become a quantum
+        oracle. As far as we can tell, that boundary is physics, not engineering.</div>
       </div>
-
+      <div class="panel">
+        <div class="panel-title">Hardware</div>
+        <div class="small">Everything you saw ran on a simulator. Nothing has touched
+        a real device yet.</div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Error correction</div>
+        <div class="small">Works end-to-end for a toy code — encode, add noise, decode,
+        measurably better below threshold and honestly worse above it. The real codes
+        are next.</div>
+      </div>
     </div>
-
+    <div class="build">
+      <p class="muted small" style="margin-top:1.8cqh">
+        Also open: oracles over several registers at once, wider arithmetic, and
+        compile speed. None of it looks fundamental. All of it is work.
+      </p>
+    </div>
   </div>
 </section>
 
-<section class="slide" id="s15" data-title="The zinger" data-band="off"
-         data-notes="Read the error slowly. This is lever ⑥ and the Sturm thesis in one screen.">
-  <h2 class="frametitle">The zinger<span class="rule"></span></h2>
+<section class="slide" id="s15" data-title="Thank you" data-band="off"
+         data-notes="End on time. The code panel is the same f from s10, unchanged — let that land quietly. Questions go to the backups: S for the gate stepper, hash #teleport, #vmtape, #numbers-full, #pebbling.">
+  <h2 class="frametitle">Thank you<span class="rule"></span></h2>
   <div class="body">
-
-<pre style="margin-top:2cqh;"><code style="font-size:3.6cqh;line-height:1.5;"><span class="green">julia&gt;</span> ctrl(Protect(enc))
-<span class="red">ERROR: MethodError: no method matching ctrl(::Protect{…})</span></code></pre>
-
-    <div class="build" style="font-size:3.2cqh;margin-top:3cqh;max-width:84cqw;">Bădescu–Panangaden: a quantum <span class="mono">if</span> has no channel semantics. Gavorová et al.: controlled-<em>U</em> cannot be built from black-box <em>U</em>. In most frameworks that&rsquo;s documentation. Here it&rsquo;s a <span class="mono">MethodError</span>.</div>
-
-    <div class="build" style="font-size:4cqh;font-weight:700;letter-spacing:-0.015em;color:var(--ink-strong);margin-top:2.4cqh;">The no-go theorem and the method table are the same object.</div>
-
-  </div>
-</section>
-
-<section class="slide" id="s16" data-title="unchanged" data-band="off"
-         data-notes="If time is short: say only the last two lines and let the slide carry the rest.">
-  <h2 class="frametitle">unchanged<span class="rule"></span></h2>
-  <div class="body">
-
 <pre><code>f(x::Int8) = x*x + Int8(3)*x + Int8(1)
 
 c = reversible_compile(f, Int8)</code></pre>
-
-    <div class="build" style="margin-top:3.2cqh;">
-      <div style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;">That word &ldquo;given&rdquo; has been doing the work for forty years.</div>
-      <div class="gold" style="font-size:4.2cqh;font-weight:700;letter-spacing:-0.015em;margin-top:0.8cqh;">In Julia, it&rsquo;s a function call.</div>
+    <div class="build" style="margin-top:2.6cqh;">
+      <div style="font-size:3.8cqh;font-weight:700;letter-spacing:-0.015em;">
+        If you know Julia, you already know most of what's here.
+      </div>
+      <div class="gold" style="font-size:3.8cqh;font-weight:700;letter-spacing:-0.015em;margin-top:0.8cqh;">
+        That was the whole point.
+      </div>
     </div>
-
-    <div class="build muted" style="font-size:2.8cqh;margin-top:2cqh;">Ancillae restored to zero. Thank you.</div>
-
-    <div class="muted mono" style="font-size:2cqh;margin-top:2.4cqh;">github.com/tobiasosborne — Sturm.jl · Bennett.jl · BennettVM.jl · AGPL-3.0</div>
-
+    <div class="build muted" style="font-size:2.8cqh;margin-top:2cqh;">
+      Ancillae restored to zero. Thank you.
+    </div>
+    <div class="muted mono" style="font-size:2cqh;margin-top:2.4cqh;">
+      github.com/tobiasosborne — Sturm.jl · Bennett.jl · BennettVM.jl · AGPL-3.0 · issues and questions genuinely welcome
+    </div>
   </div>
 </section>
 
@@ -1270,7 +1201,6 @@ c = reversible_compile(f, Int8)</code></pre>
          data-notes="Key 0. The live machine is having a moment. Narrate over the recording at the same pace and keep walking; press B to return.">
   <h2 class="frametitle">Fallback — recorded run<span class="rule"></span></h2>
   <div class="body center">
-
     <!-- The recording is 960x776. It is sized by its OWN max-height (in cqh,
          so it tracks the stage) with width:auto — never by a fixed-height
          overflow:hidden wrapper, which cropped the bottom of the frame.
@@ -1279,23 +1209,52 @@ c = reversible_compile(f, Int8)</code></pre>
       <img alt="recorded demo run" class="recording" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB3aWR0aD0iOTYwIiBoZWlnaHQ9Ijc3Ni40MyI+PHJlY3Qgd2lkdGg9Ijk2MCIgaGVpZ2h0PSI3NzYuNDMiIHJ4PSI1IiByeT0iNSIgY2xhc3M9ImEiLz48c3ZnIHk9IjAlIiB4PSIwJSI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iNiIgZmlsbD0iI2ZmNWY1OCIvPjxjaXJjbGUgY3g9IjQwIiBjeT0iMjAiIHI9IjYiIGZpbGw9IiNmZmJkMmUiLz48Y2lyY2xlIGN4PSI2MCIgY3k9IjIwIiByPSI2IiBmaWxsPSIjMThjMTMyIi8+PC9zdmc+PHN2ZyBoZWlnaHQ9IjcxNi40MyIgdmlld0JveD0iMCAwIDkyIDcxLjY0MyIgd2lkdGg9IjkyMCIgeD0iMTUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIHk9IjUwIj48c3R5bGU+QGtleWZyYW1lcyBrezAle3RyYW5zZm9ybTp0cmFuc2xhdGVYKDApfTEuMzYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC05MnB4KX00LjA3JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTg0cHgpfTcuNDYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yNzZweCl9MTAuMTcle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0zNjhweCl9MTEuNTMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC00NjBweCl9MTQuOTIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC01NTJweCl9MTcuNjMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC02NDRweCl9MjAuNjgle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC03MzZweCl9MjguNDcle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC04MjhweCl9MzEuMTkle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC05MjBweCl9MzMuMjIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xMDEycHgpfTM3Ljk3JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTEwNHB4KX00MC42OCV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTExOTZweCl9NDMuMDUle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xMjg4cHgpfTQ4LjgxJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTM4MHB4KX01MS41MyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTE0NzJweCl9NTMuNTYle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xNTY0cHgpfTU3LjYzJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTY1NnB4KX02MC4zNCV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTE3NDhweCl9NjMuNzMle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0xODQwcHgpfTY2LjQ0JXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMTkzMnB4KX02OC40NyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTIwMjRweCl9NzMuMjIle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yMTE2cHgpfTc1LjkzJXt0cmFuc2Zvcm06dHJhbnNsYXRlWCgtMjIwOHB4KX03Ny45NyV7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoLTIzMDBweCl9ODIuNzEle3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yMzkycHgpfXRve3RyYW5zZm9ybTp0cmFuc2xhdGVYKC0yNDg0cHgpfX0uYXtmaWxsOiMyODJkMzV9LmYsLmcsLmh7d2hpdGUtc3BhY2U6cHJlfS5me2ZpbGw6I2E4Y2M4Yztmb250LXdlaWdodDo3MDB9LmcsLmh7ZmlsbDojYjljMGNifS5oe2ZpbGw6IzZmNzc4M308L3N0eWxlPjxnIGZvbnQtZmFtaWx5PSJNb25hY28sQ29uc29sYXMsTWVubG8sJ0JpdHN0cmVhbSBWZXJhIFNhbnMgTW9ubycsJ1Bvd2VybGluZSBTeW1ib2xzJyxtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMS42NyI+PGRlZnM+PHN5bWJvbCBpZD0iMSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+dXNpbmc8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+QmVubmV0dDwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIzIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+Zih4OjpJbnQ4KTwvdGV4dD48dGV4dCB4PSIxOC4wMzYiIHk9IjEuNjciIGNsYXNzPSJnIj49PC90ZXh0Pjx0ZXh0IHg9IjIwLjA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+eCp4PC90ZXh0Pjx0ZXh0IHg9IjI0LjA0OCIgeT0iMS42NyIgY2xhc3M9ImciPis8L3RleHQ+PHRleHQgeD0iMjYuMDUyIiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCgzKSp4PC90ZXh0Pjx0ZXh0IHg9IjM2LjA3MiIgeT0iMS42NyIgY2xhc3M9ImciPis8L3RleHQ+PHRleHQgeD0iMzguMDc2IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCgxKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSI0Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZyI+ZjwvdGV4dD48dGV4dCB4PSIyLjAwNCIgeT0iMS42NyIgY2xhc3M9ImciPihnZW5lcmljPC90ZXh0Pjx0ZXh0IHg9IjExLjAyMiIgeT0iMS42NyIgY2xhc3M9ImciPmZ1bmN0aW9uPC90ZXh0Pjx0ZXh0IHg9IjIwLjA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+d2l0aDwvdGV4dD48dGV4dCB4PSIyNS4wNSIgeT0iMS42NyIgY2xhc3M9ImciPjE8L3RleHQ+PHRleHQgeD0iMjcuMDU0IiB5PSIxLjY3IiBjbGFzcz0iZyI+bWV0aG9kKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSI1Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+YzwvdGV4dD48dGV4dCB4PSI5LjAxOCIgeT0iMS42NyIgY2xhc3M9ImciPj08L3RleHQ+PHRleHQgeD0iMTEuMDIyIiB5PSIxLjY3IiBjbGFzcz0iZyI+cmV2ZXJzaWJsZV9jb21waWxlKGYsPC90ZXh0Pjx0ZXh0IHg9IjMzLjA2NiIgeT0iMS42NyIgY2xhc3M9ImciPkludDgpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+TExWTTwvdGV4dD48dGV4dCB4PSI1MS4xMDIiIHk9IjEuNjciIGNsYXNzPSJoIj5JUjwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNTYuMTEyIiB5PSIxLjY3IiBjbGFzcz0iaCI+Z2F0ZXM8L3RleHQ+PHRleHQgeD0iNjIuMTI0IiB5PSIxLjY3IiBjbGFzcz0iaCI+4oaSPC90ZXh0Pjx0ZXh0IHg9IjY0LjEyOCIgeT0iMS42NyIgY2xhc3M9ImgiPkJlbm5ldHQtaXplPC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjYiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj5SZXZlcnNpYmxlQ2lyY3VpdDo8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iNyI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5XaXJlczo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+MjY1PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjgiPjx0ZXh0IHg9IjIuMDA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW5wdXQ6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PHRleHQgeD0iMTUuMDMiIHk9IjEuNjciIGNsYXNzPSJnIj53aXJlczwvdGV4dD48dGV4dCB4PSIyMS4wNDIiIHk9IjEuNjciIGNsYXNzPSJnIj5bOF08L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iOSI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5PdXRwdXQ6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PHRleHQgeD0iMTUuMDMiIHk9IjEuNjciIGNsYXNzPSJnIj53aXJlczwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxMCI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5BbmNpbGxhZTo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+MjQ5PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjExIj48dGV4dCB4PSIyLjAwNCIgeT0iMS42NyIgY2xhc3M9ImciPkdhdGVzOjwvdGV4dD48dGV4dCB4PSIxMy4wMjYiIHk9IjEuNjciIGNsYXNzPSJnIj40ODI8L3RleHQ+PHRleHQgeD0iMTcuMDM0IiB5PSIxLjY3IiBjbGFzcz0iZyI+KE5PVD0xNCw8L3RleHQ+PHRleHQgeD0iMjYuMDUyIiB5PSIxLjY3IiBjbGFzcz0iZyI+Q05PVD0zMDAsPC90ZXh0Pjx0ZXh0IHg9IjM2LjA3MiIgeT0iMS42NyIgY2xhc3M9ImciPlRvZmZvbGk9MTY4KTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxMiI+PHRleHQgeD0iMi4wMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5EZXB0aDo8L3RleHQ+PHRleHQgeD0iMTMuMDI2IiB5PSIxLjY3IiBjbGFzcz0iZyI+ODk8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTMiPjx0ZXh0IHg9IjIuMDA0IiB5PSIxLjY3IiBjbGFzcz0iZyI+UGVhazwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPmxpdmU6PC90ZXh0Pjx0ZXh0IHg9IjEzLjAyNiIgeT0iMS42NyIgY2xhc3M9ImciPjg8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTQiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJmIj5qdWxpYSZndDs8L3RleHQ+PHRleHQgeD0iNy4wMTQiIHk9IjEuNjciIGNsYXNzPSJnIj5zaW11bGF0ZShjLDwvdGV4dD48dGV4dCB4PSIxOS4wMzgiIHk9IjEuNjciIGNsYXNzPSJnIj5JbnQ4KDUpKTwvdGV4dD48dGV4dCB4PSI0NC4wODgiIHk9IjEuNjciIGNsYXNzPSJoIj4jPC90ZXh0Pjx0ZXh0IHg9IjQ2LjA5MiIgeT0iMS42NyIgY2xhc3M9ImgiPj08L3RleHQ+PHRleHQgeD0iNDguMDk2IiB5PSIxLjY3IiBjbGFzcz0iaCI+MjU8L3RleHQ+PHRleHQgeD0iNTEuMTAyIiB5PSIxLjY3IiBjbGFzcz0iaCI+KzwvdGV4dD48dGV4dCB4PSI1My4xMDYiIHk9IjEuNjciIGNsYXNzPSJoIj4xNTwvdGV4dD48dGV4dCB4PSI1Ni4xMTIiIHk9IjEuNjciIGNsYXNzPSJoIj4rPC90ZXh0Pjx0ZXh0IHg9IjU4LjExNiIgeT0iMS42NyIgY2xhc3M9ImgiPjE8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTUiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj40MTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxNiI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPnZlcmlmeV9yZXZlcnNpYmlsaXR5KGMpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+ZXZlcnk8L3RleHQ+PHRleHQgeD0iNTIuMTA0IiB5PSIxLjY3IiBjbGFzcz0iaCI+YW5jaWxsYTwvdGV4dD48dGV4dCB4PSI2MC4xMiIgeT0iMS42NyIgY2xhc3M9ImgiPmJhY2s8L3RleHQ+PHRleHQgeD0iNjUuMTMiIHk9IjEuNjciIGNsYXNzPSJoIj50bzwvdGV4dD48dGV4dCB4PSI2OC4xMzYiIHk9IjEuNjciIGNsYXNzPSJoIj4wLDwvdGV4dD48dGV4dCB4PSI3MS4xNDIiIHk9IjEuNjciIGNsYXNzPSJoIj5pbnB1dDwvdGV4dD48dGV4dCB4PSI3Ny4xNTQiIHk9IjEuNjciIGNsYXNzPSJoIj5wcmVzZXJ2ZWQ8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMTciPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJnIj50cnVlPC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjE4Ij48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+dG9mZm9saV9kZXB0aChjKTwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIxOSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImciPjM2PC90ZXh0Pjwvc3ltYm9sPjxzeW1ib2wgaWQ9IjIwIj48dGV4dCB5PSIxLjY3IiBjbGFzcz0iZiI+anVsaWEmZ3Q7PC90ZXh0Pjx0ZXh0IHg9IjcuMDE0IiB5PSIxLjY3IiBjbGFzcz0iZyI+Y2M8L3RleHQ+PHRleHQgeD0iMTAuMDIiIHk9IjEuNjciIGNsYXNzPSJnIj49PC90ZXh0Pjx0ZXh0IHg9IjEyLjAyNCIgeT0iMS42NyIgY2xhc3M9ImciPmNvbnRyb2xsZWQoYyk7PC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+bGlmdDwvdGV4dD48dGV4dCB4PSI1MS4xMDIiIHk9IjEuNjciIGNsYXNzPSJoIj50bzwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj5hPC90ZXh0Pjx0ZXh0IHg9IjU2LjExMiIgeT0iMS42NyIgY2xhc3M9ImgiPnF1YW50dW0tY29udHJvbGxlZDwvdGV4dD48dGV4dCB4PSI3NS4xNSIgeT0iMS42NyIgY2xhc3M9ImgiPm9wZXJhdGlvbjwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyMSI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImYiPmp1bGlhJmd0OzwvdGV4dD48dGV4dCB4PSI3LjAxNCIgeT0iMS42NyIgY2xhc3M9ImciPnNpbXVsYXRlKGNjLDwvdGV4dD48dGV4dCB4PSIyMC4wNCIgeT0iMS42NyIgY2xhc3M9ImciPnRydWUsPC90ZXh0Pjx0ZXh0IHg9IjI2LjA1MiIgeT0iMS42NyIgY2xhc3M9ImciPkludDgoNSkpPC90ZXh0Pjx0ZXh0IHg9IjQ0LjA4OCIgeT0iMS42NyIgY2xhc3M9ImgiPiM8L3RleHQ+PHRleHQgeD0iNDYuMDkyIiB5PSIxLjY3IiBjbGFzcz0iaCI+Y29udHJvbDwvdGV4dD48dGV4dCB4PSI1NC4xMDgiIHk9IjEuNjciIGNsYXNzPSJoIj5vbjwvdGV4dD48dGV4dCB4PSI1OC4xMTYiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNjAuMTIiIHk9IjEuNjciIGNsYXNzPSJoIj5jb21wdXRlPC90ZXh0Pjx0ZXh0IHg9IjY4LjEzNiIgeT0iMS42NyIgY2xhc3M9ImgiPmY8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iMjIiPjx0ZXh0IHk9IjEuNjciIGNsYXNzPSJmIj5qdWxpYSZndDs8L3RleHQ+PHRleHQgeD0iNy4wMTQiIHk9IjEuNjciIGNsYXNzPSJnIj5zaW11bGF0ZShjYyw8L3RleHQ+PHRleHQgeD0iMjAuMDQiIHk9IjEuNjciIGNsYXNzPSJnIj5mYWxzZSw8L3RleHQ+PHRleHQgeD0iMjcuMDU0IiB5PSIxLjY3IiBjbGFzcz0iZyI+SW50OCg1KSk8L3RleHQ+PHRleHQgeD0iNDQuMDg4IiB5PSIxLjY3IiBjbGFzcz0iaCI+IzwvdGV4dD48dGV4dCB4PSI0Ni4wOTIiIHk9IjEuNjciIGNsYXNzPSJoIj5jb250cm9sPC90ZXh0Pjx0ZXh0IHg9IjU0LjEwOCIgeT0iMS42NyIgY2xhc3M9ImgiPm9mZjwvdGV4dD48dGV4dCB4PSI1OC4xMTYiIHk9IjEuNjciIGNsYXNzPSJoIj7ihpI8L3RleHQ+PHRleHQgeD0iNjAuMTIiIHk9IjEuNjciIGNsYXNzPSJoIj5vdXRwdXQ8L3RleHQ+PHRleHQgeD0iNjcuMTM0IiB5PSIxLjY3IiBjbGFzcz0iaCI+cmVnaXN0ZXI8L3RleHQ+PHRleHQgeD0iNzYuMTUyIiB5PSIxLjY3IiBjbGFzcz0iaCI+c3RheXM8L3RleHQ+PHRleHQgeD0iODIuMTY0IiB5PSIxLjY3IiBjbGFzcz0iaCI+MDwvdGV4dD48L3N5bWJvbD48c3ltYm9sIGlkPSIyMyI+PHRleHQgeT0iMS42NyIgY2xhc3M9ImciPjA8L3RleHQ+PC9zeW1ib2w+PHN5bWJvbCBpZD0iYSI+PHBhdGggZmlsbD0idHJhbnNwYXJlbnQiIGQ9Ik0wIDBoOTJ2MzNIMHoiLz48L3N5bWJvbD48c3ltYm9sIGlkPSJiIj48cGF0aCBmaWxsPSIjNmY3NjgzIiBkPSJNMCAwaDEuMTAydjIuMTcxSDB6Ii8+PC9zeW1ib2w+PC9kZWZzPjxwYXRoIGNsYXNzPSJhIiBkPSJNMCAwaDkydjcxLjY0M0gweiIvPjxnIHN0eWxlPSJhbmltYXRpb24tZHVyYXRpb246MjkuNXM7YW5pbWF0aW9uLWl0ZXJhdGlvbi1jb3VudDppbmZpbml0ZTthbmltYXRpb24tbmFtZTprO2FuaW1hdGlvbi10aW1pbmctZnVuY3Rpb246c3RlcHMoMSxlbmQpIj48c3ZnIHdpZHRoPSIyNTc2Ij48c3ZnPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIvPjwvc3ZnPjxzdmcgeD0iOTIiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIvPjx1c2UgeGxpbms6aHJlZj0iIzEiLz48L3N2Zz48c3ZnIHg9IjE4NCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIyLjE0NiIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48L3N2Zz48c3ZnIHg9IjI3NiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9IjYuOTk2IiB5PSI0LjMxNyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSI0LjM0MiIvPjwvc3ZnPjxzdmcgeD0iMzY4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjYuNDg4Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PC9zdmc+PHN2ZyB4PSI0NjAiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iOC42NTkiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjwvc3ZnPjxzdmcgeD0iNTUyIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjEwLjgzIi8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSIxMC44NTUiLz48L3N2Zz48c3ZnIHg9IjY0NCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIxMy4wMDEiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjwvc3ZnPjxzdmcgeD0iNzM2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjMwLjM2OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PC9zdmc+PHN2ZyB4PSI4MjgiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIgeT0iMzIuNTQiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjMyLjU2NSIvPjwvc3ZnPjxzdmcgeD0iOTIwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjM0LjcxMSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjwvc3ZnPjxzdmcgeD0iMTAxMiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSIzNi44ODIiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PC9zdmc+PHN2ZyB4PSIxMTA0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjM5LjA1MyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxIiB5PSIzOS4wNzgiLz48L3N2Zz48c3ZnIHg9IjExOTYiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iNDEuMjI0Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48L3N2Zz48c3ZnIHg9IjEyODgiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSItLjAwNCIgeT0iNDMuMzk1Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PC9zdmc+PHN2ZyB4PSIxMzgwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjQ1LjU2NiIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjQ1LjU5MSIvPjwvc3ZnPjxzdmcgeD0iMTQ3MiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI0Ny43MzciLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PC9zdmc+PHN2ZyB4PSIxNTY0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjQ5LjkwOCIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PC9zdmc+PHN2ZyB4PSIxNjU2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjUyLjA3OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNTIuMTA0Ii8+PC9zdmc+PHN2ZyB4PSIxNzQ4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjU0LjI1Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PHVzZSB4bGluazpocmVmPSIjMTgiIHk9IjQ1LjU5MSIvPjx1c2UgeGxpbms6aHJlZj0iIzE5IiB5PSI0Ny43NjIiLz48dXNlIHhsaW5rOmhyZWY9IiMyMCIgeT0iNTIuMTA0Ii8+PC9zdmc+PHN2ZyB4PSIxODQwIj48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjU2LjQyMSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjU2LjQ0NiIvPjwvc3ZnPjxzdmcgeD0iMTkzMiI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI1OC41OTIiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PHVzZSB4bGluazpocmVmPSIjMTkiIHk9IjQ3Ljc2MiIvPjx1c2UgeGxpbms6aHJlZj0iIzIwIiB5PSI1Mi4xMDQiLz48dXNlIHhsaW5rOmhyZWY9IiMyMSIgeT0iNTYuNDQ2Ii8+PC9zdmc+PHN2ZyB4PSIyMDI0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjYwLjc2MyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PC9zdmc+PHN2ZyB4PSIyMTE2Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjYyLjkzNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNjIuOTU5Ii8+PC9zdmc+PHN2ZyB4PSIyMjA4Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iLS4wMDQiIHk9IjY1LjEwNSIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMjIiIHk9IjYyLjk1OSIvPjwvc3ZnPjxzdmcgeD0iMjMwMCI+PHVzZSB4bGluazpocmVmPSIjYSIvPjx1c2UgeGxpbms6aHJlZj0iI2IiIHg9Ii0uMDA0IiB5PSI2Ny4yNzYiLz48dXNlIHhsaW5rOmhyZWY9IiMyIi8+PHVzZSB4bGluazpocmVmPSIjMyIgeT0iNC4zNDIiLz48dXNlIHhsaW5rOmhyZWY9IiM0IiB5PSI2LjUxMyIvPjx1c2UgeGxpbms6aHJlZj0iIzUiIHk9IjEwLjg1NSIvPjx1c2UgeGxpbms6aHJlZj0iIzYiIHk9IjEzLjAyNiIvPjx1c2UgeGxpbms6aHJlZj0iIzciIHk9IjE1LjE5NyIvPjx1c2UgeGxpbms6aHJlZj0iIzgiIHk9IjE3LjM2OCIvPjx1c2UgeGxpbms6aHJlZj0iIzkiIHk9IjE5LjUzOSIvPjx1c2UgeGxpbms6aHJlZj0iIzEwIiB5PSIyMS43MSIvPjx1c2UgeGxpbms6aHJlZj0iIzExIiB5PSIyMy44ODEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMiIgeT0iMjYuMDUyIi8+PHVzZSB4bGluazpocmVmPSIjMTMiIHk9IjI4LjIyMyIvPjx1c2UgeGxpbms6aHJlZj0iIzE0IiB5PSIzMi41NjUiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iMzQuNzM2Ii8+PHVzZSB4bGluazpocmVmPSIjMTYiIHk9IjM5LjA3OCIvPjx1c2UgeGxpbms6aHJlZj0iIzE3IiB5PSI0MS4yNDkiLz48dXNlIHhsaW5rOmhyZWY9IiMxOCIgeT0iNDUuNTkxIi8+PHVzZSB4bGluazpocmVmPSIjMTkiIHk9IjQ3Ljc2MiIvPjx1c2UgeGxpbms6aHJlZj0iIzIwIiB5PSI1Mi4xMDQiLz48dXNlIHhsaW5rOmhyZWY9IiMyMSIgeT0iNTYuNDQ2Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjU4LjYxNyIvPjx1c2UgeGxpbms6aHJlZj0iIzIyIiB5PSI2Mi45NTkiLz48dXNlIHhsaW5rOmhyZWY9IiMyMyIgeT0iNjUuMTMiLz48L3N2Zz48c3ZnIHg9IjIzOTIiPjx1c2UgeGxpbms6aHJlZj0iI2EiLz48dXNlIHhsaW5rOmhyZWY9IiNiIiB4PSI2Ljk5NiIgeT0iNjkuNDQ3Ii8+PHVzZSB4bGluazpocmVmPSIjMiIvPjx1c2UgeGxpbms6aHJlZj0iIzMiIHk9IjQuMzQyIi8+PHVzZSB4bGluazpocmVmPSIjNCIgeT0iNi41MTMiLz48dXNlIHhsaW5rOmhyZWY9IiM1IiB5PSIxMC44NTUiLz48dXNlIHhsaW5rOmhyZWY9IiM2IiB5PSIxMy4wMjYiLz48dXNlIHhsaW5rOmhyZWY9IiM3IiB5PSIxNS4xOTciLz48dXNlIHhsaW5rOmhyZWY9IiM4IiB5PSIxNy4zNjgiLz48dXNlIHhsaW5rOmhyZWY9IiM5IiB5PSIxOS41MzkiLz48dXNlIHhsaW5rOmhyZWY9IiMxMCIgeT0iMjEuNzEiLz48dXNlIHhsaW5rOmhyZWY9IiMxMSIgeT0iMjMuODgxIi8+PHVzZSB4bGluazpocmVmPSIjMTIiIHk9IjI2LjA1MiIvPjx1c2UgeGxpbms6aHJlZj0iIzEzIiB5PSIyOC4yMjMiLz48dXNlIHhsaW5rOmhyZWY9IiMxNCIgeT0iMzIuNTY1Ii8+PHVzZSB4bGluazpocmVmPSIjMTUiIHk9IjM0LjczNiIvPjx1c2UgeGxpbms6aHJlZj0iIzE2IiB5PSIzOS4wNzgiLz48dXNlIHhsaW5rOmhyZWY9IiMxNyIgeT0iNDEuMjQ5Ii8+PHVzZSB4bGluazpocmVmPSIjMTgiIHk9IjQ1LjU5MSIvPjx1c2UgeGxpbms6aHJlZj0iIzE5IiB5PSI0Ny43NjIiLz48dXNlIHhsaW5rOmhyZWY9IiMyMCIgeT0iNTIuMTA0Ii8+PHVzZSB4bGluazpocmVmPSIjMjEiIHk9IjU2LjQ0NiIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSI1OC42MTciLz48dXNlIHhsaW5rOmhyZWY9IiMyMiIgeT0iNjIuOTU5Ii8+PHVzZSB4bGluazpocmVmPSIjMjMiIHk9IjY1LjEzIi8+PHVzZSB4bGluazpocmVmPSIjMSIgeT0iNjkuNDcyIi8+PC9zdmc+PHN2ZyB4PSIyNDg0Ij48dXNlIHhsaW5rOmhyZWY9IiNhIi8+PHVzZSB4bGluazpocmVmPSIjYiIgeD0iNi45OTYiIHk9IjY5LjQ0NyIvPjx1c2UgeGxpbms6aHJlZj0iIzIiLz48dXNlIHhsaW5rOmhyZWY9IiMzIiB5PSI0LjM0MiIvPjx1c2UgeGxpbms6aHJlZj0iIzQiIHk9IjYuNTEzIi8+PHVzZSB4bGluazpocmVmPSIjNSIgeT0iMTAuODU1Ii8+PHVzZSB4bGluazpocmVmPSIjNiIgeT0iMTMuMDI2Ii8+PHVzZSB4bGluazpocmVmPSIjNyIgeT0iMTUuMTk3Ii8+PHVzZSB4bGluazpocmVmPSIjOCIgeT0iMTcuMzY4Ii8+PHVzZSB4bGluazpocmVmPSIjOSIgeT0iMTkuNTM5Ii8+PHVzZSB4bGluazpocmVmPSIjMTAiIHk9IjIxLjcxIi8+PHVzZSB4bGluazpocmVmPSIjMTEiIHk9IjIzLjg4MSIvPjx1c2UgeGxpbms6aHJlZj0iIzEyIiB5PSIyNi4wNTIiLz48dXNlIHhsaW5rOmhyZWY9IiMxMyIgeT0iMjguMjIzIi8+PHVzZSB4bGluazpocmVmPSIjMTQiIHk9IjMyLjU2NSIvPjx1c2UgeGxpbms6aHJlZj0iIzE1IiB5PSIzNC43MzYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNiIgeT0iMzkuMDc4Ii8+PHVzZSB4bGluazpocmVmPSIjMTciIHk9IjQxLjI0OSIvPjx1c2UgeGxpbms6aHJlZj0iIzE4IiB5PSI0NS41OTEiLz48dXNlIHhsaW5rOmhyZWY9IiMxOSIgeT0iNDcuNzYyIi8+PHVzZSB4bGluazpocmVmPSIjMjAiIHk9IjUyLjEwNCIvPjx1c2UgeGxpbms6aHJlZj0iIzIxIiB5PSI1Ni40NDYiLz48dXNlIHhsaW5rOmhyZWY9IiMxNSIgeT0iNTguNjE3Ii8+PHVzZSB4bGluazpocmVmPSIjMjIiIHk9IjYyLjk1OSIvPjx1c2UgeGxpbms6aHJlZj0iIzIzIiB5PSI2NS4xMyIvPjx1c2UgeGxpbms6aHJlZj0iIzEiIHk9IjY5LjQ3MiIvPjwvc3ZnPjwvc3ZnPjwvZz48L2c+PC9zdmc+PC9zdmc+">
       <figcaption class="muted small" style="margin-top:0;">recorded run — the live machine is having a moment</figcaption>
     </figure>
-
   </div>
+</section>
+
+<section class="slide backup" id="teleport" data-title="Q&amp;A: a bigger Sturm program" data-band="shadow"
+         data-notes="Hash #teleport. Teleportation with no gates: the coin, the pair, both readouts, two ordinary conditionals. 200/200 on a probe state in 0.25 s, measured.">
+  <h2 class="frametitle">Q&amp;A: a bigger Sturm program — teleportation<span class="rule"></span></h2>
+  <div class="body" style="gap:0.8cqh;">
+    <div style="display:grid;grid-template-columns:56cqw 1fr;gap:1.6cqw;align-items:start;">
+<pre style="margin:0;flex:0 0 auto;"><code style="font-size:2.15cqh;">function teleport(ψ::QBool)
+    b = QBool(0.5)
+    c = false ⊻ b
+    b ⊻= ψ
+    m_phase = Bool(dual(ψ))
+    m_value = Bool(b)
+    m_value &amp;&amp; not!(c)
+    m_phase &amp;&amp; not!(dual(c))
+    return c
+end</code></pre>
+      <div style="display:grid;grid-template-rows:repeat(10,3.25cqh);font-size:2.0cqh;padding-top:2.0cqh;line-height:1.45;">
+        <div class="muted" style="grid-row:2;">← fair quantum coin</div>
+        <div class="muted" style="grid-row:3;">← Bell pair</div>
+        <div class="muted" style="grid-row:5;">← conjugate-basis readout — consumes ψ</div>
+        <div class="muted" style="grid-row:7 / span 2;">← ordinary conditionals — one in the dual view</div>
+      </div>
+    </div>
+    <div class="muted small" style="margin-top:0.8cqh;">
+      Every construct here appeared in part 1. On a probe state the round trip
+      reads back 200/200, in 0.25&nbsp;s.
+    </div>
+  </div>
+  <template class="shadow-term">
+julia&gt; count(_ -&gt; teleport_ok(), 1:200)
+200
+# |+⟩ probe, X-basis readout: 200/200 deterministic — 0.25 s
+  </template>
 </section>
 
 <section class="slide backup" id="pebbling" data-title="Q&amp;A: the space–time dial" data-band="off"
          data-notes="Knill 1995, Theorem 2.1. The dial trades gates for wires: recompute instead of store. Six strategies, all one dispatch away.">
   <h2 class="frametitle">Q&amp;A: the space–time dial<span class="rule"></span></h2>
   <div class="body">
-
     <div class="muted small">Knill 1995, Theorem 2.1 — the reversible pebble game on <span class="mono">n</span> steps with <span class="mono">s</span> pebbles:</div>
-
-<pre style="margin-top:1cqh;flex:0 0 auto;"><code>F(1, s) = 1                        <span class="muted">for s ≥ 1</span>
-F(n, 1) = ∞                        <span class="muted">for n ≥ 2</span>
+<pre style="margin-top:1cqh;flex:0 0 auto;"><code>F(1, s) = 1                        <span class="c">for s ≥ 1</span>
+F(n, 1) = ∞                        <span class="c">for n ≥ 2</span>
 F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
-
     <div class="serif center" style="font-style:italic;font-size:3.2cqh;margin:2cqh 0;">F(n, s) finite ⟺ n ≤ 2<sup>(s−1)</sup></div>
-
     <div class="small muted">Six pluggable <span class="mono">BennettStrategy</span> subtypes — adding a seventh is adding a method:</div>
     <div class="mono small" style="display:grid;grid-template-columns:1fr 1fr;gap:0.4cqh 2cqw;margin-top:0.8cqh;">
       <div>DefaultStrategy <span class="muted">— forward + CNOT-copy + reverse</span></div>
@@ -1305,7 +1264,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
       <div>ValueEagerStrategy <span class="muted">— PRS15 Alg. 2, Kahn reverse</span></div>
       <div>PebbledGroupStrategy(max_pebbles) <span class="muted">— group-level, wire reuse</span></div>
     </div>
-
   </div>
 </section>
 
@@ -1313,28 +1271,21 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
          data-notes="The tape is what replaces ancillae in the VM. L1 costs nothing, L2 is Enzyme's min-cut idea, L3 is rr's record-replay. unrun! drains all three.">
   <h2 class="frametitle">Q&amp;A: the three-layer history tape<span class="rule"></span></h2>
   <div class="body">
-
     <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:1.2cqh 2cqw;align-items:baseline;font-size:2.6cqh;margin-top:2cqh;">
-
       <div class="mono gold">L1</div>
       <div><strong>injective</strong></div>
       <div class="muted">the step is a bijection on machine state — reversal recomputes it. Nothing is logged.</div>
       <div class="mono muted small">0 bytes</div>
-
       <div class="mono gold">L2</div>
       <div><strong>min-cut delta</strong></div>
       <div class="muted">log the smallest set of overwritten words that makes the step invertible. Enzyme&rsquo;s idea.</div>
       <div class="mono muted small">O(cut)</div>
-
       <div class="mono gold">L3</div>
       <div><strong>checkpoint + replay</strong></div>
       <div class="muted">snapshot every K steps, replay forward from the nearest checkpoint. rr&rsquo;s idea.</div>
       <div class="mono muted small">O(state)/K</div>
-
     </div>
-
     <div class="muted small" style="margin-top:2.6cqh;"><span class="mono">unrun!(rs, vm)</span> drains all three layers: <span class="mono">rs.current == rs.initial</span> and <span class="mono">isempty(rs.history)</span>.</div>
-
   </div>
 </section>
 
@@ -1342,62 +1293,43 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
          data-notes="Every number measured on this machine 2026-08-11 or pinned in the committed docs. The SHA-256 row is the one we lose; it stays in the table.">
   <h2 class="frametitle">Q&amp;A: the full number table<span class="rule"></span></h2>
   <div class="body">
-
     <!-- 17 rows, one of which wraps: the row gap and the size are set so the
          LAST row (test suites) clears the band. Do not loosen without
          re-measuring. -->
     <div style="display:grid;grid-template-columns:auto 1fr;gap:0.3cqh 2cqw;font-size:2.0cqh;line-height:1.3;align-items:baseline;">
-
       <div class="mono">Int8 &nbsp;x*x + 3x + 1</div>
       <div><strong>482</strong> gates (NOT 14 / CNOT 300 / Toffoli 168) · depth 89 · Toffoli-depth 36 · 249 ancillae</div>
-
       <div class="mono">UInt8 x + 1 &nbsp;(3-bit)</div>
       <div><strong>23</strong> gates (NOT 6 / CNOT 15 / Toffoli 2) · 16 wires · 10 ancillae · depth 9 · <span class="mono">simulate(c1, 3) = 4</span></div>
-
       <div class="mono">Int8 &nbsp;f(5)</div>
       <div><strong>41</strong> — the circuit agrees with the function</div>
-
       <div class="mono">Float64 x + x</div>
       <div><strong>63,058</strong> gates — bit-exact soft-float</div>
-
       <div class="mono">Float64 sin(x)</div>
       <div><strong>11,027,852</strong> gates (1,629,722 NOT / 7,059,276 CNOT / 2,338,854 Toffoli) · 38.8 s compile · <span class="mono">sin(1.2345)</span> bit-identical, ≤1 ULP vs <span class="mono">Base.sin</span></div>
-
       <div class="mono">QCLA 32-bit multiply</div>
       <div>Toffoli-depth <strong>56</strong> vs <strong>180</strong> schoolbook</div>
-
       <div class="mono">QROM</div>
       <div>T-count exactly <strong>4(L−1)</strong>, width-independent — matches Babbush–Gidney</div>
-
       <div class="mono">shadow-memory store</div>
       <div><strong>24</strong> CNOT vs a <strong>7,122</strong>-gate MUX</div>
-
       <div class="mono red">SHA-256 round</div>
       <div><strong>1,632</strong> Toffoli vs hand-optimized <strong>683</strong> — ~2.4× worse, and it stays in our own table</div>
-
       <div class="mono">Collatz circuit (20)</div>
       <div><strong>14,074</strong> gates · <strong>2,320</strong> Toffoli · <strong>8,868</strong> ancillae</div>
-
       <div class="mono">persistent map @ 128</div>
       <div>linear scan beats Okasaki <strong>2,400×</strong> — the naive structure wins</div>
-
       <div class="mono">Deutsch–Jozsa (Sturm)</div>
       <div>warm <strong>≈2.1 s</strong> · first oracle call <strong>20.8 s</strong> cold</div>
-
       <div class="mono">teleport probe</div>
       <div><strong>200/200</strong> deterministic in <strong>0.25 s</strong></div>
-
       <div class="mono">wm28 channel probe</div>
       <div>fixed <strong>1024/1024</strong> vs broken <strong>≈512</strong> — the marginal test was blind</div>
-
       <div class="mono">TTFX</div>
       <div><strong>20.7 s → 0.99 s</strong> after the precompile workload</div>
-
       <div class="mono">test suites</div>
       <div><strong>≈692k</strong> Bennett assertions · <strong>&gt;27k</strong> Sturm assertions</div>
-
     </div>
-
   </div>
 </section>
 
@@ -1405,21 +1337,10 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
          data-notes="Arrow keys run one gate each. Compute 1–10, copy 11–13, uncompute 14–23. Input x = 3; out = 4; every ancilla back to zero.">
   <h2 class="frametitle">Q&amp;A: 23 gates, one at a time<span class="rule"></span></h2>
   <div class="body">
-
     <div class="component" data-component="stepper" style="min-height:52cqh;"></div>
-
   </div>
 </section>
 
-
-    <nav id="rail" aria-label="six levers">
-      <div class="badge" data-lever="1"><div class="chip">①</div><div class="chip-label">reflection</div></div>
-      <div class="badge" data-lever="2"><div class="chip">②</div><div class="chip-label">lowering table</div></div>
-      <div class="badge" data-lever="3"><div class="chip">③</div><div class="chip-label">semantics</div></div>
-      <div class="badge" data-lever="4"><div class="chip">④</div><div class="chip-label">reflection stack</div></div>
-      <div class="badge" data-lever="5"><div class="chip">⑤</div><div class="chip-label">types=physics</div></div>
-      <div class="badge" data-lever="6"><div class="chip">⑥</div><div class="chip-label">dispatch refuses</div></div>
-    </nav>
 
     <div id="band" data-state="off">
       <div class="band-dots" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -2567,29 +2488,18 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
     catch (e) { return false; }
   }());
 
-  /* ---- the six levers -------------------------------------------------- */
-  /* Lit when the deck has reached the introducing slide (and, for ④, its
-     second build). Order in the rail is ①..⑥; the mapping is not monotone
-     in slide index, which is exactly why the engine computes it. */
-  var LEVERS = [
-    { n: 1, slide: 's4',  build: 0 },
-    { n: 2, slide: 's5',  build: 0 },
-    { n: 3, slide: 's6',  build: 0 },
-    { n: 4, slide: 's4',  build: 2 },
-    { n: 5, slide: 's12', build: 0 },
-    { n: 6, slide: 's15', build: 0 }
-  ];
-
   /* ---- timer checkpoints ----------------------------------------------- */
+  /* s6 closes part 1 (the why); s9 is the Bennett animation; s13 the oracle
+     beat; s15 the close. */
   var CHECKPOINTS = [
-    { slide: 's3',  t: 2 * 60 },
-    { slide: 's10', t: 8 * 60 + 30 },
-    { slide: 's11', t: 10 * 60 },
-    { slide: 's16', t: 14 * 60 }
+    { slide: 's6',  t: 5 * 60 },
+    { slide: 's9',  t: 8 * 60 },
+    { slide: 's13', t: 11 * 60 + 30 },
+    { slide: 's15', t: 14 * 60 }
   ];
 
   /* ---- DOM ------------------------------------------------------------- */
-  var stage, rail, band, bandState, bandOut, counter, timerEl, notesEl, helpEl,
+  var stage, band, bandState, bandOut, counter, timerEl, notesEl, helpEl,
       progressEl;
   var slides = [], linear = [], order = [], byId = {};
 
@@ -2603,8 +2513,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
   var helpShown = false;
   var shadowOn = false;
   var shadowRAF = 0;
-  var railFlashed = {};
-  var everLit = {};
 
   /* ======================================================================
      components
@@ -2643,47 +2551,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
 
   function linearIndexOf(id) { return order.indexOf(id); }
 
-  function updateRail() {
-    if (!rail) return;
-    var here = idx;                       // last linear slide reached
-    var stepsHere = shownBuilds(byId[order[here]] || document.createElement('div')).length;
-    LEVERS.forEach(function (lv) {
-      var badge = rail.querySelector('.badge[data-lever="' + lv.n + '"]');
-      if (!badge) return;
-      var j = linearIndexOf(lv.slide);
-      var lit;
-      if (j < 0) lit = false;             // slide missing — never lights, never throws
-      else if (here > j) lit = true;
-      else if (here < j) lit = false;
-      else lit = stepsHere >= lv.build;
-      if (lit && !badge.classList.contains('lit')) {
-        badge.classList.add('lit');
-        if (!everLit[lv.n] && !REDUCED && !STILL) {
-          everLit[lv.n] = true;
-          badge.classList.add('glow');
-          window.setTimeout(function () { badge.classList.remove('glow'); }, 700);
-        }
-        everLit[lv.n] = true;
-      } else if (!lit) {
-        badge.classList.remove('lit', 'glow');
-      }
-    });
-  }
-
-  /* s3's first build asks the whole rail to flash once — the "watch for six
-     levers" beat. Slides may also opt in per-build with data-rail-flash. */
-  function maybeRailFlash(el, build) {
-    if (!rail || REDUCED || STILL) return;
-    var wants = (el.id === 's3' && shownBuilds(el).length === 1) ||
-                (build && build.hasAttribute && build.hasAttribute('data-rail-flash'));
-    if (!wants || railFlashed[el.id]) return;
-    railFlashed[el.id] = true;
-    rail.classList.remove('flash');
-    void rail.offsetWidth;                // restart the animation
-    rail.classList.add('flash');
-    window.setTimeout(function () { rail.classList.remove('flash'); }, 1000);
-  }
-
   function updateBand(el) {
     if (!band) return;
     var state = (el && el.getAttribute('data-band')) || 'off';
@@ -2715,7 +2582,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
 
   function updateChrome() {
     var el = byId[currentId];
-    updateRail();
     updateBand(el);
     updateCounter();
     updateProgress();
@@ -3017,7 +2883,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
     for (var b = 0; b < builds.length; b++) {
       if (!builds[b].classList.contains('shown')) {
         builds[b].classList.add('shown');
-        maybeRailFlash(el, builds[b]);
         fitCode(el);
         updateChrome();
         return;
@@ -3164,7 +3029,6 @@ F(n, s) = min over m of  F(m, s) + F(m, s−1) + F(n−m, s−1)</code></pre>
      ====================================================================== */
   function init() {
     stage = $('#stage');
-    rail = $('#rail');
     band = $('#band');
     bandState = $('#band-state');
     bandOut = $('#band-out');

@@ -93,14 +93,14 @@ body{
   position:absolute; inset:0;
   display:none;
   flex-direction:column;
-  /* right padding clears the badge rail; bottom clears the 26cqh band */
-  padding:6cqh 11cqw 29cqh 6cqw;
+  /* bottom padding clears the 26cqh terminal band */
+  padding:6cqh 6cqw 29cqh 6cqw;
   overflow:hidden;
   font-size:var(--f-body);
   line-height:1.5;
 }
 .slide.current{display:flex}
-.slide.wide{padding-right:6cqw}  /* opt out of the rail gutter (title, figures) */
+.slide.wide{padding-right:6cqw}  /* kept for compatibility; same as default now */
 .slide.backup{}                  /* backups differ only in the linear order */
 
 .frametitle{
@@ -306,57 +306,6 @@ figcaption{color:var(--muted);font-size:var(--f-small);margin-top:.9cqh}
 }
 .component button:hover,.deck-btn:hover{border-color:var(--purple);color:var(--ink-strong)}
 
-/* ---- badge rail -------------------------------------------------------- */
-#rail{
-  position:absolute;
-  right:1.6cqw; top:7cqh; bottom:29cqh;
-  z-index:30;
-  width:7.4cqw;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:1.4cqh;
-  pointer-events:none;
-}
-.badge{display:flex;flex-direction:column;align-items:center;gap:.35cqh;width:100%}
-.badge .chip{
-  width:5.2cqh;height:5.2cqh;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:2.6cqh;font-weight:700;line-height:1;
-  border:1px solid var(--line);
-  color:var(--muted);
-  background:transparent;
-  transition:background-color 300ms ease,color 300ms ease,border-color 300ms ease;
-}
-.badge .chip-label{
-  font-size:1.7cqh;line-height:1.15;text-align:center;
-  color:var(--muted);
-  transition:color 300ms ease;
-  overflow-wrap:anywhere;
-}
-.badge[data-lever="1"]{--lit:var(--purple)}
-.badge[data-lever="2"]{--lit:var(--blue)}
-.badge[data-lever="3"]{--lit:var(--green)}
-.badge[data-lever="4"]{--lit:var(--purple)}
-.badge[data-lever="5"]{--lit:var(--gold)}
-.badge[data-lever="6"]{--lit:var(--red)}
-.badge.lit .chip{
-  background:var(--lit);
-  border-color:var(--lit);
-  color:var(--ink-strong);
-}
-.badge.lit .chip-label{color:var(--ink)}
-.badge.glow .chip{animation:badge-glow 600ms ease-out 1}
-@keyframes badge-glow{
-  0%{box-shadow:0 0 0 0 var(--lit)}
-  60%{box-shadow:0 0 2.4cqh .5cqh var(--lit)}
-  100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}
-}
-#rail.flash .chip{animation:rail-flash 900ms ease-out 1}
-@keyframes rail-flash{
-  0%{border-color:var(--line)}
-  35%{border-color:var(--lit);box-shadow:0 0 1.6cqh 0 var(--lit)}
-  100%{border-color:var(--line);box-shadow:0 0 0 0 rgba(0,0,0,0)}
-}
-
 /* ---- terminal band ----------------------------------------------------- */
 #band{
   position:absolute;left:0;right:0;bottom:0;z-index:35;
@@ -478,7 +427,7 @@ body.still *,body.still *::before,body.still *::after{
     position:static;width:auto;height:auto;container-type:normal;overflow:visible;
   }
   #progress,#help,#notes,#timer,#counter{display:none !important}
-  #rail,#band{display:none !important}
+  #band{display:none !important}
   .slide{
     display:flex !important;
     position:relative !important;inset:auto !important;
@@ -502,15 +451,6 @@ body.still *,body.still *::before,body.still *::after{
     <div id="progress" aria-hidden="true"></div>
 
 {{SLIDES}}
-
-    <nav id="rail" aria-label="six levers">
-      <div class="badge" data-lever="1"><div class="chip">①</div><div class="chip-label">reflection</div></div>
-      <div class="badge" data-lever="2"><div class="chip">②</div><div class="chip-label">lowering table</div></div>
-      <div class="badge" data-lever="3"><div class="chip">③</div><div class="chip-label">semantics</div></div>
-      <div class="badge" data-lever="4"><div class="chip">④</div><div class="chip-label">reflection stack</div></div>
-      <div class="badge" data-lever="5"><div class="chip">⑤</div><div class="chip-label">types=physics</div></div>
-      <div class="badge" data-lever="6"><div class="chip">⑥</div><div class="chip-label">dispatch refuses</div></div>
-    </nav>
 
     <div id="band" data-state="off">
       <div class="band-dots" aria-hidden="true"><i></i><i></i><i></i></div>
