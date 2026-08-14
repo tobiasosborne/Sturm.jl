@@ -1,8 +1,8 @@
 /* ==========================================================================
-   Given an Oracle for f — deck engine
+   Quantum programming in ordinary Julia (JuliaCon 2026): deck engine
    Vanilla JS, no external requests, runs from file://.
    Defensive by construction: a missing component, a missing <template>, a
-   backup slide that does not exist, a browser without requestFullscreen —
+   backup slide that does not exist, a browser without requestFullscreen:
    none of these may ever throw. A deck that dies on stage is a deck that
    lost the talk.
    ========================================================================== */
@@ -41,7 +41,7 @@
   var slides = [], linear = [], order = [], byId = {};
 
   /* ---- state ----------------------------------------------------------- */
-  var idx = 0;              // index into `order` — the last LINEAR slide
+  var idx = 0;              // index into `order`: the last LINEAR slide
   var currentId = null;     // may be a backup id
   var onBackup = false;
   var t0 = null;            // timer origin; null = not started
@@ -96,7 +96,7 @@
     if (!bandState) return;
     bandState.textContent =
       state === 'live' ? '● LIVE' :
-      state === 'shadow' ? 'shadow output — press D' : '';
+      state === 'shadow' ? 'shadow output · press D' : '';
   }
 
   function updateCounter() {
@@ -127,7 +127,7 @@
   }
 
   /* ======================================================================
-     code auto-fit — "text must never overflow" is a hard constraint, and
+     code auto-fit: "text must never overflow" is a hard constraint, and
      the slide author cannot know the rendered advance width of JuliaMono vs
      the fallback. Shrink only, never grow past the CSS size.
      ====================================================================== */
@@ -135,7 +135,7 @@
     if (!el) return;
     $$('pre', el).forEach(function (p) {
       /* The AUTHORED size is the ceiling. Cache the author's inline
-         font-size string once — '' means "whatever the stylesheet says" —
+         font-size string once ('' means "whatever the stylesheet says")
          and restore it before every fit. Caching the STRING (which may be
          '2.2cqh') rather than a resolved px value keeps the slide
          responsive: a resize re-resolves the author's units, then shrinks
@@ -168,7 +168,7 @@
      Print CSS lays every slide out at once, but a printed slide is a STILL:
      nothing will ever press space on it. Without this, a PDF made from the
      live deck (i.e. without ?still) shows costbars with zero-width fills and
-     the stepper parked at gate 0 — the slides that carry the numbers print
+     the stepper parked at gate 0; the slides that carry the numbers print
      empty. So: reveal every build and drive every component to its end
      state, exactly as ?still does. There is no afterprint restore: the deck
      is simply left at its final state, which is a state the speaker can keep
@@ -180,6 +180,7 @@
       callComp(c, 'onStill');
       c._k = Number.MAX_SAFE_INTEGER;      // already at its end state
     });
+    $$('svg.smil').forEach(smilToEnd);
     slides.forEach(fitCode);
     updateChrome();
   }
@@ -328,18 +329,24 @@
     }
   }
 
+  /* A still (screenshot or print) must show a SMIL SVG's END state, never
+     frame 0 of an entrance that will never play: pause the clock and park it
+     far past every fill="freeze". Live entry restarts from 0 instead. */
+  function smilToEnd(svg) {
+    try { svg.pauseAnimations(); svg.setCurrentTime(60); } catch (e) {}
+  }
+
   function restartSMIL(el) {
-    $$('svg.smil', el).forEach(function (svg) {
+    var seek = STILL ? smilToEnd : function (svg) {
       try { svg.setCurrentTime(0); } catch (e) {}
-    });
-    if (el && el.matches && el.matches('svg.smil')) {
-      try { el.setCurrentTime(0); } catch (e) {}
-    }
+    };
+    $$('svg.smil', el).forEach(seek);
+    if (el && el.matches && el.matches('svg.smil')) seek(el);
   }
 
   /**
    * Enter a slide by id.
-   * opts.build: 'none' (default — fresh) | 'all' (arriving backwards / still)
+   * opts.build: 'none' (default, fresh) | 'all' (arriving backwards / still)
    * opts.force: re-enter even if it is already current
    */
   function enter(id, opts) {
@@ -402,7 +409,7 @@
     // 1. a component on this slide may CONSUME the advance.
     //    k is "consumed steps so far + 1", so it only increases when the
     //    component says true. A component that has finished will therefore
-    //    see the SAME rejected k again on every later advance — returning
+    //    see the SAME rejected k again on every later advance; returning
     //    false for it must stay idempotent.
     var cs = compsIn(el);
     for (var i = 0; i < cs.length; i++) {
@@ -426,7 +433,7 @@
       }
     }
 
-    // 3. otherwise move on. From a backup we stay put — an accidental space
+    // 3. otherwise move on. From a backup we stay put: an accidental space
     //    during Q&A must not yank the speaker out of the slide they are on
     //    (B is the documented way back).
     if (onBackup) return;
@@ -437,7 +444,7 @@
     var el = byId[currentId];
     if (!el) return;
 
-    // builds unwind first — they were revealed last
+    // builds unwind first; they were revealed last
     var shown = shownBuilds(el);
     if (shown.length) {
       shown[shown.length - 1].classList.remove('shown');

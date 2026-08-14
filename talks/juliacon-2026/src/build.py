@@ -4,7 +4,7 @@
 Usage: python3 src/build.py   (from talks/juliacon-2026/ or repo root)
 
 Assets are inlined from the sibling Bennett.jl checkout:
-  - three SVGs inlined as markup (ids NAMESPACED per asset — pipeline.svg and
+  - three SVGs inlined as markup (ids NAMESPACED per asset: pipeline.svg and
     circuit_x_plus_1.svg both define id="arrow"; unprefixed they'd collide)
   - demo.svg as a base64 <img> (it carries generic CSS classes in an internal
     <style>; as an <img> its styles stay isolated from the deck's)
@@ -42,7 +42,10 @@ def main() -> None:
     assets = {
         "{{SVG:pipeline}}": namespace_svg((BENNETT_ASSETS / "pipeline.svg").read_text(), "pipe"),
         "{{SVG:circuit23}}": namespace_svg((BENNETT_ASSETS / "circuit_x_plus_1.svg").read_text(), "cx1"),
-        "{{SVG:bennett}}": namespace_svg((BENNETT_ASSETS / "bennett_construction.svg").read_text(), "bc", "smil"),
+        # The Bennett construction uses the deck-local DARK recolor (deck
+        # palette, panel ground); the light original stays in Bennett.jl for
+        # its white-background docs.
+        "{{SVG:bennett}}": namespace_svg((SRC / "assets" / "bennett_construction_dark.svg").read_text(), "bc", "smil"),
         "{{IMG:democast}}": (
             # No inline sizing: an inline width:100% would beat the stylesheet
             # and force the 960x776 recording past its height budget. The
@@ -57,7 +60,7 @@ def main() -> None:
         if n > 1:
             sys.exit(f"build.py: expected at most one {marker} in slides, found {n}")
         if n == 0:
-            print(f"build.py: note — {marker} unused")
+            print(f"build.py: note: {marker} unused")
             continue
         slides = slides.replace(marker, markup)
 

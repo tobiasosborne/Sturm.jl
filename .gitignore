@@ -28,3 +28,6 @@ bench/out/
 # only, so it is unaffected.
 docs/physics/*.pdf
 docs/physics/**/*.pdf
+
+# JuliaCon 2026 talk: generated demo environment (Pkg.develop'ed, machine-local)
+talks/juliacon-2026/demoenv/

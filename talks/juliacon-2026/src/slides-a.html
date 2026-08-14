@@ -1,14 +1,15 @@
-<!-- slides-a.html — slides s0–s7. Fragment only: no html/head/body.
+<!-- slides-a.html: slides s0 to s7. Fragment only: no html/head/body.
      Part 1 of the talk: the why. One Sturm design decision per slide,
      each paired with the Julia feature that carried it. Every snippet is
      real code from the repos' committed tests (paths in the spec). -->
 
-<section class="slide" id="s0" data-title="Given an Oracle for f"
+<section class="slide" id="s0" data-title="Quantum programming in ordinary Julia, assisted by LLM agents"
          data-band="off"
-         data-notes="Terminal is warm and docked. Don't mention it. The demo comes in the second half — the first half is the why.">
-  <h2 class="frametitle" style="font-size:7cqh;line-height:1.12">
+         data-notes="Terminal is warm and docked. Don't mention it. The demo comes in the second half; the first half is the why.">
+  <h2 class="frametitle" style="font-size:5.5cqh;line-height:1.18">
     <span class="small muted" style="display:block;font-size:2.6cqh;font-weight:400;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:1.2cqh">JuliaCon 2026</span>
-    <span class="gold">Given</span> an Oracle for <span class="serif" style="font-style:italic">f</span><span class="rule"></span>
+    Quantum programming in <span class="gold">ordinary Julia</span>,<br>
+    assisted by LLM agents<span class="rule"></span>
   </h2>
   <div class="body">
     <div class="center" style="margin:1.6cqh 0 2.6cqh;display:flex;gap:1.1cqh;justify-content:flex-start">
@@ -22,14 +23,195 @@
       <p class="muted">a quantum language · a reversible compiler · a reversible interpreter</p>
     </div>
     <p class="small muted" style="margin-top:4.4cqh">
-      Tobias J. Osborne — Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
+      Tobias J. Osborne · Leibniz Universität Hannover · <span class="mono">github.com/tobiasosborne</span>
     </p>
+  </div>
+</section>
+
+<section class="slide" id="s0a" data-title="All the quantum you need today"
+         data-band="off"
+         data-notes="60 seconds of physics on faith; apologize kindly, once, for the speed run. Grounding: Toffoli + Hadamard is quantum universal (Shi, quant-ph/0205115, 2002; Aharonov, quant-ph/0301040, 2003). T is only the hardware cost unit later (s11 Toffoli counts). The honest long version pointer: quantum.country, Matuschak and Nielsen, free.">
+  <h2 class="frametitle">All the quantum you need today<span class="rule"></span></h2>
+  <div class="body">
+    <p class="lead">Three things, taken on faith. Every slide after this one is built from them.</p>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:1.7cqh 2cqw;align-items:baseline;margin-top:1.2cqh">
+      <div class="mono gold" style="font-size:3.4cqh">1</div>
+      <div><strong>Reversible computation.</strong> Ordinary computing, run without ever
+        erasing. <span class="muted">Assume it exists; the second half of this talk
+        builds it from your Julia code.</span></div>
+      <div class="mono gold" style="font-size:3.4cqh">2</div>
+      <div><strong>One genuinely quantum gate: H.</strong> A coin flip you can undo:
+        applied twice, you get your bit back. It puts a bit into two values at once,
+        and your reversible code runs on both.</div>
+      <div class="mono gold" style="font-size:3.4cqh">3</div>
+      <div><strong>Measurement.</strong> Reading a bit collapses it to the value you
+        read. <span class="muted">That is the only way back out.</span></div>
+    </div>
+    <div class="build">
+      <p class="center" style="margin-top:2cqh">
+        That's provably enough: reversible gates plus H are universal for quantum
+        computation. <span class="muted small">(Shi 2002 · Aharonov 2003; hardware adds one
+        phase gate, T, for efficiency. Nothing today needs it.)</span>
+      </p>
+      <p class="tiny muted center" style="margin-top:0.8cqh">
+        A real introduction doesn't fit in 15 minutes, and I'm sorry for the speed run:
+        <span class="mono">quantum.country</span> (Matuschak &amp; Nielsen) is the one to
+        read, free.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s0b" data-title="Why?"
+         data-band="off"
+         data-notes="The dunk is quoted, not invented: Heunen, Lemonnier, McNally and Rice, 'Quantum Circuits Are Just a Phase', POPL 2026 (arXiv:2507.11676): 'quantum circuits akin to assembly languages', advanced languages 'essentially function as circuit description languages'. Li, Stein, Krishnamoorthy and Ang, QASMBench, ACM TQC 2021, sec. 1.2: OpenQASM 'is similar to traditional Hardware Description Language (HDL) like Verilog and VHDL', and 'Qiskit is mainly based on Python'. 'Worst of both worlds' is my opinion; own it as opinion. Land on the last build: not how a designer thinks.">
+  <h2 class="frametitle">Why?<span class="rule"></span></h2>
+  <div class="body">
+    <svg class="smil" viewBox="0 0 920 300" role="img"
+         aria-label="A chimera: a Python code panel and a circuit schematic stitched together down the middle"
+         style="width:48cqw;max-width:100%;align-self:center;flex:0 0 auto;font-family:var(--sans)">
+      <!-- Base attributes are the FINAL state (visible, seam drawn): a renderer
+           that never advances the SMIL clock (?still screenshot, print) shows
+           the finished chimera. Live entry replays from 0 via the engine's
+           restartSMIL; the delayed pieces hold their start value with keyTimes
+           so nothing flashes before its entrance. -->
+      <!-- left body: the Python you write -->
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="-55 0;0 0" dur="0.7s" fill="freeze"/>
+        <animate attributeName="opacity" values="0;1" dur="0.7s" fill="freeze"/>
+        <rect x="34" y="26" width="392" height="212" rx="12"
+              fill="var(--code-bg,#10151C)" stroke="var(--line,#232A35)"/>
+        <g font-family="var(--mono)" font-size="19" fill="var(--ink,#E8E6E1)">
+          <text x="62" y="66">qc = QuantumCircuit(3)</text>
+          <text x="62" y="100">qc.h(0)</text>
+          <text x="62" y="134">qc.cx(0, 1)</text>
+          <text x="62" y="168">qc.ccx(0, 1, 2)</text>
+          <text x="62" y="202">qc.measure_all()</text>
+        </g>
+        <text x="230" y="278" text-anchor="middle" font-size="17" fill="var(--muted,#8A93A6)">the Python you write</text>
+      </g>
+      <!-- right body: the schematic it means -->
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="55 0;55 0;0 0" keyTimes="0;0.26;1" dur="0.95s" fill="freeze"/>
+        <animate attributeName="opacity" values="0;0;1" keyTimes="0;0.26;1" dur="0.95s" fill="freeze"/>
+        <g stroke="var(--muted,#8A93A6)" stroke-width="1.6">
+          <line x1="500" y1="62"  x2="886" y2="62"/>
+          <line x1="500" y1="132" x2="886" y2="132"/>
+          <line x1="500" y1="202" x2="886" y2="202"/>
+        </g>
+        <g stroke="var(--blue,#6B8FE8)" stroke-width="2" fill="var(--panel,#151A22)">
+          <!-- H box, wire 1 -->
+          <rect x="528" y="44" width="36" height="36" rx="5"/>
+          <!-- CNOT: control wire 1, target wire 2 -->
+          <line x1="632" y1="62" x2="632" y2="132"/>
+          <circle cx="632" cy="62" r="6" fill="var(--blue,#6B8FE8)"/>
+          <circle cx="632" cy="132" r="13" fill="none"/>
+          <line x1="632" y1="119" x2="632" y2="145"/>
+          <line x1="619" y1="132" x2="645" y2="132"/>
+          <!-- Toffoli: controls wires 1 and 2, target wire 3 -->
+          <line x1="712" y1="62" x2="712" y2="202"/>
+          <circle cx="712" cy="62" r="6" fill="var(--blue,#6B8FE8)"/>
+          <circle cx="712" cy="132" r="6" fill="var(--blue,#6B8FE8)"/>
+          <circle cx="712" cy="202" r="13" fill="none"/>
+          <line x1="712" y1="189" x2="712" y2="215"/>
+          <line x1="699" y1="202" x2="725" y2="202"/>
+          <!-- measurement boxes -->
+          <rect x="800" y="44"  width="42" height="36" rx="5"/>
+          <rect x="800" y="114" width="42" height="36" rx="5"/>
+          <rect x="800" y="184" width="42" height="36" rx="5"/>
+        </g>
+        <g font-size="19" fill="var(--ink,#E8E6E1)" text-anchor="middle">
+          <text x="546" y="69" font-family="var(--mono)">H</text>
+          <text x="821" y="69"  font-size="16">⌒</text>
+          <text x="821" y="139" font-size="16">⌒</text>
+          <text x="821" y="209" font-size="16">⌒</text>
+        </g>
+        <text x="693" y="278" text-anchor="middle" font-size="17" fill="var(--muted,#8A93A6)">the schematic it means</text>
+      </g>
+      <!-- the suture -->
+      <g>
+        <animate attributeName="opacity" values="1;0.5;1" begin="2.6s" dur="3.4s" repeatCount="indefinite"/>
+        <path d="M 461 12 L 448 52 L 473 92 L 450 132 L 471 172 L 447 212 L 469 252 L 461 288"
+              fill="none" stroke="var(--gold,#E0B45F)" stroke-width="2.5" stroke-linejoin="round"
+              pathLength="600" stroke-dasharray="600" stroke-dashoffset="0">
+          <animate attributeName="stroke-dashoffset" values="600;600;0" keyTimes="0;0.59;1" dur="1.7s" fill="freeze"/>
+        </path>
+        <g stroke="var(--gold,#E0B45F)" stroke-width="2">
+          <animate attributeName="opacity" values="0;0;1" keyTimes="0;0.81;1" dur="2.1s" fill="freeze"/>
+          <line x1="441" y1="46"  x2="466" y2="34"/>
+          <line x1="449" y1="102" x2="474" y2="90"/>
+          <line x1="446" y1="152" x2="471" y2="140"/>
+          <line x1="444" y1="200" x2="469" y2="188"/>
+          <line x1="447" y1="248" x2="472" y2="236"/>
+        </g>
+      </g>
+    </svg>
+    <div class="build">
+      <p class="center" style="font-size:3.0cqh;margin-top:0.4cqh">
+        The mainstream stacks are a chimera: Python up front, a hardware
+        description language underneath.
+        <span class="gold" style="display:block;font-weight:700">The worst of both worlds.</span>
+      </p>
+    </div>
+    <div class="build">
+      <p class="tiny muted center" style="margin-top:0.2cqh">
+        Not just my opinion: "quantum circuits akin to assembly languages",
+        "essentially ... circuit description languages" (POPL 2026) ·
+        OpenQASM is "similar to traditional Hardware Description Language (HDL)
+        like Verilog and VHDL" (ACM Trans. Quantum Comput. 2021)
+      </p>
+    </div>
+    <div class="build">
+      <p class="center" style="font-size:3.0cqh;margin-top:0.2cqh">
+        Neither half is how an algorithm <em>designer</em> thinks.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="s0c" data-title="The dream"
+         data-band="off"
+         data-notes="~30 s. Two promises, one per panel; 'operational axioms' immediately translated: prepare, transform, measure. The bridge build maps them onto the talk's two halves: part 1 delivers the right panel (axioms as types and dispatch), part 2 the left (Bennett: no rewriting). Don't rush the last line.">
+  <h2 class="frametitle">The dream<span class="rule"></span></h2>
+  <div class="body">
+    <p class="lead">Separate the concerns, properly.</p>
+    <div class="cols" style="margin-top:1.6cqh;align-items:stretch">
+      <div class="panel">
+        <div class="panel-title"><span class="blue">Classical code stays natural</span></div>
+        <p class="small" style="margin-top:0.6cqh">
+          Ordinary Julia: functions, loops, <span class="mono">Base.sin</span>.
+        </p>
+        <p class="small" style="margin-top:1.2cqh">
+          And becoming a quantum subroutine must require
+          <strong>no rewriting</strong>. Not a port, not an annotation, not a
+          gate-by-gate translation.
+        </p>
+      </div>
+      <div class="panel">
+        <div class="panel-title"><span class="purple">Quantum code obeys the axioms</span></div>
+        <p class="small" style="margin-top:0.6cqh">
+          Only what the operational rules of quantum mechanics allow:
+          prepare, transform, measure.
+        </p>
+        <p class="small" style="margin-top:1.2cqh">
+          Nothing is copied. Nothing is discarded silently. Measurement
+          <strong>consumes</strong>. The language enforces this, not a linter.
+        </p>
+      </div>
+    </div>
+    <div class="build">
+      <p class="center" style="margin-top:2.4cqh;font-size:3.0cqh">
+        The rest of this talk is these two promises, kept:
+        the first half makes quantum code lawful,
+        the second half makes classical code free.
+      </p>
+    </div>
   </div>
 </section>
 
 <section class="slide" id="s1" data-title="What I wanted"
          data-band="off"
-         data-notes="No framework names, no dunking — the left side is every mainstream toolkit, including our own first attempt. The point is a feeling: diagrams vs programs.">
+         data-notes="The previous slide named names via quotes; this one goes generic again. The left side is every mainstream toolkit, including our own first attempt. The point is a feeling: diagrams vs programs.">
   <h2 class="frametitle">What I wanted<span class="rule"></span></h2>
   <div class="body">
     <p class="lead">To write quantum programs in the language I already write.</p>
@@ -45,14 +227,14 @@ circuit.measure([0, 1])</code></pre>
         <p class="small muted">what I was hoping for:</p>
 <pre><code>q = QBool(0.5)      <span class="c"># a fair quantum coin</span>
 r = false ⊻ q       <span class="c"># a second bit, correlated</span>
-Bool(q), Bool(r)    <span class="c"># measured — they always agree</span></code></pre>
+Bool(q), Bool(r)    <span class="c"># measured; they always agree</span></code></pre>
         <p class="small muted">a program: values, operators, scope</p>
       </div>
     </div>
     <div class="build">
       <p style="margin-top:2cqh">
         Sturm.jl is a handful of design decisions about how quantum programs should read.
-        The first part of this talk walks through them, one at a time —
+        The first part of this talk walks through them, one at a time,
         each with the Julia feature that made it work.
       </p>
     </div>
@@ -61,24 +243,24 @@ Bool(q), Bool(r)    <span class="c"># measured — they always agree</span></cod
 
 <section class="slide" id="s2" data-title="Quantum data is a value"
          data-band="off"
-         data-notes="Decision 1. QInt is deliberately NOT an Integer subtype — a comparison returns a quantum bool, so pretending would lie. 'Without pretending to be one' is the honest phrase.">
+         data-notes="Decision 1. QInt is deliberately NOT an Integer subtype: a comparison returns a quantum bool, so pretending would lie. 'Without pretending to be one' is the honest phrase.">
   <h2 class="frametitle">Quantum data is a value, not a wire<span class="rule"></span></h2>
   <div class="body">
 <pre><code>x = QInt{4}(3)     <span class="c"># a 4-bit quantum integer</span>
 add!(x, 2)         <span class="c"># |3⟩ → |5⟩, in place</span>
 superpose!(x)      <span class="c"># all sixteen values at once</span>
-s = x + 2          <span class="c"># ordinary arithmetic — a fresh register comes back</span></code></pre>
+s = x + 2          <span class="c"># ordinary arithmetic; a fresh register comes back</span></code></pre>
     <div class="build">
       <p style="margin-top:2cqh">
         The width lives in the type, so every operation is specialized at compile
-        time. Comparisons work too — <span class="mono">x &lt; y</span> just returns a
+        time. Comparisons work too: <span class="mono">x &lt; y</span> just returns a
         <em>quantum</em> bool, because that's what it is.
       </p>
     </div>
     <div class="build">
       <p class="muted" style="margin-top:1.6cqh">
         Why Julia: user-defined types are first-class citizens. A quantum integer
-        can behave like a number — without pretending to be one.
+        can behave like a number without pretending to be one.
       </p>
     </div>
   </div>
@@ -87,14 +269,14 @@ s = x + 2          <span class="c"># ordinary arithmetic — a fresh register co
 <section class="slide" id="s3" data-title="Measurement is a conversion"
          data-band="off"
          data-notes="Decision 2. The law Bool(QBool(b)) == b is a named test in the suite. Measurement really does consume the state; the types just stopped pretending otherwise.">
-  <h2 class="frametitle">Crossing the boundary is a type conversion<span class="rule"></span></h2>
+  <h2 class="frametitle">Crossing the classical/quantum boundary is a type conversion<span class="rule"></span></h2>
   <div class="body">
 <pre><code>q = QBool(0.7)     <span class="c"># classical → quantum: prepare</span>
 b = Bool(q)        <span class="c"># quantum → classical: measure</span></code></pre>
     <div class="build">
       <p style="margin-top:2cqh">
         Measurement <strong>consumes</strong>. Use <span class="mono">q</span> after
-        this and you get an error — not a silently wrong answer.
+        this and you get an error, not a silently wrong answer.
       </p>
       <p class="muted small" style="margin-top:1cqh">
         And the round trip is a law with a test:
@@ -123,7 +305,7 @@ b = Bool(q)        <span class="c"># quantum → classical: measure</span></code
 end                     <span class="c"># ← r is discarded exactly here</span></code></pre>
     <div class="build">
       <p style="margin-top:2cqh">
-        Discarding a qubit is a physical operation — the environment keeps its half
+        Discarding a qubit is a physical operation: the environment keeps its half
         of any correlation. So it has to happen at a definite moment, not whenever
         a garbage collector gets around to it.
       </p>
@@ -132,7 +314,7 @@ end                     <span class="c"># ← r is discarded exactly here</span>
       <p class="muted" style="margin-top:1.6cqh">
         Why Julia: a <span class="mono">do</span>-block is a genuine
         <span class="mono">try</span>/<span class="mono">finally</span>. Scope exit
-        is deterministic — so we could afford to make it mean something.
+        is deterministic, so we could afford to make it mean something.
       </p>
     </div>
   </div>
@@ -140,16 +322,16 @@ end                     <span class="c"># ← r is discarded exactly here</span>
 
 <section class="slide" id="s5" data-title="Control flow can be quantum"
          data-band="off"
-         data-notes="Decision 4. when() is a plain function taking a closure — no macro. The measurement-inside error is a real test (test_m5_when.jl). Both branches continue in superposition.">
+         data-notes="Decision 4. when() is a plain function taking a closure, no macro. The measurement-inside error is a real test (test_m5_when.jl). Both branches continue in superposition.">
   <h2 class="frametitle">Control flow can be quantum<span class="rule"></span></h2>
   <div class="body">
-<pre><code>when(c) do          <span class="c"># `if` — but c is a qubit</span>
+<pre><code>when(c) do          <span class="c"># `if`, but c is a qubit</span>
     add!(x, 3)      <span class="c"># happens in the branch where c is 1</span>
 end                 <span class="c"># both branches carry on, in superposition</span></code></pre>
     <div class="build">
       <p style="margin-top:2cqh">
         Inside the block the rules tighten: measuring in there is physically
-        meaningless, so trying it raises an error — at the exact call, with a
+        meaningless, so trying it raises an error at the exact call, with a
         message that says why.
       </p>
     </div>
@@ -157,7 +339,7 @@ end                 <span class="c"># both branches carry on, in superposition</
       <p class="muted" style="margin-top:1.6cqh">
         Why Julia: <span class="mono">do</span>-block syntax lets a brand-new control
         construct read as if it had always been in the language. <span class="mono">when</span>
-        is a plain function taking a closure — not a macro.
+        is a plain function taking a closure, not a macro.
       </p>
     </div>
   </div>
@@ -165,7 +347,7 @@ end                 <span class="c"># both branches carry on, in superposition</
 
 <section class="slide" id="s6" data-title="What physics forbids, dispatch forbids"
          data-band="off"
-         data-notes="Decision 5. Protect wraps a channel in error correction; two independent no-go theorems say you can't condition that on a qubit. We didn't write a checker — we didn't write the method. ~5:00 checkpoint at the end of this slide.">
+         data-notes="Decision 5. Protect wraps a channel in error correction; two independent no-go theorems say you can't condition that on a qubit. We didn't write a checker; we didn't write the method. ~5:00 checkpoint at the end of this slide.">
   <h2 class="frametitle">What physics forbids, dispatch forbids<span class="rule"></span></h2>
   <div class="body">
 <pre style="margin-top:1.2cqh"><code style="font-size:3.0cqh;line-height:1.5"><span class="p">julia&gt;</span> ctrl(Protect(enc))
@@ -180,7 +362,7 @@ end                 <span class="c"># both branches carry on, in superposition</
     <div class="build">
       <p class="muted" style="margin-top:1.6cqh">
         Why Julia: we didn't write a checker or a linter. We just didn't write the
-        method — and the error message points at the exact call.
+        method, and the error message points at the exact call.
       </p>
     </div>
   </div>
@@ -188,7 +370,7 @@ end                 <span class="c"># both branches carry on, in superposition</
 
 <section class="slide" id="s7" data-title="Given an oracle for f"
          data-band="off"
-         data-notes="Part 2 opens. Translate the equation in plain words before anything else. 'Given' hides forty years of work — say it kindly, not triumphantly.">
+         data-notes="Part 2 opens. Translate the equation in plain words before anything else. 'Given' hides forty years of work; say it kindly, not triumphantly.">
   <h2 class="frametitle">“<span class="gold">Given</span> an oracle for <span class="serif" style="font-style:italic">f</span> …”<span class="rule"></span></h2>
   <div class="body">
     <p class="serif center" style="font-style:italic;font-size:4.6cqh;margin-top:1.2cqh;letter-spacing:0.01em">
@@ -202,7 +384,7 @@ end                 <span class="c"># both branches carry on, in superposition</
     </p>
     <div class="build">
       <p class="muted center small" style="margin-top:1.4cqh;letter-spacing:0.05em">
-        Grover · Shor · Deutsch–Jozsa · phase estimation — every one of them starts
+        Grover · Shor · Deutsch–Jozsa · phase estimation: every one of them starts
         from this sentence. The papers never say where the oracle comes from.
       </p>
     </div>

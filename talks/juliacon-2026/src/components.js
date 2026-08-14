@@ -1,10 +1,10 @@
-/* components.js — "Given an Oracle for f" (JuliaCon 2026)
+/* components.js: "Quantum programming in ordinary Julia" (JuliaCon 2026)
  *
  * Three interactive components for the deck, per DECK-SPEC.md §Components:
  *
- *   costbars  (s8)        the rescaling log-scale cost chart   — 3 consumed steps
- *   entangle  (s11)       the REAL two-branch statevector      — 7 consumed steps
- *   stepper   (#stepper)  the 23-gate walkthrough              — 24 consumed steps
+ *   costbars  (s8)        the rescaling log-scale cost chart   · 3 consumed steps
+ *   entangle  (s11)       the REAL two-branch statevector      · 7 consumed steps
+ *   stepper   (#stepper)  the 23-gate walkthrough              · 24 consumed steps
  *
  * Contract: window.DeckComponents[name] = {mount, onEnter, onLeave, onStep, onStill}.
  * `mount(el)` is called once at load; `onStep(el, k)` returns true when the
@@ -12,7 +12,7 @@
  * `onStill(el)` jumps to the final state (?still screenshots + print).
  *
  * Everything is defensive: a missing circuits payload or a missing mount
- * element must no-op, never throw — a deck that dies at 10:00 in front of a
+ * element must no-op, never throw: a deck that dies at 10:00 in front of a
  * room is worse than a deck with one blank panel.
  *
  * All colour comes from the deck's CSS custom properties (read via
@@ -35,7 +35,7 @@
     } catch (e) { return false; }
   }
 
-  /** ?still — screenshot/print mode: no transitions, final state only. */
+  /** ?still: screenshot/print mode: no transitions, final state only. */
   function stillMode() {
     try {
       if (/[?&]still\b/.test(window.location.search)) return true;
@@ -105,7 +105,7 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * 1. Reversible-gate semantics — the whole simulator, three lines.
+   * 1. Reversible-gate semantics: the whole simulator, three lines.
    *    (Mirrors src/simulator.jl:1–3 of Bennett.jl; slide s6 shows the
    *    Julia original. Bits are a 1-based boolean array: wires are 1-based
    *    in the JSON, so index 0 is unused.)
@@ -132,7 +132,7 @@
   }
 
   function gateName(g) {
-    if (!g) return '—';
+    if (!g) return '·';
     if (g.t === 'NOT') return 'NOT w' + g.target;
     if (g.t === 'CNOT') return 'CNOT ' + g.control + '→' + g.target;
     return 'TOF ' + g.c1 + '·' + g.c2 + '→' + g.target;
@@ -184,7 +184,7 @@
     /* The height budget on s11 is exact: grid + verdict + caption + foot must
      * fit the component box, or the foot rides down onto the "I never wrote a
      * quantum gate" headline that follows it. Root gap and card padding/gap
-     * are the three dials — measured, not guessed. */
+     * are the three dials, measured, not guessed. */
     '.en-root{justify-content:center;gap:1.0cqh}',
     '.en-grid{display:grid;grid-template-columns:1fr 24cqw 1fr;gap:1.4cqw;align-items:stretch}',
     '.en-card{background:var(--panel,#151A22);border:1px solid var(--line,#232A35);border-radius:10px;',
@@ -257,7 +257,7 @@
   }
 
   /* ================================================================== *
-   * COMPONENT 1 — costbars
+   * COMPONENT 1: costbars
    *
    * A log10 bar chart whose AXIS rescales on every reveal, so the previous
    * champion visibly shrinks as the new bar sweeps in. One measure, one hue
@@ -389,7 +389,7 @@
   }
 
   function cbReveal(st) {
-    // The axis exponent is that of the largest revealed bar — this is the
+    // The axis exponent is that of the largest revealed bar; this is the
     // rescale that makes the earlier bars shrink.
     st.exp = CB_ROWS[Math.max(0, st.shown - 1)].exp;
     st.rows.forEach(function (r, i) { r.row.classList.toggle('shown', i < st.shown); });
@@ -416,7 +416,7 @@
   function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 
   /* ================================================================== *
-   * COMPONENT 2 — entangle
+   * COMPONENT 2: entangle
    *
    * The deck runs the actual compiled circuit. `controlled(·)` turns a
    * reversible circuit into a permutation controlled on wire 50; a state
@@ -424,7 +424,7 @@
    *     (|ctrl=0> + |ctrl=1>)/sqrt(2)  (x) |x=0, anc=0>
    *
    * is therefore ALWAYS exactly two computational branches with amplitude
-   * 1/sqrt(2) each — permutations map basis states to basis states, so no
+   * 1/sqrt(2) each: permutations map basis states to basis states, so no
    * amplitude ever splits. That is why two 50-bit arrays are a *complete*
    * statevector simulation here, not an approximation.
    *
@@ -480,7 +480,7 @@
       st.verdict = el('div', 'en-verdict');
       st.caption = el('div', 'en-caption');
       var foot = el('div', 'en-foot',
-        'the deck is running the compiled circuit — ' + c.gates.length +
+        'the deck is running the compiled circuit: ' + c.gates.length +
         ' gates on both branches, live in your browser');
 
       root.appendChild(grid);
@@ -604,12 +604,12 @@
     enPaint(st, animate, prev);
 
     if (st.step === 1) {
-      enCaption(st, 'H on the control — a superposition of two classical worlds');
+      enCaption(st, 'H on the control: a superposition of two classical worlds');
     } else if (st.step >= 2 && st.step <= 5) {
       enCaption(st, 'gates ' + Math.max(1, targetK - EN_CHUNK + 1) + '–' + targetK +
-                    ' applied to both branches — permutations, so no amplitude moves');
+                    ' applied to both branches: permutations, so no amplitude moves');
     } else if (st.step === 6) {
-      enCaption(st, 'every ancilla is back to zero — the branches differ only in ctrl and out');
+      enCaption(st, 'every ancilla is back to zero: the branches differ only in ctrl and out');
     } else if (st.step >= 7) {
       enCaption(st, 'one control wire, twenty compiled gates, no hand-written quantum gate');
     }
@@ -635,7 +635,7 @@
         return '|' + bit(b[st.ctrlW]) + ',' + bit(b[st.xW]) + ',' + bit(b[st.outW]) + '⟩';
       });
       st.verdict.appendChild(document.createTextNode(
-        '(' + kets[0] + ' + ' + kets[1] + ')/√2 — '));
+        '(' + kets[0] + ' + ' + kets[1] + ')/√2 · '));
       st.verdict.appendChild(el('em', '', 'entangled'));
       st.verdict.classList.add('shown');
     } else {
@@ -672,7 +672,7 @@
     if (animate && changed) flash(chip.chip, 'flip', 260);
   }
 
-  /** Add a class, strip it after ms — the "fast flip" without CSS bookkeeping. */
+  /** Add a class, strip it after ms: the "fast flip" without CSS bookkeeping. */
   function flash(node, cls, ms) {
     try {
       node.classList.remove(cls);
@@ -683,13 +683,13 @@
   }
 
   /* ================================================================== *
-   * COMPONENT 3 — stepper
+   * COMPONENT 3: stepper
    *
    * The 23-gate x+1 circuit, one gate per advance, on a JS-generated SVG.
    * Verified against circuits.json: with x = 3 preset LSB-first on wires
    * [1,2,3], executing all 23 gates leaves the output wires [14,15,16]
    * holding 0,0,1 → decoded LSB-first that is 4, and every ancilla is back
-   * to zero. gs[14:23] == reverse(gs[1:10]) — Bennett's theorem, on screen.
+   * to zero. gs[14:23] == reverse(gs[1:10]): Bennett's theorem, on screen.
    * ================================================================== */
 
   var ST = store();
@@ -922,7 +922,7 @@
   /**
    * Set the circuit to "k gates executed", optionally showing the verdict.
    * The bit state is recomputed from the x = 3 preset every time, so a jump
-   * (onStill, run-all) and a walk give identical state — no incremental drift.
+   * (onStill, run-all) and a walk give identical state, no incremental drift.
    */
   function stSet(st, k, done) {
     var c = st.c, n = c.gates.length;
@@ -967,7 +967,7 @@
                 JSON.stringify(c.gates.slice(0, 10).slice().reverse());
       st.final.textContent = 'out = ' + out + '  ·  ' +
         (anc === 0 ? 'every ancilla back to 0' : 'ancillae Σ=' + anc + ' (!)') +
-        '  ·  gs[14:23] == reverse(gs[1:10])' + (pal ? '' : ' — FALSE (!)');
+        '  ·  gs[14:23] == reverse(gs[1:10])' + (pal ? '' : ', FALSE (!)');
     }
   }
 
@@ -988,7 +988,7 @@
   }
 
   /* ================================================================== *
-   * Registry — every entry point is wrapped so a component fault can
+   * Registry: every entry point is wrapped so a component fault can
    * never take the deck down mid-talk.
    * ================================================================== */
 

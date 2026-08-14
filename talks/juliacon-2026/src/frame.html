@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Given an Oracle for f</title>
+<title>Quantum programming in ordinary Julia, assisted by LLM agents</title>
 <style>
 /* ==========================================================================
-   Given an Oracle for f — JuliaCon 2026
+   Quantum programming in ordinary Julia, assisted by LLM agents (JuliaCon 2026)
    Single-file stage deck. Vanilla CSS, no external requests.
    Single fixed dark theme: every surface is painted explicitly from tokens.
    ========================================================================== */
@@ -21,7 +21,7 @@ img,svg{max-width:100%}
 
 /* ---- design tokens ----------------------------------------------------- */
 :root{
-  --bg:#0E1116;          /* stage ground — blue-biased near-black */
+  --bg:#0E1116;          /* stage ground: blue-biased near-black */
   --panel:#151A22;       /* raised panels */
   --code-bg:#10151C;     /* code blocks */
   --band:#0A0D11;        /* terminal band (darkest) */
@@ -38,7 +38,7 @@ img,svg{max-width:100%}
      light figure cards (the SVGs were authored on #fbfbfe and stay that way) */
   --backdrop:#000000;
   --card:#FBFBFE;
-  /* the only rgba() literals in this file are these four scrims/shadows —
+  /* the only rgba() literals in this file are these four scrims/shadows;
      each is a token color carrying an alpha, not a new colour:
      rgba(14,17,22,a)=--bg · rgba(10,13,17,a)=--band ·
      rgba(0,0,0,a)=--backdrop · rgba(224,180,95,.12)=--gold at 12% (<mark>) */
@@ -48,7 +48,7 @@ img,svg{max-width:100%}
   --mono:"JuliaMono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono","DejaVu Sans",monospace;
   --serif:Georgia,"Times New Roman",serif;
 
-  /* scale — container-query units against the 1280x720 stage */
+  /* scale: container-query units against the 1280x720 stage */
   --f-title:4.2cqh;
   --f-lead:3.4cqh;
   --f-body:3.0cqh;
@@ -238,7 +238,7 @@ pre{
   overflow:hidden;
   tab-size:2;
 }
-pre.long{font-size:2.1cqh}       /* >10 lines — set by the engine */
+pre.long{font-size:2.1cqh}       /* >10 lines, set by the engine */
 pre.repl{font-size:3.6cqh;line-height:1.45}
 :not(pre) > code{
   font-size:.92em;
@@ -247,7 +247,7 @@ pre.repl{font-size:3.6cqh;line-height:1.45}
   border-radius:6px;
   padding:.06em .32em;
 }
-/* MINIMAL two-tone highlighting — never rainbow. Aliases are deliberate:
+/* MINIMAL two-tone highlighting, never rainbow. Aliases are deliberate:
    whatever the slide author reaches for, it lands on the same two hues. */
 pre .c,pre .cm,pre .comment{color:var(--muted)}
 pre .s,pre .st,pre .string{color:var(--green)}
@@ -262,6 +262,11 @@ mark{
   border-radius:3px;
   padding:.05em 0;
 }
+
+/* a dark inline-SVG panel: the SVG paints its own panel ground, the wrapper
+   only sizes it (used by the s9 Bennett construction) */
+.svg-panel{min-width:0;min-height:0}
+.svg-panel svg{display:block;width:100%;height:auto;max-height:100%}
 
 /* ---- figure cards (the light "paper" figures) -------------------------- */
 figure.figure-card,.figure-card{
@@ -281,7 +286,7 @@ figure.figure-card,.figure-card{
 }
 /* A screen recording is bound by HEIGHT, not width: it must show its whole
    frame (960x776 for the demo cast) above the band. Sizing it from its own
-   max-height with width:auto preserves the aspect ratio and can never crop —
+   max-height with width:auto preserves the aspect ratio and can never crop,
    unlike a fixed-height overflow:hidden wrapper, which cut ~9% off the bottom. */
 .figure-card > img.recording,.figure-card img.recording{
   display:block;
