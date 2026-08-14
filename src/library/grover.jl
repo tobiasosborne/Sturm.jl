@@ -11,7 +11,15 @@
 # ── THE D5 PORT (session-92, resolved) ──────────────────────────────────────
 # v0.1's `_multi_controlled_z!` (a Toffoli-cascade with a borrowed ancilla) and
 # `_cz!` DISSOLVE into nested `when` + `not!(dual(·))`: an (n−1)-ctrl Z is
-#   when(q₁) do when(q₂) do … when(q_{n-1}) do not!(dual(q_n)) end … end end
+#   when(q₁) do
+#     when(q₂) do
+#       …
+#         when(q_{n-1}) do not!(dual(q_n)) end
+#       …
+#     end
+#   end
+# (each `when` on its own line: the one-line spelling `when(a) do when(b) do …`
+# MIS-parses — the inner do-block becomes the outer lambda's parameter tuple)
 # — EXACT, because CZ's angle is π and the kernel `ctrl` is closed (`ctrl^k(Z)`).
 # No cascade, no borrowed ancilla, no folklore. The diffusion's Walsh–Hadamard
 # conjugation is the D4 materialization: the kernel value `H` wrapped by a library
@@ -128,7 +136,11 @@ docs/physics/grover_1996_search.md.
 # amplify a QInt about its marked state, then read it out
 x = QInt{3}(0); superpose!(x)
 amplify(x; iterations = 2) do reg
-    when(reg[1]) do when(reg[2]) do not!(dual(reg[3])) end end   # phase-flip |111⟩
+    when(reg[1]) do          # phase-flip |111⟩ — each `when` on its own
+        when(reg[2]) do      # line: the one-line nesting `do when(...) do`
+            not!(dual(reg[3]))   # mis-parses (inner block becomes the outer
+        end                  # lambda's parameter tuple)
+    end
 end
 ```
 """

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Tobias Osborne
+#
+# Environment for the Documenter.jl site build only. Two deps: Documenter and
+# Sturm itself, the latter pinned to this repo via [sources] so that
+#
+#     julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+#
+# is the whole setup step — no `Pkg.develop(path=".")` needed. Orkan is NOT a
+# Julia package and never appears here; it is loaded at runtime by `ccall`
+# (see docs/src/getting_started/installation.md).
+
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+Sturm = "fcbab5b2-4b8e-43e2-8ec6-8804d7a8d72e"
+
+[sources]
+Sturm = {path = ".."}
+
+[compat]
+Documenter = "1"
+julia = "1.11"
